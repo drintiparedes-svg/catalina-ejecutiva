@@ -60,8 +60,11 @@ export class RealtimeSession {
     } catch (error) {
       console.error(error);
       this.disconnect();
-      this.#emit("onStatus", connectionErrorMessage(error));
-      this.#emit("onHelp", connectionErrorHelp(error));
+      // Quien decide si esto se enseña o si toca pasar el turno al proveedor de
+      // respaldo es app.js: aquí no se sabe si hay un plan B.
+      error.mensaje = connectionErrorMessage(error);
+      error.ayuda = connectionErrorHelp(error);
+      this.#emit("onFailure", error);
     }
   }
 
@@ -122,6 +125,8 @@ export class RealtimeSession {
       this.#emit("onStatus", "Hablando");
       this.transcript += event.delta || "";
       this.#emit("onTranscript", this.transcript);
+    } else if (event.type === "response.function_call_arguments.done") {
+      this.#atenderHerramienta(event);
     } else if (event.type === "response.done") {
       // El modelo genera por delante de la reproducción, así que aquí sólo se
       // anota que no habrá más texto; volver a escuchar lo decide el silencio
@@ -131,6 +136,26 @@ export class RealtimeSession {
       console.error("Realtime event", event);
       this.#emit("onStatus", event.error?.message || "Ocurrió un error");
     }
+  }
+
+  // Herramientas. El modelo pide algo, app.js lo resuelve y el resultado vuelve
+  // como un elemento más de la conversación; después hay que pedir la respuesta
+  // hablada a mano, porque el turno se detuvo al llamar.
+  async #atenderHerramienta(event) {
+    let argumentos = {};
+    try { argumentos = JSON.parse(event.arguments || "{}"); } catch {}
+    const resultado = await this.#emit("onToolCall", event.name, argumentos);
+
+    if (this.channel?.readyState !== "open") return;
+    this.channel.send(JSON.stringify({
+      type: "conversation.item.create",
+      item: {
+        type: "function_call_output",
+        call_id: event.call_id,
+        output: JSON.stringify(resultado ?? { ok: false, error: "Sin resultado" })
+      }
+    }));
+    this.channel.send(JSON.stringify({ type: "response.create" }));
   }
 
   disconnect() {

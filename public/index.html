@@ -34,6 +34,24 @@
       </div>
     </aside>
 
+    <figure class="imagen" id="imagen" data-estado="oculto">
+      <button class="imagen-cerrar" id="imagenCerrar" aria-label="Cerrar la imagen">&times;</button>
+      <div class="imagen-cargando" aria-hidden="true"><span></span><span></span><span></span></div>
+      <img id="imagenFoto" alt="">
+      <figcaption>
+        <span id="imagenPie"></span>
+        <a id="imagenCredito" target="_blank" rel="noopener noreferrer"></a>
+      </figcaption>
+    </figure>
+
+    <aside class="referencias" id="referencias" data-estado="oculto" aria-label="Referencias">
+      <header class="referencias-cabecera">
+        <span>Referencias</span>
+        <button class="referencias-cerrar" id="referenciasCerrar" aria-label="Cerrar las referencias">&times;</button>
+      </header>
+      <ol id="referenciasLista"></ol>
+    </aside>
+
     <nav class="controls" aria-label="Controles">
       <button class="primary" id="connect">Iniciar conversación</button>
       <button id="mute" disabled>Silenciar micrófono</button>

@@ -8,6 +8,7 @@ import { FaceRenderer } from "./render/face-renderer.js";
 import { PerformanceDirector } from "./animation/director.js";
 import { VoiceTracker } from "./audio/voice-tracker.js";
 import { RealtimeSession } from "./realtime/session.js";
+import { GeminiSession } from "./realtime/gemini-session.js";
 
 const canvas = document.querySelector("#avatar");
 const ctx = canvas.getContext("2d");
@@ -18,6 +19,14 @@ const ui = {
   status: document.querySelector("#status"),
   signal: document.querySelector("#signal"),
   caption: document.querySelector("#caption"),
+  imagen: document.querySelector("#imagen"),
+  imagenFoto: document.querySelector("#imagenFoto"),
+  imagenPie: document.querySelector("#imagenPie"),
+  imagenCredito: document.querySelector("#imagenCredito"),
+  imagenCerrar: document.querySelector("#imagenCerrar"),
+  referencias: document.querySelector("#referencias"),
+  referenciasLista: document.querySelector("#referenciasLista"),
+  referenciasCerrar: document.querySelector("#referenciasCerrar"),
   panel: document.querySelector("#panel"),
   panelBody: document.querySelector("#panelBody"),
   panelClose: document.querySelector("#panelClose"),
@@ -37,7 +46,9 @@ let renderer = null;
 let viewport = { width: 0, height: 0, pixelRatio: 1 };
 let connected = false;
 
-const session = new RealtimeSession({
+// Los dos proveedores comparten manejadores: la interfaz no distingue con quién
+// se está hablando, sólo cambia el transporte por debajo.
+const manejadores = {
   // Se analiza la voz que llega de la API, no el micrófono: la boca debe
   // seguir lo que Catalina dice.
   onRemoteStream: stream => {
@@ -97,8 +108,46 @@ const session = new RealtimeSession({
   onResponseDone: () => {
     respuestaCerrada = true;
     cerrarTurno();
+  },
+  onToolCall: atenderHerramienta,
+  onFailure: atenderFallo
+};
+
+// Relevo de proveedor.
+//
+// Cada intento empieza por OpenAI, incluso después de haber caído a Gemini: si
+// el crédito se repone, Catalina vuelve sola a la voz principal sin tener que
+// tocar nada. El intento fallido no cuesta nada, porque un 429 se rechaza antes
+// de consumir tokens.
+const sesiones = {
+  openai: new RealtimeSession(manejadores),
+  gemini: new GeminiSession(manejadores)
+};
+
+// Motivos por los que OpenAI no va a funcionar por mucho que se reintente: sin
+// crédito o sin clave válida. Un fallo de red no entra aquí, porque cambiar de
+// proveedor no lo arreglaría y ocultaría el problema real.
+const MOTIVOS_DE_RELEVO = new Set(["API_RATE_LIMIT", "API_KEY_MISSING", "API_KEY_INVALID"]);
+
+let proveedor = "openai";
+let sesion = sesiones.openai;
+let geminiDisponible = false;
+
+async function atenderFallo(error) {
+  const puedeRelevar = proveedor === "openai" && geminiDisponible && MOTIVOS_DE_RELEVO.has(error.code);
+  if (!puedeRelevar) {
+    setStatus(error.mensaje || "No se pudo conectar");
+    mostrarAviso(error.ayuda || "");
+    return;
   }
-});
+
+  proveedor = "gemini";
+  sesion = sesiones.gemini;
+  setStatus(error.code === "API_RATE_LIMIT" ? "Sin crédito en OpenAI, paso a Gemini…" : "Paso a Gemini…");
+  mostrarAviso("");
+  ui.connect.disabled = true;
+  await sesion.connect();
+}
 
 image.src = "assets/catalina.png";
 image.onload = () => {
@@ -124,12 +173,15 @@ window.visualViewport?.addEventListener("resize", alCambiarLaVista);
 resize();
 
 ui.connect.addEventListener("click", () => {
-  if (connected) return session.disconnect();
+  if (connected) return sesion.disconnect();
+  // Cada intento vuelve a empezar por OpenAI, por si el crédito se repuso.
+  proveedor = "openai";
+  sesion = sesiones.openai;
   ui.connect.disabled = true;
-  session.connect();
+  sesion.connect();
 });
 ui.mute.addEventListener("click", () => {
-  const muted = session.toggleMute();
+  const muted = sesion.toggleMute();
   ui.mute.textContent = muted ? "Activar micrófono" : "Silenciar micrófono";
   setStatus(muted ? "Micrófono silenciado" : "Te escucho");
 });
@@ -138,6 +190,8 @@ ui.exitMeet.addEventListener("click", () => ui.stage.classList.remove("meet"));
 ui.toggleCaption.addEventListener("click", () => fijarSubtitulos(!verSubtitulos));
 ui.togglePanel.addEventListener("click", () => fijarPanel(!verPanel));
 ui.panelClose.addEventListener("click", () => fijarPanel(false));
+ui.imagenCerrar.addEventListener("click", () => mostrarLienzoDeImagen("oculto"));
+ui.referenciasCerrar.addEventListener("click", () => { ui.referencias.dataset.estado = "oculto"; });
 document.addEventListener("keydown", event => {
   if (event.target.matches("input, textarea")) return;
   const tecla = event.key.toLowerCase();
@@ -155,6 +209,108 @@ document.addEventListener("pointerdown", () => {
 
 function setStatus(text) {
   ui.status.textContent = text;
+}
+
+// Herramientas de docencia.
+//
+// Las pide Catalina, no la interfaz: están declaradas en los dos proveedores y
+// el modelo decide cuándo usarlas. Ninguna inventa nada — una recupera láminas
+// ya publicadas, la otra referencias de PubMed—, y lo que se devuelve al modelo
+// es deliberadamente escueto para que comente lo que se ve sin releerlo.
+async function atenderHerramienta(nombre, argumentos) {
+  if (nombre === "buscar_imagen_medica") return await pedirLamina(argumentos);
+  if (nombre === "buscar_referencias") return await pedirReferencias(argumentos);
+  return { ok: false, error: "Herramienta desconocida" };
+}
+
+async function pedirLamina(argumentos) {
+  const estructura = String(argumentos.estructura || "").trim();
+  if (!estructura) return { ok: false, error: "Falta la estructura" };
+
+  setStatus("Buscando la lámina…");
+  mostrarLienzoDeImagen("cargando");
+  try {
+    const respuesta = await fetch("/imagen-medica", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ estructura, detalle: argumentos.detalle })
+    });
+    const datos = await respuesta.json().catch(() => ({}));
+    if (!respuesta.ok || !datos.lamina) {
+      mostrarLienzoDeImagen("oculto");
+      // El modelo necesita saber que no hay nada a la vista, para no explicar
+      // una lámina inexistente.
+      return { ok: false, mostrada: false, error: datos.error || "No se encontró una lámina" };
+    }
+
+    mostrarLamina(datos.lamina);
+    return { ok: true, mostrada: true, titulo: datos.lamina.titulo, fuente: datos.lamina.fuente };
+  } catch (error) {
+    console.error(error);
+    mostrarLienzoDeImagen("oculto");
+    return { ok: false, mostrada: false, error: "Falló la conexión con el atlas" };
+  }
+}
+
+async function pedirReferencias(argumentos) {
+  const tema = String(argumentos.tema || "").trim();
+  if (!tema) return { ok: false, error: "Falta el tema" };
+
+  try {
+    const respuesta = await fetch("/referencias", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tema })
+    });
+    const datos = await respuesta.json().catch(() => ({}));
+    if (!respuesta.ok || !datos.referencias?.length) {
+      return { ok: false, error: datos.error || "Sin referencias" };
+    }
+
+    mostrarReferencias(datos.referencias);
+    // Van los títulos para que pueda mencionarlas de palabra; los enlaces ya
+    // están en pantalla y leerlos en voz alta no aportaría nada.
+    return { ok: true, mostradas: datos.referencias.length, titulos: datos.referencias.map(r => r.titulo) };
+  } catch (error) {
+    console.error(error);
+    return { ok: false, error: "Falló la conexión con PubMed" };
+  }
+}
+
+function mostrarLienzoDeImagen(estado) {
+  ui.imagen.dataset.estado = estado;
+}
+
+function mostrarLamina(lamina) {
+  ui.imagenFoto.src = lamina.imagen;
+  ui.imagenFoto.alt = lamina.titulo;
+  ui.imagenPie.textContent = lamina.titulo;
+  // La atribución no es decorativa: las licencias de Commons la exigen, y es lo
+  // que permite comprobar que la lámina existe y de dónde sale.
+  ui.imagenCredito.textContent = `${lamina.autor} · ${lamina.licencia}`;
+  ui.imagenCredito.href = lamina.fuente;
+  mostrarLienzoDeImagen("visible");
+}
+
+function mostrarReferencias(referencias) {
+  ui.referenciasLista.replaceChildren();
+  for (const referencia of referencias) {
+    const item = document.createElement("li");
+    const enlace = document.createElement("a");
+    enlace.href = referencia.enlace;
+    enlace.target = "_blank";
+    enlace.rel = "noopener noreferrer";
+    enlace.textContent = referencia.titulo;
+
+    const pie = document.createElement("span");
+    pie.className = "referencia-pie";
+    pie.textContent = [referencia.autores, referencia.revista, referencia.anio]
+      .filter(Boolean).join(" · ");
+
+    item.append(enlace, pie);
+    ui.referenciasLista.append(item);
+  }
+  ui.referencias.dataset.estado = "visible";
 }
 
 // Subtítulos e historial.
@@ -293,6 +449,13 @@ function cerrarTurno() {
 fijarSubtitulos(verSubtitulos);
 fijarPanel(verPanel);
 
+// Se pregunta al arrancar qué proveedores hay: sin esto habría que esperar a
+// que OpenAI fallara para descubrir que tampoco hay respaldo.
+fetch("/health")
+  .then(respuesta => respuesta.json())
+  .then(estado => { geminiDisponible = Boolean(estado.proveedores?.gemini); })
+  .catch(() => { geminiDisponible = false; });
+
 // Va después de fijar la vista: el aviso necesita que el estado ya exista, y
 // además debe poder pasar por encima de unos subtítulos apagados.
 if (location.protocol === "file:") {
@@ -360,7 +523,10 @@ function render(now) {
 window.catalina = {
   director,
   voice,
-  session,
+  sesiones,
+  manejadores,
+  get session() { return sesion; },
+  get proveedor() { return proveedor; },
   expresionDeFrase: aplicarExpresionDeFrase,
   get renderer() { return renderer; },
   get viewport() { return viewport; }

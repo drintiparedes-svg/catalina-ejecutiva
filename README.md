@@ -188,8 +188,56 @@ se lee.
 Sólo se transcribe la voz de Catalina. Transcribir además la de la persona
 requiere activar `input_audio_transcription` en la sesión, con su costo aparte.
 
+## Respaldo con Gemini
+
+Si OpenAI se queda sin crédito, la sesión pasa sola a Gemini Live y Catalina
+sigue hablando con la misma persona y las mismas herramientas. El relevo se
+dispara con `API_RATE_LIMIT`, `API_KEY_MISSING` o `API_KEY_INVALID`; un fallo de
+red no lo activa, porque cambiar de proveedor no lo arreglaría y taparía el
+problema real. Cada intento nuevo vuelve a empezar por OpenAI, así que al
+reponer el crédito Catalina regresa sola a la voz principal.
+
+Los dos transportes no se parecen: OpenAI negocia **WebRTC** y el audio viaja por
+una pista de medios; Gemini es un **WebSocket con PCM crudo**, así que
+`gemini-session.js` hace a mano lo que WebRTC hacía solo —capturar el micrófono,
+remuestrear a 16 kHz, trocear, y recomponer en orden el audio de 24 kHz que
+llega—. Ese audio se vuelca en un `MediaStream` propio para que el analizador de
+labios funcione igual con los dos.
+
 En **Modo Meet** los subtítulos siguen visibles si están encendidos —son parte
 de lo que se quiere capturar— y el historial se oculta con el resto del mando.
+
+## Docencia médica
+
+Catalina explica anatomía y temas médicos apoyándose en dos herramientas que
+ella misma decide cuándo usar. Ninguna inventa nada:
+
+- **`buscar_imagen_medica`** recupera una lámina ya publicada de Wikimedia
+  Commons —planchas de atlas y diagramas didácticos— y la muestra con su autor,
+  su licencia y un enlace a la ficha de origen.
+- **`buscar_referencias`** busca en PubMed artículos que respalden el concepto
+  que está explicando, con autores, revista, año y enlace.
+
+La imagen y las referencias son cosas distintas a propósito: la lámina acredita
+a quien la dibujó, y lo que se afirma al explicar necesita su propio respaldo en
+la literatura.
+
+**No hay generación de imágenes, y es deliberado.** Una lámina anatómica creada
+por un modelo parece correcta sin serlo: inventa vasos, desplaza inserciones y
+rotula mal, y en docencia eso se aprende como si fuera cierto. Todo lo que
+aparece en pantalla existía antes de preguntar y se puede comprobar en su
+fuente.
+
+Dos detalles de la búsqueda que cuestan de adivinar:
+
+- La consulta a Commons va escueta (`estructura + "diagram"`). Con grupos de
+  `OR` el buscador reparte el peso entre esas palabras y diluye el término real:
+  para «nephron» llegaba a devolver anatomía de poliqueto y de caracol.
+- La ordenación es jerárquica: primero que la lámina trate del tema, después que
+  esté dibujada. Al revés —premiando sólo el «parece dibujo»— devolvía un
+  esquema de caracol en SVG para una consulta de plexo braquial.
+
+Ni Commons ni PubMed necesitan clave.
 
 ## En el teléfono
 
