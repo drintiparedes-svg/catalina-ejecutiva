@@ -5,6 +5,12 @@ cd "${0:A:h}"
 # Node.js. Al abrir con doble clic el PATH puede venir incompleto, así que
 # además de buscarlo en el entorno se prueban las rutas habituales de macOS:
 # Homebrew en Apple Silicon, Homebrew en Intel, instalador oficial y nvm.
+#
+# NULL_GLOB es imprescindible: sin él, zsh aborta con «no matches found» al
+# llegar al comodín de nvm en un equipo que no use nvm, y el script muere antes
+# de haber probado el resto de candidatos.
+setopt NULL_GLOB
+
 CATALINA_NODE=""
 if command -v node >/dev/null 2>&1; then
   CATALINA_NODE="$(command -v node)"

@@ -207,6 +207,28 @@ labios funcione igual con los dos.
 En **Modo Meet** los subtítulos siguen visibles si están encendidos —son parte
 de lo que se quiere capturar— y el historial se oculta con el resto del mando.
 
+## Continuar en otro equipo
+
+```bash
+git clone https://github.com/drintiparedes-svg/catalina-avatar.git
+cd catalina-avatar
+cp .env.example .env      # y pega ahí tus claves
+./start.command
+```
+
+Hace falta Node.js (LTS, desde nodejs.org). No hay dependencias que instalar:
+el proyecto no usa `npm install`.
+
+Las **claves no viajan** en el repositorio —`.env` está en `.gitignore`—, así que
+hay que volver a pegarlas en el equipo nuevo. Se sacan de
+[OpenAI](https://platform.openai.com/api-keys) y de
+[Google AI Studio](https://aistudio.google.com/apikey). Sólo la de OpenAI es
+imprescindible para hablar; sin la de Gemini se pierde el respaldo, y las láminas
+y referencias funcionan igual porque no dependen de ninguna clave.
+
+`.claude/launch.json` tampoco viaja: apunta al Node del equipo donde se escribió.
+Si usas el editor con vista previa, créalo con la ruta que dé `which node`.
+
 ## Docencia médica
 
 Catalina explica anatomía y temas médicos apoyándose en dos herramientas que

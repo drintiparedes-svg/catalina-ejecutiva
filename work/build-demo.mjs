@@ -6,8 +6,12 @@
 // imagen por sus bytes: así el autónomo nunca se queda atrás respecto del que
 // se usa a diario.
 import { readFileSync, writeFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
-const ROOT = "/Users/intiparedes/Documents/Codex/2026-08-17/CATALINA";
+// La raíz se deduce de dónde está este archivo (work/), no se escribe a mano:
+// con una ruta absoluta el empaquetado sólo funcionaba en el equipo donde se
+// escribió.
+const ROOT = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/, "");
 const FUENTE = `${ROOT}/public/banco.html`;
 
 // El orden importa: cada módulo debe ir después de aquellos de los que depende,

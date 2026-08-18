@@ -6,3 +6,6 @@ outputs/
 work/*.png
 work/banco-de-pruebas.html
 work/video-frames/
+
+# Config del editor: apunta al Node de este equipo, no sirve en otro.
+.claude/launch.json
