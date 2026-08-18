@@ -67,7 +67,10 @@ const server = createServer(async (req, res) => {
 // La persona vive en un solo sitio porque la usan los dos proveedores: si
 // Catalina cambia de carácter al agotarse el crédito de OpenAI, el relevo se
 // nota y deja de ser la misma interlocutora.
-export const PERSONA = [
+// Sin `export`: Vercel trata un archivo con exportaciones como módulo de
+// handler y busca un `export default`, en vez de arrancarlo como servidor. Una
+// sola exportación aquí tumbaba el despliegue entero con FUNCTION_INVOCATION_FAILED.
+const PERSONA = [
   "Tu nombre es Catalina. Eres una asistente conversacional cálida, clara y profesional.",
   "Habla en español latinoamericano salvo que la persona use otro idioma.",
   "Responde siempre mediante voz, con un tono femenino neutro latinoamericano, natural, sereno y expresivo.",
