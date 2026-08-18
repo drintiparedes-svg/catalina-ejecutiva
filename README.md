@@ -123,6 +123,8 @@ public/
   audio/voice-shape.js   formantes y sibilantes → forma de boca
   animation/director.js  actuación: estados, gestos y sus relojes
   animation/math.js      resortes, amortiguación y ruido
+  animation/tuning.js    calibración de la apertura de boca
+  banco.html             banco de pruebas, servido en /banco.html
   render/rig.js          puntos anatómicos medidos sobre la fotografía
   render/mouth-layer.js  mandíbula, labios y cavidad
   render/eyes-layer.js   mirada y parpadeo
@@ -132,18 +134,26 @@ work/
   render_contact_sheet.mjs  hoja de contactos de posturas, sin navegador
   render_expression_sheet.mjs  hoja de las seis expresiones
   smoke.mjs                 900 cuadros por los cuatro estados
-  demo-template.html        banco de pruebas interactivo (plantilla)
-  build-demo.mjs            lo empaqueta en una página autónoma
+  build-demo.mjs            empaqueta el banco en una página autónoma
   banco-de-pruebas.html     resultado: se abre con doble clic, sin servidor
   comparacion-referencia.png  boca de Catalina junto a la referencia buscada
 ```
 
-`work/banco-de-pruebas.html` lleva dentro los módulos reales y la fotografía, así
-que funciona sin servidor ni conexión. Sirve para ver la boca de cerca y fijar
-cualquier postura sin gastar una sesión de la API. Se regenera con:
+## Banco de pruebas
+
+El banco vive en `public/banco.html` y se abre en **`/banco.html`**, tanto en
+local como en el despliegue. Importa los módulos reales del avatar, así que
+siempre muestra el mismo código que corre en la aplicación.
+
+Sirve para ver la boca de cerca y fijar cualquier postura sin gastar una sesión
+de la API. El panel **Calibración de apertura** mueve en vivo los cinco valores
+de `public/animation/tuning.js`; cuando la boca se vea bien, «Copiar valores»
+deja el bloque listo para pegar en ese archivo y que el cambio sea permanente.
+
+Para llevárselo sin servidor ni conexión (doble clic, o por correo):
 
 ```bash
-node work/build-demo.mjs work/demo-template.html work/banco-de-pruebas.html
+node work/build-demo.mjs work/banco-de-pruebas.html
 ```
 
 Para revisar un cambio de anatomía sin abrir el navegador:

@@ -17,11 +17,12 @@
 // coinciden y la piel no se rompe.
 
 import { clamp, mix, smoothstep } from "../animation/math.js";
+import { TUNING } from "../animation/tuning.js";
 import { MOUTH } from "./rig.js";
 import { Surface, createSurface } from "./surface.js";
 
-const JAW_TRAVEL = 16;       // recorrido máximo del mentón, en píxeles de imagen
-const LIP_EVERT = 8.5;       // apertura extra del labio inferior sobre la mandíbula
+// El recorrido del mentón y la eversión del labio viven en TUNING: son los dos
+// valores que hay que ver en la cara para acertar, no calcular.
 const CORNER_RATIO = .34;    // parte del recorrido mandibular que sigue la comisura
 const SMILE_PULL = 5.0;      // recorrido de la comisura entre labios recogidos y estirados
 const CURL_PULL = 9.0;       // recorrido de la comisura por expresión (sonrisa o desagrado)
@@ -110,7 +111,7 @@ export class MouthLayer {
     const cx = MOUTH.centerX;
     const seamY = MOUTH.seamY;
     const halfWidth = MOUTH.halfWidth;
-    const jawShift = jaw * JAW_TRAVEL;
+    const jawShift = jaw * TUNING.jawTravel;
     const cornerDrop = jawShift * CORNER_RATIO;
 
     // Los labios se estiran al sonreír o al articular /i/ y se recogen al
@@ -120,7 +121,7 @@ export class MouthLayer {
     // El labio superior sube poco: en un rostro real recorre menos de un
     // tercio de lo que baja el inferior.
     const lift = Math.max(-1.2, open * (5.4 + spread * 1.8 - round * 1.9) - press * 1.1);
-    const evert = Math.max(-1, open * LIP_EVERT * (1 - round * .30) - press * 1.4);
+    const evert = Math.max(-1, open * TUNING.lipEvert * (1 - round * .30) - press * 1.4);
 
     // Tracción de las comisuras. Al articular vocales anteriores el cigomático
     // tira de la comisura hacia arriba y al redondear la deja caer. Sin este

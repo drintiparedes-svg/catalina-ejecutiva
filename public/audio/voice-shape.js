@@ -16,17 +16,19 @@
 // mueve como una boca real en vez de saltar entre posturas.
 
 import { clamp, damp, smoothstep } from "../animation/math.js";
+import { TUNING } from "../animation/tuning.js";
 
 // Calibración. Los rangos de búsqueda son los formantes de una voz femenina;
-// los cuatro valores de mapeo están ajustados sobre la distribución real de la
-// voz de la API (F1: p25≈360, mediana≈418, p75≈500, máx≈786; F2: p25≈1304,
+// los valores de mapeo están ajustados sobre la distribución real de la voz de
+// la API (F1: p25≈360, mediana≈418, p75≈500, máx≈786; F2: p25≈1304,
 // mediana≈1496, p75≈1789, máx≈2610). Con la calibración teórica de libro la
 // boca apenas se abría, porque el habla conversacional casi nunca llega a los
 // extremos de la tabla de vocales aisladas.
+//
+// Los dos cortes de F1 y la ganancia de apertura viven en TUNING porque son los
+// que se afinan a ojo desde el banco de pruebas; el resto es fijo.
 const F1_RANGE = [250, 1050];
 const F2_RANGE = [950, 2900];
-const F1_CLOSED = 335;
-const F1_OPEN = 620;
 const F2_BACK = 1050;
 const F2_FRONT = 2050;
 
@@ -133,7 +135,7 @@ export class VoiceShape {
       this.f2 = damp(this.f2, this.#centroid(...F2_RANGE), dt, .038);
     }
 
-    const openness = clamp((this.f1 - F1_CLOSED) / (F1_OPEN - F1_CLOSED));
+    const openness = clamp((this.f1 - TUNING.f1Closed) / (TUNING.f1Open - TUNING.f1Closed));
     const frontness = clamp((this.f2 - F2_BACK) / (F2_FRONT - F2_BACK));
 
     // La media móvil larga guarda memoria de si veníamos hablando: es lo que
@@ -146,7 +148,8 @@ export class VoiceShape {
     const closure = smoothstep(CLOSURE_QUIET * 1.9, CLOSURE_QUIET, loudness)
       * smoothstep(CLOSURE_LOUD * .7, CLOSURE_LOUD, this.recentLoudness);
 
-    let open = openness * (.55 + .45 * loudness) * smoothstep(.015, .09, this.energy);
+    let open = openness * (.55 + .45 * loudness) * TUNING.openGain
+      * smoothstep(.015, .09, this.energy);
     let spread = .5 + (frontness - .5) * .62;
     let round = clamp((.55 - frontness) / .55) * (1 - openness * .75);
 

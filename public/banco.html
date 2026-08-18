@@ -349,12 +349,40 @@
       </div>
     </section>
 
+    <section class="grupo">
+      <p class="etiqueta">Calibración de apertura</p>
+      <div class="control">
+        <div class="control-cabecera"><span>Ganancia</span><span id="vGanancia">1.32</span></div>
+        <input type="range" id="sGanancia" min="80" max="220" value="132" aria-label="Ganancia de apertura">
+      </div>
+      <div class="control">
+        <div class="control-cabecera"><span>F1 abierta (Hz)</span><span id="vF1Open">560</span></div>
+        <input type="range" id="sF1Open" min="420" max="760" value="560" aria-label="Formante F1 de boca abierta">
+      </div>
+      <div class="control">
+        <div class="control-cabecera"><span>F1 cerrada (Hz)</span><span id="vF1Closed">335</span></div>
+        <input type="range" id="sF1Closed" min="250" max="420" value="335" aria-label="Formante F1 de boca cerrada">
+      </div>
+      <div class="control">
+        <div class="control-cabecera"><span>Mentón (px)</span><span id="vMenton">18.0</span></div>
+        <input type="range" id="sMenton" min="80" max="300" value="180" aria-label="Recorrido del mentón">
+      </div>
+      <div class="control">
+        <div class="control-cabecera"><span>Labio (px)</span><span id="vLabio">9.5</span></div>
+        <input type="range" id="sLabio" min="40" max="180" value="95" aria-label="Eversión del labio inferior">
+      </div>
+      <button id="copiarTuning">Copiar valores</button>
+      <p class="nota" id="notaTuning">Ajusta con <b>Reproducir frase</b> en marcha y el encuadre en <b>Boca</b>. «Copiar valores» deja el bloque listo para pegar en <code>public/animation/tuning.js</code>.</p>
+    </section>
+
     <p class="nota">La arcada superior tiene <b>altura fija</b>: al abrir más la boca no crecen los dientes, crece la cavidad de debajo. Por eso el porcentaje sube rápido al empezar a abrir y luego se estabiliza.</p>
   </aside>
 </div>
 
-<script>
-/*__BUNDLE__*/
+<script type="module">
+import { PerformanceDirector } from "./animation/director.js";
+import { FaceRenderer } from "./render/face-renderer.js";
+import { TUNING } from "./animation/tuning.js";
 
 /* ===== banco de pruebas ===== */
 
@@ -412,7 +440,7 @@ imagen.onload = () => {
   redimensionar();
   requestAnimationFrame(dibujar);
 };
-imagen.src = "__IMAGE__";
+imagen.src = "assets/catalina.png";
 
 window.addEventListener("resize", redimensionar);
 
@@ -584,4 +612,50 @@ for (const id of ["sApertura", "sEstirado", "sRedondeo", "sCierre"]) {
     texto("v" + id.slice(1), (control.valueAsNumber / 100).toFixed(2));
   });
 }
+
+/* ---------- calibración de apertura ---------- */
+
+// Cada mando escribe directo sobre TUNING, que es el mismo objeto que leen
+// voice-shape y mouth-layer en cada cuadro. Por eso el cambio se ve al instante
+// y sin recargar: no hay copia intermedia que sincronizar.
+const MANDOS = [
+  { id: "sGanancia", lectura: "vGanancia", clave: "openGain",  escala: 100, decimales: 2 },
+  { id: "sF1Open",   lectura: "vF1Open",   clave: "f1Open",    escala: 1,   decimales: 0 },
+  { id: "sF1Closed", lectura: "vF1Closed", clave: "f1Closed",  escala: 1,   decimales: 0 },
+  { id: "sMenton",   lectura: "vMenton",   clave: "jawTravel", escala: 10,  decimales: 1 },
+  { id: "sLabio",    lectura: "vLabio",    clave: "lipEvert",  escala: 10,  decimales: 1 }
+];
+
+for (const mando of MANDOS) {
+  const control = document.querySelector("#" + mando.id);
+  control.addEventListener("input", () => {
+    const valor = control.valueAsNumber / mando.escala;
+    TUNING[mando.clave] = valor;
+    texto(mando.lectura, valor.toFixed(mando.decimales));
+    // F1 cerrada nunca puede alcanzar a F1 abierta: el denominador se anularía
+    // y la apertura saltaría a infinito.
+    if (TUNING.f1Closed > TUNING.f1Open - 60) {
+      TUNING.f1Closed = TUNING.f1Open - 60;
+      document.querySelector("#sF1Closed").value = String(Math.round(TUNING.f1Closed));
+      texto("vF1Closed", TUNING.f1Closed.toFixed(0));
+    }
+  });
+}
+
+document.querySelector("#copiarTuning").addEventListener("click", async () => {
+  const bloque = [
+    "  f1Closed: " + TUNING.f1Closed.toFixed(0) + ",",
+    "  f1Open: " + TUNING.f1Open.toFixed(0) + ",",
+    "  openGain: " + TUNING.openGain.toFixed(2) + ",",
+    "  jawTravel: " + TUNING.jawTravel.toFixed(1) + ",",
+    "  lipEvert: " + TUNING.lipEvert.toFixed(1)
+  ].join("\n");
+  try {
+    await navigator.clipboard.writeText(bloque);
+    texto("notaTuning", "Copiado. Pégalo dentro de TUNING en public/animation/tuning.js.");
+  } catch {
+    // Sin permiso de portapapeles (pasa al abrir el archivo con file://).
+    texto("notaTuning", bloque);
+  }
+});
 </script>
