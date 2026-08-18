@@ -1,8 +1,4 @@
 {
-  "rewrites": [
-    { "source": "/session", "destination": "/api/session" },
-    { "source": "/health", "destination": "/api/health" }
-  ],
   "headers": [
     {
       "source": "/(.*)",
