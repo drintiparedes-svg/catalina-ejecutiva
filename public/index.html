@@ -19,15 +19,28 @@
         <p class="status" id="status">Lista para comenzar</p>
       </div>
     </section>
-    <section class="transcript" id="transcript" aria-live="polite"></section>
+    <section class="caption" id="caption" aria-live="polite" data-visible="false"></section>
+
+    <aside class="panel" id="panel" data-open="false" aria-label="Historial de la conversación">
+      <header class="panel-head">
+        <span class="panel-title">Conversación</span>
+        <button class="panel-close" id="panelClose" aria-label="Cerrar el historial">&minus;</button>
+      </header>
+      <div class="panel-body" id="panelBody">
+        <p class="panel-empty">Lo que diga Catalina irá quedando aquí.</p>
+      </div>
+    </aside>
+
     <nav class="controls" aria-label="Controles">
       <button class="primary" id="connect">Iniciar conversación</button>
       <button id="mute" disabled>Silenciar micrófono</button>
+      <button id="toggleCaption" aria-pressed="false" title="Muestra lo que dice Catalina sobre el vídeo">Subtítulos</button>
+      <button id="togglePanel" aria-pressed="false" title="Abre el historial de la conversación">Historial</button>
       <button id="meetMode" title="Oculta los controles para capturar la ventana">Modo Meet</button>
     </nav>
     <button class="exit-meet" id="exitMeet" aria-label="Salir del modo Meet">Mostrar controles</button>
   </main>
   <audio id="remoteAudio" autoplay></audio>
-  <script type="module" src="app.js?v=22"></script>
+  <script type="module" src="app.js?v=23"></script>
 </body>
 </html>

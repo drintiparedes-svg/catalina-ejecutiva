@@ -171,6 +171,26 @@ npm run check
 Desde la consola del navegador, `catalina.director.setState("speaking")` fuerza
 un estado para inspeccionar la actuación.
 
+## Subtítulos e historial
+
+Los dos nacen **apagados**: leer lo mismo que se está oyendo compite con la
+cara, que es lo que sostiene la conversación.
+
+- **Subtítulos** (tecla `S`) muestra sobre la imagen sólo el turno en curso.
+- **Historial** guarda todos los turnos con su hora, en un panel lateral que se
+  cierra con `Esc`.
+
+La elección se recuerda entre sesiones. El historial se registra siempre, aunque
+esté cerrado, así que al abrirlo aparece lo dicho hasta ese momento. Los avisos
+de error de conexión pasan por encima de la preferencia: si hay algo que leer,
+se lee.
+
+Sólo se transcribe la voz de Catalina. Transcribir además la de la persona
+requiere activar `input_audio_transcription` en la sesión, con su costo aparte.
+
+En **Modo Meet** los subtítulos siguen visibles si están encendidos —son parte
+de lo que se quiere capturar— y el historial se oculta con el resto del mando.
+
 ## Usarlo en Google Meet
 
 1. Abre Catalina y activa **Modo Meet** (o presiona `H`).

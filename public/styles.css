@@ -20,22 +20,81 @@ body { background: radial-gradient(circle at 50% 45%, #122333 0%, #050b12 50%, #
 h1 { margin: 0; font-size: clamp(26px, 4vw, 44px); font-weight: 420; letter-spacing: -.035em; }
 .status { margin: 4px 0 0; color: #d1e5ef; font-size: 13px; }
 
-.transcript { position: absolute; left: 50%; bottom: 108px; width: min(720px, calc(100% - 48px)); transform: translateX(-50%); min-height: 24px; padding: 10px 18px; color: rgba(240,250,255,.92); font-size: clamp(15px, 2vw, 20px); line-height: 1.4; text-align: center; text-shadow: 0 2px 12px #000; }
+/* Subtítulo. Va apagado salvo que se pida: el texto sobre la cara distrae y
+   compite con la mirada, que es lo que sostiene la conversación. Cuando se
+   enciende es una tarjeta con fondo propio, no letras flotando: así se lee sin
+   depender de lo oscura que esté la imagen debajo. */
+.caption {
+  position: absolute; left: 50%; bottom: calc(var(--controles, 90px) + 16px); transform: translateX(-50%) translateY(8px);
+  width: max-content; max-width: min(760px, calc(100% - 48px));
+  padding: 13px 22px; border: 1px solid rgba(180,225,245,.14); border-radius: 16px;
+  background: rgba(4,12,20,.62); backdrop-filter: blur(20px) saturate(1.25);
+  box-shadow: 0 14px 40px rgba(0,0,0,.4);
+  color: rgba(242,251,255,.96); font-size: clamp(15px, 1.9vw, 20px); line-height: 1.45;
+  text-align: center; text-wrap: balance;
+  opacity: 0; visibility: hidden; transition: opacity .26s ease, transform .26s ease, visibility .26s;
+}
+.caption[data-visible="true"] { opacity: 1; visibility: visible; transform: translateX(-50%) translateY(0); }
+
+/* Panel de historial. Mismo vidrio que los controles para que se lea como parte
+   de la misma pieza y no como una ventana pegada encima. */
+.panel {
+  position: absolute; right: 26px; top: 92px; bottom: calc(var(--controles, 90px) + 12px); width: min(350px, 33vw);
+  display: flex; flex-direction: column;
+  border: 1px solid rgba(180,225,245,.16); border-radius: 20px;
+  background: rgba(5,14,23,.66); backdrop-filter: blur(22px) saturate(1.2);
+  box-shadow: 0 18px 50px rgba(0,0,0,.42);
+  opacity: 0; visibility: hidden; transform: translateX(14px);
+  transition: opacity .3s ease, transform .3s ease, visibility .3s;
+}
+.panel[data-open="true"] { opacity: 1; visibility: visible; transform: translateX(0); }
+
+.panel-head { display: flex; align-items: center; justify-content: space-between; padding: 15px 12px 11px 18px; border-bottom: 1px solid rgba(180,225,245,.1); }
+.panel-title { color: #a9d8ec; font-size: 10px; font-weight: 700; letter-spacing: .2em; text-transform: uppercase; }
+.panel-close { min-height: 26px; padding: 0 10px; border-radius: 8px; border-color: transparent; background: transparent; color: #a9d8ec; font-size: 17px; line-height: 1; }
+
+.panel-body { flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: 6px 18px 18px; scrollbar-width: thin; scrollbar-color: rgba(180,225,245,.22) transparent; }
+.panel-empty { margin: 14px 0 0; color: rgba(209,229,239,.5); font-size: 13px; line-height: 1.5; }
+
+.turno { margin: 16px 0 0; }
+.turno-cabecera { display: flex; align-items: baseline; gap: 8px; margin-bottom: 5px; }
+.turno-quien { color: #eaf8ff; font-size: 12px; font-weight: 600; }
+.turno-hora { color: rgba(209,229,239,.42); font-size: 11px; font-variant-numeric: tabular-nums; }
+.turno-texto { margin: 0; color: rgba(233,246,252,.86); font-size: 14px; line-height: 1.5; }
+.turno[data-vivo="true"] .turno-texto::after { content: "▍"; margin-left: 1px; color: rgba(115,245,255,.7); animation: cursor 1.05s steps(2) infinite; }
+
 .controls { position: absolute; left: 50%; bottom: 30px; display: flex; gap: 10px; transform: translateX(-50%); padding: 8px; border: 1px solid rgba(180,225,245,.16); border-radius: 18px; background: rgba(5,14,23,.72); backdrop-filter: blur(18px); box-shadow: 0 12px 38px rgba(0,0,0,.35); }
+button[aria-pressed="true"] { border-color: rgba(109,228,255,.42); background: rgba(109,228,255,.16); color: #d6f6ff; }
 button { min-height: 42px; padding: 0 17px; border: 1px solid rgba(184,226,246,.2); border-radius: 12px; background: rgba(255,255,255,.06); color: #eaf8ff; font: inherit; cursor: pointer; transition: .18s ease; }
 button:hover:not(:disabled) { background: rgba(255,255,255,.12); transform: translateY(-1px); }
 button:disabled { opacity: .42; cursor: default; }
 button.primary { border-color: rgba(109,228,255,.45); background: linear-gradient(135deg, rgba(25,134,173,.85), rgba(39,82,126,.9)); }
 .exit-meet { display: none; position: absolute; right: 16px; bottom: 16px; opacity: 0; }
 
-.meet .identity, .meet .transcript, .meet .controls { display: none; }
+/* En modo Meet se esconde el mando, no el contenido: los subtítulos son parte
+   de lo que se quiere capturar, así que si están encendidos siguen ahí y bajan
+   a ocupar el hueco que dejan los controles. El historial sí se va: es chrome. */
+.meet .identity, .meet .controls, .meet .panel { display: none; }
+.meet .caption { bottom: 44px; }
 .meet .exit-meet { display: block; }
 .meet:hover .exit-meet { opacity: .45; }
 
 @keyframes pulse { 50% { box-shadow: 0 0 24px 4px rgba(115,245,255,.5); } }
+@keyframes cursor { 50% { opacity: 0; } }
+
 @media (max-width: 650px) {
   .identity { top: 20px; left: 20px; }
   .controls { width: calc(100% - 24px); flex-wrap: wrap; justify-content: center; bottom: 12px; }
   button { flex: 1 1 140px; }
-  .transcript { bottom: 128px; }
+  /* En pantalla estrecha el panel no cabe al lado: pasa a ocupar el ancho
+     completo por encima de los controles, que aquí ya son dos o tres filas. */
+  .panel { right: 12px; left: 12px; top: auto; width: auto; height: min(46vh, 340px); }
+  /* Con el panel abierto el subtítulo repetiría el mismo texto que se está
+     leyendo justo debajo, así que cede el sitio. */
+  .stage:has(.panel[data-open="true"]) .caption { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .caption, .panel { transition: opacity .01s; }
+  .turno[data-vivo="true"] .turno-texto::after { animation: none; }
 }

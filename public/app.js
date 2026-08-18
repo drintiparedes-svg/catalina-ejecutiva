@@ -17,7 +17,13 @@ const ui = {
   stage: document.querySelector("#stage"),
   status: document.querySelector("#status"),
   signal: document.querySelector("#signal"),
-  transcript: document.querySelector("#transcript"),
+  caption: document.querySelector("#caption"),
+  panel: document.querySelector("#panel"),
+  panelBody: document.querySelector("#panelBody"),
+  panelClose: document.querySelector("#panelClose"),
+  toggleCaption: document.querySelector("#toggleCaption"),
+  togglePanel: document.querySelector("#togglePanel"),
+  controls: document.querySelector(".controls"),
   connect: document.querySelector("#connect"),
   mute: document.querySelector("#mute"),
   meetMode: document.querySelector("#meetMode"),
@@ -46,6 +52,7 @@ const session = new RealtimeSession({
   },
   onConnected: () => {
     connected = true;
+    mostrarAviso("");   // si el intento anterior falló, su aviso ya no aplica
     ui.signal.classList.add("online");
     ui.connect.textContent = "Finalizar";
     ui.connect.disabled = false;
@@ -53,6 +60,13 @@ const session = new RealtimeSession({
   },
   onDisconnected: () => {
     connected = false;
+    // El historial se conserva: sirve para releer lo dicho al terminar. Lo que
+    // se va es el subtítulo, que sólo tiene sentido mientras Catalina habla.
+    cerrarTurno();
+    if (!avisoActivo) {
+      ui.caption.textContent = "";
+      ui.caption.dataset.visible = "false";
+    }
     voice.destroy();
     ui.audio.srcObject = null;
     ui.signal.classList.remove("online");
@@ -73,12 +87,17 @@ const session = new RealtimeSession({
     if (phase === "idle") director.setExpression("neutra");
   },
   onStatus: setStatus,
-  onHelp: text => { ui.transcript.textContent = text; },
+  // Los avisos del sistema se muestran siempre, aunque los subtítulos estén
+  // apagados: son cosas que la persona necesita leer para poder seguir.
+  onHelp: mostrarAviso,
   onTranscript: text => {
-    ui.transcript.textContent = text;
+    anotarTurno(text);
     aplicarExpresionDeFrase(text);
   },
-  onResponseDone: () => { respuestaCerrada = true; }
+  onResponseDone: () => {
+    respuestaCerrada = true;
+    cerrarTurno();
+  }
 });
 
 image.src = "assets/catalina.png";
@@ -89,11 +108,6 @@ image.onload = () => {
 
 window.addEventListener("resize", resize);
 resize();
-
-if (location.protocol === "file:") {
-  setStatus("Ejecuta start.command para activar la voz");
-  ui.transcript.textContent = "La imagen funciona, pero el micrófono y la API requieren http://127.0.0.1:4173.";
-}
 
 ui.connect.addEventListener("click", () => {
   if (connected) return session.disconnect();
@@ -107,9 +121,18 @@ ui.mute.addEventListener("click", () => {
 });
 ui.meetMode.addEventListener("click", () => ui.stage.classList.add("meet"));
 ui.exitMeet.addEventListener("click", () => ui.stage.classList.remove("meet"));
+ui.toggleCaption.addEventListener("click", () => fijarSubtitulos(!verSubtitulos));
+ui.togglePanel.addEventListener("click", () => fijarPanel(!verPanel));
+ui.panelClose.addEventListener("click", () => fijarPanel(false));
 document.addEventListener("keydown", event => {
-  if (event.key.toLowerCase() === "h") ui.stage.classList.toggle("meet");
-  if (event.key === "Escape") ui.stage.classList.remove("meet");
+  if (event.target.matches("input, textarea")) return;
+  const tecla = event.key.toLowerCase();
+  if (tecla === "h") ui.stage.classList.toggle("meet");
+  if (tecla === "s") fijarSubtitulos(!verSubtitulos);
+  if (event.key === "Escape") {
+    if (verPanel) fijarPanel(false);
+    else ui.stage.classList.remove("meet");
+  }
 });
 document.addEventListener("pointerdown", () => {
   voice.resume();
@@ -118,6 +141,147 @@ document.addEventListener("pointerdown", () => {
 
 function setStatus(text) {
   ui.status.textContent = text;
+}
+
+// Subtítulos e historial.
+//
+// Los dos nacen apagados a propósito: leer lo mismo que se está oyendo compite
+// con la cara, que es lo que sostiene la conversación. Quien los quiera los
+// enciende, y la elección se recuerda para no tener que repetirla cada vez.
+//
+// El texto vivo y el historial son la misma fuente vista de dos maneras: el
+// subtítulo muestra sólo el turno en curso; el panel los guarda todos.
+const PREFS = "catalina.vista";
+let verSubtitulos = false;
+let verPanel = false;
+let turnoVivo = null;   // { nodo, texto } del turno que Catalina está diciendo
+let avisoActivo = false;
+
+try {
+  const guardado = JSON.parse(localStorage.getItem(PREFS) || "{}");
+  verSubtitulos = guardado.subtitulos === true;
+  verPanel = guardado.panel === true;
+} catch {
+  // Almacenamiento bloqueado (modo privado): se sigue con todo apagado.
+}
+
+// Cuánto espacio ocupan los controles contado desde el borde inferior. El
+// subtítulo y el panel se apoyan en esta medida en vez de en un número fijo,
+// porque en pantalla estrecha los botones se reparten en varias filas y la
+// altura cambia sola (y también al pasar de «Iniciar conversación» a
+// «Finalizar», que es más corto y puede recolocar la fila).
+function medirControles() {
+  const alto = window.innerHeight - ui.controls.getBoundingClientRect().top;
+  ui.stage.style.setProperty("--controles", `${Math.max(0, Math.round(alto))}px`);
+}
+
+new ResizeObserver(medirControles).observe(ui.controls);
+window.addEventListener("resize", medirControles);
+medirControles();
+
+function guardarPreferencias() {
+  try {
+    localStorage.setItem(PREFS, JSON.stringify({ subtitulos: verSubtitulos, panel: verPanel }));
+  } catch {}
+}
+
+function fijarSubtitulos(activo) {
+  verSubtitulos = activo;
+  ui.toggleCaption.setAttribute("aria-pressed", String(activo));
+  // Un aviso del sistema manda sobre la preferencia: si hay algo que leer, se
+  // lee, y al apagarse el aviso vuelve a mandar la preferencia.
+  if (!activo && !avisoActivo) ui.caption.dataset.visible = "false";
+  else if (activo && ui.caption.textContent.trim()) ui.caption.dataset.visible = "true";
+  guardarPreferencias();
+}
+
+function fijarPanel(activo) {
+  verPanel = activo;
+  ui.panel.dataset.open = String(activo);
+  ui.togglePanel.setAttribute("aria-pressed", String(activo));
+  if (activo) ui.panelBody.scrollTop = ui.panelBody.scrollHeight;
+  guardarPreferencias();
+}
+
+function mostrarAviso(texto) {
+  avisoActivo = Boolean(texto);
+  ui.caption.textContent = texto;
+  ui.caption.dataset.visible = String(avisoActivo);
+}
+
+// Cada delta trae el turno entero acumulado, no sólo lo nuevo, así que se
+// reescribe el mismo nodo en vez de ir añadiendo trozos.
+function anotarTurno(texto) {
+  if (!texto) {
+    // La sesión manda texto vacío cuando la persona empieza a hablar: se cierra
+    // lo que hubiera y se limpia el subtítulo.
+    cerrarTurno();
+    if (!avisoActivo) {
+      ui.caption.textContent = "";
+      ui.caption.dataset.visible = "false";
+    }
+    return;
+  }
+
+  if (avisoActivo) avisoActivo = false;
+  ui.caption.textContent = texto;
+  ui.caption.dataset.visible = String(verSubtitulos);
+
+  if (!turnoVivo) turnoVivo = crearTurno();
+  turnoVivo.texto.textContent = texto;
+
+  // Sólo se sigue el fondo si ya estábamos abajo: si la persona subió a releer
+  // algo, el texto nuevo no le arrebata la posición.
+  const alFondo = ui.panelBody.scrollHeight - ui.panelBody.scrollTop - ui.panelBody.clientHeight < 60;
+  if (alFondo) ui.panelBody.scrollTop = ui.panelBody.scrollHeight;
+}
+
+function crearTurno() {
+  ui.panelBody.querySelector(".panel-empty")?.remove();
+
+  const nodo = document.createElement("article");
+  nodo.className = "turno";
+  nodo.dataset.vivo = "true";
+
+  const cabecera = document.createElement("div");
+  cabecera.className = "turno-cabecera";
+
+  const quien = document.createElement("span");
+  quien.className = "turno-quien";
+  quien.textContent = "Catalina";
+
+  const hora = document.createElement("time");
+  hora.className = "turno-hora";
+  const ahora = new Date();
+  hora.dateTime = ahora.toISOString();
+  hora.textContent = ahora.toLocaleTimeString("es", { hour: "2-digit", minute: "2-digit" });
+
+  const texto = document.createElement("p");
+  texto.className = "turno-texto";
+
+  cabecera.append(quien, hora);
+  nodo.append(cabecera, texto);
+  ui.panelBody.append(nodo);
+  return { nodo, texto };
+}
+
+function cerrarTurno() {
+  if (!turnoVivo) return;
+  // Un turno sin texto no deja rastro: pasa cuando la respuesta se interrumpe
+  // antes de que llegue el primer delta.
+  if (!turnoVivo.texto.textContent.trim()) turnoVivo.nodo.remove();
+  else turnoVivo.nodo.dataset.vivo = "false";
+  turnoVivo = null;
+}
+
+fijarSubtitulos(verSubtitulos);
+fijarPanel(verPanel);
+
+// Va después de fijar la vista: el aviso necesita que el estado ya exista, y
+// además debe poder pasar por encima de unos subtítulos apagados.
+if (location.protocol === "file:") {
+  setStatus("Ejecuta start.command para activar la voz");
+  mostrarAviso("La imagen funciona, pero el micrófono y la API requieren http://127.0.0.1:4173.");
 }
 
 // Fin de turno.
