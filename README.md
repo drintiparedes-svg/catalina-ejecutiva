@@ -191,6 +191,22 @@ requiere activar `input_audio_transcription` en la sesión, con su costo aparte.
 En **Modo Meet** los subtítulos siguen visibles si están encendidos —son parte
 de lo que se quiere capturar— y el historial se oculta con el resto del mando.
 
+## En el teléfono
+
+La altura va en `100dvh`: en Safari de iPhone `100vh` mide con la barra de
+direcciones plegada, así que el pie de la interfaz quedaba por debajo del borde
+visible. El lienzo se rehace además con `visualViewport`, que es quien avisa
+cuando esa barra aparece o desaparece.
+
+Los márgenes usan `env(safe-area-inset-*)` con `viewport-fit=cover`: el retrato
+llega al borde de la pantalla y sólo los controles se apartan de la muesca y de
+la barra inferior.
+
+En vertical los cinco botones se reparten en una rejilla de dos filas —acción y
+micrófono arriba, los tres interruptores debajo— y el panel pasa a ocupar el
+ancho completo por encima de ellos. En horizontal el panel se estira de arriba
+abajo y la identidad se reduce al nombre.
+
 ## Usarlo en Google Meet
 
 1. Abre Catalina y activa **Modo Meet** (o presiona `H`).

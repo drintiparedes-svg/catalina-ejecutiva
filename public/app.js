@@ -106,7 +106,21 @@ image.onload = () => {
   requestAnimationFrame(render);
 };
 
-window.addEventListener("resize", resize);
+// Cambios de vista.
+//
+// En iPhone la barra de direcciones se pliega al desplazar y la altura útil
+// cambia sin que llegue un `resize`: quien avisa es visualViewport. Sin esto el
+// lienzo se quedaba con la altura vieja y la cara aparecía estirada o con una
+// franja negra al pie. `orientationchange` cubre el giro del teléfono, donde
+// Safari a veces mide antes de terminar la rotación.
+function alCambiarLaVista() {
+  resize();
+  medirControles();
+}
+
+window.addEventListener("resize", alCambiarLaVista);
+window.addEventListener("orientationchange", () => setTimeout(alCambiarLaVista, 120));
+window.visualViewport?.addEventListener("resize", alCambiarLaVista);
 resize();
 
 ui.connect.addEventListener("click", () => {
@@ -175,8 +189,10 @@ function medirControles() {
   ui.stage.style.setProperty("--controles", `${Math.max(0, Math.round(alto))}px`);
 }
 
+// El observador cubre los cambios de alto propios de la barra (una etiqueta que
+// cambia de largo y recoloca la fila); los de la ventana los trae
+// alCambiarLaVista.
 new ResizeObserver(medirControles).observe(ui.controls);
-window.addEventListener("resize", medirControles);
 medirControles();
 
 function guardarPreferencias() {
