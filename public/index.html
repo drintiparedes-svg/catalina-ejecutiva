@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#050b12">
+  <title>Catalina — Avatar conversacional</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="stage" id="stage">
+    <canvas id="avatar" aria-label="Avatar animado de Catalina"></canvas>
+    <div class="vignette"></div>
+    <section class="identity" aria-live="polite">
+      <span class="signal" id="signal"></span>
+      <div>
+        <p class="eyebrow">ASISTENTE CONVERSACIONAL</p>
+        <h1>Catalina</h1>
+        <p class="status" id="status">Lista para comenzar</p>
+      </div>
+    </section>
+    <section class="transcript" id="transcript" aria-live="polite"></section>
+    <nav class="controls" aria-label="Controles">
+      <button class="primary" id="connect">Iniciar conversación</button>
+      <button id="mute" disabled>Silenciar micrófono</button>
+      <button id="meetMode" title="Oculta los controles para capturar la ventana">Modo Meet</button>
+    </nav>
+    <button class="exit-meet" id="exitMeet" aria-label="Salir del modo Meet">Mostrar controles</button>
+  </main>
+  <audio id="remoteAudio" autoplay></audio>
+  <script type="module" src="app.js?v=22"></script>
+</body>
+</html>

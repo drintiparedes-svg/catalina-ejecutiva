@@ -1,0 +1,587 @@
+<title>Banco de pruebas de Catalina</title>
+<style>
+  /* Identidad tomada del propio retrato: fondo casi negro con sesgo azul, la
+     trama de puntos del avatar y el cian de su aura como único acento. La
+     página se compromete con un solo tema porque la fotografía es oscura y
+     sobre un fondo claro no existiría. Todos los colores son explícitos. */
+  :root {
+    --fondo: #04080d;
+    --panel: #0a121b;
+    --panel-alto: #0e1926;
+    --linea: #17293a;
+    --linea-viva: #24435c;
+    --texto: #cadeee;
+    --tenue: #6d879c;
+    --acento: #5dcdff;
+    --esmalte: #ffd9a0;
+    --mono: ui-monospace, "SF Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+    --cuerpo: system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--fondo);
+    color: var(--texto);
+    font-family: var(--cuerpo);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .disposicion {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 340px;
+    min-height: 100vh;
+  }
+
+  /* ---------- escenario ---------- */
+
+  .escenario {
+    position: relative;
+    overflow: hidden;
+    background:
+      radial-gradient(120% 90% at 50% 42%, #0a1826 0%, #04080d 68%);
+    min-height: 60vh;
+  }
+
+  #avatar {
+    position: absolute;
+    display: block;
+    transition: none;
+  }
+
+  .fase {
+    position: absolute;
+    inset: 18px auto auto 20px;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--tenue);
+    pointer-events: none;
+  }
+
+  .punto {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--linea-viva);
+    box-shadow: 0 0 0 0 rgba(93, 205, 255, .5);
+  }
+  .punto[data-activo="true"] {
+    background: var(--acento);
+    animation: latido 2.4s ease-out infinite;
+  }
+  @keyframes latido {
+    0% { box-shadow: 0 0 0 0 rgba(93, 205, 255, .45); }
+    70% { box-shadow: 0 0 0 9px rgba(93, 205, 255, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(93, 205, 255, 0); }
+  }
+
+  /* ---------- carril de instrumentos ---------- */
+
+  .carril {
+    background: var(--panel);
+    border-left: 1px solid var(--linea);
+    padding: 22px 20px 34px;
+    display: flex;
+    flex-direction: column;
+    gap: 26px;
+    overflow-y: auto;
+    max-height: 100vh;
+  }
+
+  .titulo {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .titulo h1 {
+    margin: 0;
+    font-size: 19px;
+    font-weight: 600;
+    letter-spacing: -.01em;
+  }
+  .titulo p {
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--tenue);
+    max-width: 40ch;
+  }
+
+  .grupo { display: flex; flex-direction: column; gap: 10px; }
+
+  .etiqueta {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: .18em;
+    text-transform: uppercase;
+    color: var(--tenue);
+  }
+
+  .segmentado {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 6px;
+  }
+  .segmentado.tres {
+    grid-template-columns: repeat(3, 1fr);
+  }
+  .segmentado.tres button {
+    padding: 8px 4px;
+    font-size: 11.5px;
+  }
+
+  button {
+    font: inherit;
+    font-size: 13px;
+    color: var(--texto);
+    background: var(--panel-alto);
+    border: 1px solid var(--linea);
+    border-radius: 7px;
+    padding: 9px 10px;
+    cursor: pointer;
+    text-align: center;
+    transition: border-color .16s, background .16s, color .16s;
+  }
+  button:hover { border-color: var(--linea-viva); }
+  button:focus-visible {
+    outline: 2px solid var(--acento);
+    outline-offset: 2px;
+  }
+  button[aria-pressed="true"] {
+    background: #10283a;
+    border-color: var(--acento);
+    color: var(--acento);
+  }
+
+  .principal {
+    
+    background: #123c55;
+    border-color: #2b6c8f;
+    font-weight: 500;
+  }
+  .principal:hover { background: #16506f; border-color: var(--acento); }
+
+  /* ---------- deslizadores ---------- */
+
+  .control { display: flex; flex-direction: column; gap: 6px; }
+
+  .control-cabecera {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: .06em;
+  }
+  .control-cabecera span:first-child { color: var(--texto); }
+  .control-cabecera span:last-child {
+    color: var(--acento);
+    font-variant-numeric: tabular-nums;
+  }
+
+  input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 22px;
+    background: transparent;
+    cursor: pointer;
+    margin: 0;
+  }
+  input[type="range"]::-webkit-slider-runnable-track {
+    height: 3px;
+    background: var(--linea);
+    border-radius: 2px;
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 13px; height: 13px;
+    margin-top: -5px;
+    border-radius: 50%;
+    background: var(--acento);
+    border: 2px solid var(--panel);
+  }
+  input[type="range"]::-moz-range-track {
+    height: 3px; background: var(--linea); border-radius: 2px;
+  }
+  input[type="range"]::-moz-range-thumb {
+    width: 13px; height: 13px; border-radius: 50%;
+    background: var(--acento); border: 2px solid var(--panel);
+  }
+  input[type="range"]:focus-visible { outline: 2px solid var(--acento); outline-offset: 4px; }
+
+  /* ---------- lecturas ---------- */
+
+  .lecturas {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1px;
+    background: var(--linea);
+    border: 1px solid var(--linea);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .celda {
+    background: var(--panel-alto);
+    padding: 9px 11px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .celda span {
+    font-family: var(--mono);
+    font-size: 9.5px;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--tenue);
+  }
+  .celda b {
+    font-family: var(--mono);
+    font-size: 15px;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+    color: var(--texto);
+  }
+  .celda[data-destacada="true"] b { color: var(--esmalte); }
+
+  .nota {
+    font-size: 12px;
+    line-height: 1.55;
+    color: var(--tenue);
+    margin: 0;
+    padding-top: 2px;
+    border-top: 1px solid var(--linea);
+  }
+  .nota b { color: var(--texto); font-weight: 500; }
+
+  @media (max-width: 860px) {
+    .disposicion { grid-template-columns: 1fr; }
+    .escenario { min-height: 54vh; }
+    .carril { max-height: none; border-left: none; border-top: 1px solid var(--linea); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .punto[data-activo="true"] { animation: none; }
+    button { transition: none; }
+  }
+</style>
+
+<div class="disposicion">
+  <main class="escenario" id="escenario">
+    <canvas id="avatar" aria-label="Avatar de Catalina animado"></canvas>
+    <p class="fase"><span class="punto" id="punto" data-activo="false"></span><span id="faseTexto">Reposo</span></p>
+  </main>
+
+  <aside class="carril">
+    <header class="titulo">
+      <h1>Banco de pruebas</h1>
+      <p>El mismo código que corre en el avatar. Reproduce la frase para ver los labios y los dientes, o mueve los controles para fijar una postura.</p>
+    </header>
+
+    <section class="grupo">
+      <p class="etiqueta">Encuadre</p>
+      <div class="segmentado" id="encuadre">
+        <button data-zoom="1" aria-pressed="true">Retrato</button>
+        <button data-zoom="2.1" aria-pressed="false">Rostro</button>
+        <button data-zoom="4.6" aria-pressed="false">Boca</button>
+        <button data-zoom="3.6" aria-pressed="false">Ojos</button>
+      </div>
+    </section>
+
+    <section class="grupo">
+      <p class="etiqueta">Actuación</p>
+      <button class="principal" id="reproducir">Reproducir frase</button>
+      <div class="segmentado" id="estados">
+        <button data-estado="idle" aria-pressed="true">Reposo</button>
+        <button data-estado="listening" aria-pressed="false">Escuchando</button>
+        <button data-estado="thinking" aria-pressed="false">Pensando</button>
+        <button data-estado="speaking" aria-pressed="false">Hablando</button>
+      </div>
+    </section>
+
+    <section class="grupo">
+      <p class="etiqueta">Expresión</p>
+      <div class="segmentado tres" id="expresiones">
+        <button data-expresion="neutra" aria-pressed="true">Neutra</button>
+        <button data-expresion="alegria" aria-pressed="false">Alegría</button>
+        <button data-expresion="sorpresa" aria-pressed="false">Sorpresa</button>
+        <button data-expresion="preocupacion" aria-pressed="false">Preocupación</button>
+        <button data-expresion="enfado" aria-pressed="false">Enfado</button>
+        <button data-expresion="concentracion" aria-pressed="false">Concentración</button>
+      </div>
+      <div class="control">
+        <div class="control-cabecera"><span>Intensidad</span><span id="vIntensidad">1.00</span></div>
+        <input type="range" id="sIntensidad" min="0" max="120" value="100" aria-label="Intensidad de la expresión">
+      </div>
+    </section>
+
+    <section class="grupo">
+      <p class="etiqueta">Lectura en vivo</p>
+      <div class="lecturas">
+        <div class="celda"><span>Apertura</span><b id="lApertura">0.00</b></div>
+        <div class="celda"><span>Mandíbula</span><b id="lMandibula">0.00</b></div>
+        <div class="celda" data-destacada="true"><span>Dientes</span><b id="lDientes">0 %</b></div>
+        <div class="celda"><span>Hueco</span><b id="lHueco">0.0 px</b></div>
+      </div>
+    </section>
+
+    <section class="grupo">
+      <p class="etiqueta">Postura manual</p>
+      <div class="control">
+        <div class="control-cabecera"><span>Apertura</span><span id="vApertura">0.00</span></div>
+        <input type="range" id="sApertura" min="0" max="100" value="0" aria-label="Apertura">
+      </div>
+      <div class="control">
+        <div class="control-cabecera"><span>Estirado</span><span id="vEstirado">0.50</span></div>
+        <input type="range" id="sEstirado" min="12" max="92" value="50" aria-label="Estirado">
+      </div>
+      <div class="control">
+        <div class="control-cabecera"><span>Redondeo</span><span id="vRedondeo">0.10</span></div>
+        <input type="range" id="sRedondeo" min="0" max="100" value="10" aria-label="Redondeo">
+      </div>
+      <div class="control">
+        <div class="control-cabecera"><span>Cierre labial</span><span id="vCierre">0.00</span></div>
+        <input type="range" id="sCierre" min="0" max="100" value="0" aria-label="Cierre labial">
+      </div>
+    </section>
+
+    <p class="nota">La arcada superior tiene <b>altura fija</b>: al abrir más la boca no crecen los dientes, crece la cavidad de debajo. Por eso el porcentaje sube rápido al empezar a abrir y luego se estabiliza.</p>
+  </aside>
+</div>
+
+<script>
+/*__BUNDLE__*/
+
+/* ===== banco de pruebas ===== */
+
+const lienzo = document.querySelector("#avatar");
+const ctx = lienzo.getContext("2d");
+const escenario = document.querySelector("#escenario");
+const imagen = new Image();
+
+const director = new PerformanceDirector();
+let renderizador = null;
+let vista = { width: 0, height: 0, pixelRatio: 1 };
+let zoom = 1;
+let foco = { x: 704, y: 384 };
+
+const FOCOS = {
+  "1": { x: 704, y: 384 },
+  "2.1": { x: 705, y: 330 },
+  "4.6": { x: 705, y: 408 },
+  "3.6": { x: 703, y: 248 }
+};
+
+// Secuencia de la frase. Cada entrada es un símbolo y su duración en
+// milisegundos; el símbolo se traduce a la misma terna continua (apertura,
+// estirado, redondeo) que produce el análisis del espectro con voz real.
+const POSTURAS = {
+  a:     { open: .90, spread: .58, round: .03, press: 0,   energy: 1 },
+  e:     { open: .55, spread: .72, round: .02, press: 0,   energy: .90 },
+  i:     { open: .28, spread: .86, round: .01, press: 0,   energy: .80 },
+  o:     { open: .58, spread: .32, round: .62, press: 0,   energy: .90 },
+  u:     { open: .24, spread: .18, round: .92, press: 0,   energy: .75 },
+  p:     { open: .02, spread: .52, round: .06, press: .92, energy: .20 },
+  m:     { open: .02, spread: .52, round: .08, press: .85, energy: .35 },
+  s:     { open: .13, spread: .78, round: .02, press: 0,   energy: .60 },
+  c:     { open: .18, spread: .55, round: .08, press: 0,   energy: .55 },
+  ".":   { open: .02, spread: .50, round: .10, press: .25, energy: .04 }
+};
+
+const FRASE = [
+  ["c", 60], ["o", 140], ["c", 55], ["a", 155], [".", 130],
+  ["s", 90], ["o", 115], ["i", 85], [".", 110],
+  ["c", 60], ["a", 115], ["c", 60], ["a", 105], ["c", 55], ["i", 95], ["c", 55], ["a", 150], [".", 280],
+  ["p", 85], ["a", 135], ["p", 80], ["a", 180], [".", 190],
+  ["m", 95], ["a", 135], ["m", 85], ["a", 180], [".", 190],
+  ["o", 155], ["s", 100], ["o", 165], [".", 190],
+  ["u", 155], ["c", 70], ["a", 165], [".", 190],
+  ["s", 115], ["u", 115], ["s", 105], ["u", 115], ["c", 70], ["o", 175], [".", 520]
+];
+const DURACION = FRASE.reduce((total, [, ms]) => total + ms, 0);
+
+let reproduciendoDesde = -1;
+let manual = false;
+
+imagen.onload = () => {
+  renderizador = new FaceRenderer(imagen);
+  redimensionar();
+  requestAnimationFrame(dibujar);
+};
+imagen.src = "__IMAGE__";
+
+window.addEventListener("resize", redimensionar);
+
+function redimensionar() {
+  const ancho = escenario.clientWidth;
+  const alto = escenario.clientHeight;
+  const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+  const anchoZoom = ancho * zoom;
+  const altoZoom = alto * zoom;
+
+  lienzo.width = Math.round(anchoZoom * pixelRatio);
+  lienzo.height = Math.round(altoZoom * pixelRatio);
+  lienzo.style.width = anchoZoom + "px";
+  lienzo.style.height = altoZoom + "px";
+  ctx.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+  vista = { width: anchoZoom, height: altoZoom, pixelRatio };
+
+  // El lienzo se dibuja siempre a resolución completa y se desplaza para que
+  // el punto de interés quede centrado. Así el acercamiento no pixela nada.
+  const escala = Math.max(anchoZoom / 1408, altoZoom / 768);
+  const focoX = (anchoZoom - 1408 * escala) / 2 + foco.x * escala;
+  const focoY = (altoZoom - 768 * escala) / 2 + foco.y * escala;
+  lienzo.style.left = Math.round(ancho / 2 - focoX) + "px";
+  lienzo.style.top = Math.round(alto / 2 - focoY) + "px";
+}
+
+function vozDeLaFrase(ahora) {
+  const transcurrido = ahora - reproduciendoDesde;
+  if (transcurrido >= DURACION) {
+    reproduciendoDesde = -1;
+    document.querySelector("#reproducir").textContent = "Reproducir frase";
+    return null;
+  }
+  let acumulado = 0;
+  for (const [simbolo, ms] of FRASE) {
+    if (transcurrido < acumulado + ms) {
+      const postura = POSTURAS[simbolo];
+      // Envolvente por sonido: ataque rápido y caída, para que el director
+      // detecte los acentos y dispare cejas y cabeceos como con voz real.
+      const fase = (transcurrido - acumulado) / ms;
+      const envolvente = Math.min(1, fase * 6) * (1 - fase * .45);
+      return {
+        active: true,
+        energy: postura.energy * envolvente,
+        open: postura.open,
+        spread: postura.spread,
+        round: postura.round,
+        press: postura.press
+      };
+    }
+    acumulado += ms;
+  }
+  return null;
+}
+
+function vozManual() {
+  return {
+    active: true,
+    energy: .35 + valor("sApertura") * .6,
+    open: valor("sApertura"),
+    spread: valor("sEstirado"),
+    round: valor("sRedondeo"),
+    press: valor("sCierre")
+  };
+}
+
+const valor = id => document.querySelector("#" + id).valueAsNumber / 100;
+
+function dibujar(ahora) {
+  let voz = null;
+  if (reproduciendoDesde >= 0) voz = vozDeLaFrase(ahora);
+  else if (manual) voz = vozManual();
+
+  const pose = director.update(ahora, voz);
+  renderizador.draw(ctx, vista, pose);
+  actualizarLecturas(pose);
+  requestAnimationFrame(dibujar);
+}
+
+let ultimaLectura = 0;
+function actualizarLecturas(pose) {
+  const ahora = performance.now();
+  if (ahora - ultimaLectura < 90) return;
+  ultimaLectura = ahora;
+
+  const boca = pose.mouth;
+  const campo = renderizador.mouth.buildField(boca);
+  const hueco = campo.gap(0);
+  // Fracción del hueco ocupada por esmalte: la corona mide 8,5 px fijos.
+  const sombra = Math.min(hueco * .26, 2.6);
+  const corona = Math.max(0, Math.min(hueco - sombra, 8.5));
+  const visible = hueco > .4 ? corona / hueco : 0;
+  const atenuado = (1 - boca.round * .72) * (1 - boca.press);
+
+  texto("lApertura", boca.open.toFixed(2));
+  texto("lMandibula", boca.jaw.toFixed(2));
+  texto("lDientes", Math.round(visible * atenuado * 100) + " %");
+  texto("lHueco", hueco.toFixed(1) + " px");
+}
+
+const texto = (id, valor) => { document.querySelector("#" + id).textContent = valor; };
+
+/* ---------- controles ---------- */
+
+document.querySelector("#encuadre").addEventListener("click", evento => {
+  const boton = evento.target.closest("button");
+  if (!boton) return;
+  for (const otro of evento.currentTarget.querySelectorAll("button")) {
+    otro.setAttribute("aria-pressed", String(otro === boton));
+  }
+  zoom = Number(boton.dataset.zoom);
+  foco = FOCOS[boton.dataset.zoom];
+  redimensionar();
+});
+
+const botonesEstado = document.querySelector("#estados");
+botonesEstado.addEventListener("click", evento => {
+  const boton = evento.target.closest("button");
+  if (!boton) return;
+  fijarEstado(boton.dataset.estado);
+  manual = boton.dataset.estado === "speaking";
+});
+
+function fijarEstado(estado) {
+  director.setState(estado);
+  for (const boton of botonesEstado.querySelectorAll("button")) {
+    boton.setAttribute("aria-pressed", String(boton.dataset.estado === estado));
+  }
+  const nombres = { idle: "Reposo", listening: "Escuchando", thinking: "Pensando", speaking: "Hablando" };
+  texto("faseTexto", nombres[estado]);
+  document.querySelector("#punto").dataset.activo = String(estado !== "idle");
+}
+
+document.querySelector("#reproducir").addEventListener("click", evento => {
+  if (reproduciendoDesde >= 0) {
+    reproduciendoDesde = -1;
+    evento.target.textContent = "Reproducir frase";
+    return;
+  }
+  manual = false;
+  fijarEstado("speaking");
+  reproduciendoDesde = performance.now();
+  evento.target.textContent = "Detener";
+});
+
+const botonesExpresion = document.querySelector("#expresiones");
+botonesExpresion.addEventListener("click", evento => {
+  const boton = evento.target.closest("button");
+  if (!boton) return;
+  for (const otro of botonesExpresion.querySelectorAll("button")) {
+    otro.setAttribute("aria-pressed", String(otro === boton));
+  }
+  director.setExpression(boton.dataset.expresion, valor("sIntensidad"));
+});
+
+document.querySelector("#sIntensidad").addEventListener("input", evento => {
+  texto("vIntensidad", valor("sIntensidad").toFixed(2));
+  const activo = botonesExpresion.querySelector('[aria-pressed="true"]');
+  director.setExpression(activo.dataset.expresion, valor("sIntensidad"));
+});
+
+for (const id of ["sApertura", "sEstirado", "sRedondeo", "sCierre"]) {
+  const control = document.querySelector("#" + id);
+  control.addEventListener("input", () => {
+    reproduciendoDesde = -1;
+    document.querySelector("#reproducir").textContent = "Reproducir frase";
+    manual = true;
+    if (director.state !== "speaking") fijarEstado("speaking");
+    texto("v" + id.slice(1), (control.valueAsNumber / 100).toFixed(2));
+  });
+}
+</script>

@@ -1,0 +1,8 @@
+.env
+.DS_Store
+node_modules/
+outputs/
+.vercel/
+work/*.png
+work/banco-de-pruebas.html
+work/video-frames/
