@@ -9,3 +9,6 @@ work/video-frames/
 
 # Config del editor: apunta al Node de este equipo, no sirve en otro.
 .claude/launch.json
+
+# Configuracion del administrador: puede llevar credenciales de conectores.
+data/

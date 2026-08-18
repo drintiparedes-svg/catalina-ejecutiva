@@ -220,7 +220,23 @@ function setStatus(text) {
 async function atenderHerramienta(nombre, argumentos) {
   if (nombre === "buscar_imagen_medica") return await pedirLamina(argumentos);
   if (nombre === "buscar_referencias") return await pedirReferencias(argumentos);
-  return { ok: false, error: "Herramienta desconocida" };
+  // Cualquier otro nombre viene de un conector definido en el administrador.
+  // Se manda el nombre, no la dirección: el servidor la resuelve.
+  return await usarConector(nombre, argumentos);
+}
+
+async function usarConector(nombre, argumentos) {
+  try {
+    const respuesta = await fetch("/conector", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ nombre, consulta: argumentos.consulta ?? "" })
+    });
+    return await respuesta.json();
+  } catch (error) {
+    console.error(error);
+    return { ok: false, error: "Falló la conexión con el conector" };
+  }
 }
 
 async function pedirLamina(argumentos) {

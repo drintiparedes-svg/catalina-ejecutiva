@@ -207,6 +207,42 @@ labios funcione igual con los dos.
 En **Modo Meet** los subtítulos siguen visibles si están encendidos —son parte
 de lo que se quiere capturar— y el historial se oculta con el resto del mando.
 
+## Administrador
+
+En **`/admin.html`**. Cinco secciones: el banco de pruebas embebido, el
+conocimiento propio, la persona y sus límites, los modelos de cada proveedor y
+los conectores. Lo que se guarda se aplica en la siguiente conversación, sin
+reiniciar.
+
+**Acceso.** Cerrado por defecto: sin `ADMIN_TOKEN` sólo responde desde el propio
+equipo. Para usarlo a distancia hay que definir esa variable de entorno; el panel
+la pide una vez y la guarda en la pestaña. El panel cambia el prompt, los modelos
+y los conectores, así que dejarlo abierto en un sitio público sería entregar el
+control de Catalina a cualquiera.
+
+**Conocimiento.** No es recuperación por similitud: todo lo activo se inyecta
+entero en las instrucciones de cada sesión. Para protocolos y criterios propios
+es lo razonable; para una biblioteca haría falta recuperar por embeddings, que es
+otro trabajo.
+
+**Límites.** Son instrucciones al modelo, no un cortafuegos. Reducen mucho la
+conducta indeseada pero no la vuelven imposible: lo que deba cumplirse siempre va
+en el código.
+
+**Modelos.** Sólo sirven modelos de voz en tiempo real; uno de texto no funciona
+aquí, porque la conversación viaja como audio en ambos sentidos. Las claves
+siguen en variables de entorno, nunca en el panel.
+
+**Conectores.** Servicios propios que Catalina puede consultar. La dirección vive
+en el servidor y nunca llega al navegador ni al modelo —éste sólo ve el nombre y
+para qué sirve—, sólo se admite `https` y la respuesta se recorta a 4000
+caracteres.
+
+La configuración se guarda en `data/config.json`, que está ignorado por git
+porque puede llevar credenciales de conectores. **En Vercel no se puede guardar**:
+el disco es de sólo lectura y el panel lo dirá con un error claro en vez de fingir
+que guardó. Para editar en producción haría falta un almacén externo.
+
 ## Continuar en otro equipo
 
 ```bash

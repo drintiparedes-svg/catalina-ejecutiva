@@ -1,5 +1,8 @@
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
+import {
+  cargarConfig, guardarConfig, componerInstrucciones, herramientasDeConectores
+} from "./config.mjs";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -44,6 +47,33 @@ const server = createServer(async (req, res) => {
       return await buscarReferencias(req, res);
     }
 
+    if (req.method === "POST" && req.url === "/conector") {
+      return await usarConector(req, res);
+    }
+
+    if (req.url === "/admin/config" && (req.method === "GET" || req.method === "PUT")) {
+      if (!autorizado(req)) return json(res, 401, { error: motivoDeRechazo(), code: "ADMIN_NO_AUTORIZADO" });
+      if (req.method === "GET") return json(res, 200, await cargarConfig());
+      try {
+        return json(res, 200, await guardarConfig(JSON.parse(await readBody(req))));
+      } catch (error) {
+        // En Vercel el disco es de sólo lectura: conviene decirlo tal cual en
+        // vez de dejar creer que se guardó.
+        if (error.code === "EROFS" || error.code === "EACCES") {
+          return json(res, 501, {
+            error: "Este despliegue tiene el disco en sólo lectura y no puede guardar la configuración.",
+            code: "ALMACEN_SOLO_LECTURA"
+          });
+        }
+        return json(res, 400, { error: "Configuración inválida.", code: "CONFIG_INVALIDA" });
+      }
+    }
+
+    if (req.method === "POST" && req.url === "/admin/probar-conector") {
+      if (!autorizado(req)) return json(res, 401, { error: motivoDeRechazo(), code: "ADMIN_NO_AUTORIZADO" });
+      return await probarConector(req, res);
+    }
+
     if (req.method !== "GET" && req.method !== "HEAD") {
       return json(res, 405, { error: "Método no permitido" });
     }
@@ -64,26 +94,23 @@ const server = createServer(async (req, res) => {
   }
 });
 
-// La persona vive en un solo sitio porque la usan los dos proveedores: si
-// Catalina cambia de carácter al agotarse el crédito de OpenAI, el relevo se
-// nota y deja de ser la misma interlocutora.
-// Sin `export`: Vercel trata un archivo con exportaciones como módulo de
-// handler y busca un `export default`, en vez de arrancarlo como servidor. Una
-// sola exportación aquí tumbaba el despliegue entero con FUNCTION_INVOCATION_FAILED.
-const PERSONA = [
-  "Tu nombre es Catalina. Eres una asistente conversacional cálida, clara y profesional.",
-  "Habla en español latinoamericano salvo que la persona use otro idioma.",
-  "Responde siempre mediante voz, con un tono femenino neutro latinoamericano, natural, sereno y expresivo.",
-  "Usa pausas humanas breves, ritmo conversacional y pronunciación clara. Evita sonar como locutora o robot.",
-  "Tus respuestas orales deben ser naturales y concisas. No digas qué modelo eres; preséntate como Catalina.",
-  "Puedes ser interrumpida y debes escuchar con atención.",
-  "Eres una asistente de docencia médica: explicas anatomía y temas médicos de forma clara y didáctica.",
+// Cómo usar las herramientas. Esto no se edita desde el panel: no describe el
+// carácter de Catalina sino cómo funcionan las herramientas, y si se pudiera
+// borrar por descuido el modelo empezaría a narrar láminas que nunca aparecieron.
+const USO_DE_HERRAMIENTAS = [
   "Cuando expliques una estructura anatómica o un tema médico que se entienda mejor viéndolo, usa la herramienta buscar_imagen_medica.",
   "La herramienta busca láminas de atlas y diagramas didácticos ya publicados; no inventa imágenes.",
   "Si no encuentra nada adecuado, dilo con naturalidad y sigue explicando de palabra. Nunca afirmes que se ve algo que no apareció.",
   "Al mostrar una lámina, ve señalando lo que se ve y explícalo; no leas el pie de imagen.",
-  "No des diagnósticos ni indicaciones de tratamiento para casos concretos: tu terreno es explicar y enseñar."
+  "Usa buscar_referencias para respaldar en la literatura lo que estés explicando."
 ].join(" ");
+
+// Las instrucciones completas se arman en cada sesión: lo editable viene del
+// panel, lo de arriba es fijo. Los dos proveedores reciben exactamente lo mismo,
+// para que Catalina no cambie de carácter al pasar de uno a otro.
+async function instruccionesDeSesion(config) {
+  return [componerInstrucciones(config), USO_DE_HERRAMIENTAS].filter(Boolean).join(" ");
+}
 
 // Herramienta de imagen.
 //
@@ -135,21 +162,27 @@ const HERRAMIENTAS = [
   { nombre: "buscar_referencias", descripcion: DESCRIPCION_REFERENCIAS, parametros: PARAMETROS_REFERENCIAS }
 ];
 
+// Las internas más las que haya añadido el panel como conectores.
+function todasLasHerramientas(config) {
+  return [...HERRAMIENTAS, ...herramientasDeConectores(config)];
+}
+
 async function createRealtimeSession(req, res) {
   const apiKey = process.env.OPENAI_API_KEY?.trim();
   if (!hasApiKey()) {
     return json(res, 503, { error: "Falta OPENAI_API_KEY en el archivo .env", code: "API_KEY_MISSING" });
   }
 
+  const config = await cargarConfig();
   const sdp = await readBody(req);
   const form = new FormData();
   form.set("sdp", sdp);
   form.set("session", JSON.stringify({
     type: "realtime",
-    model: "gpt-realtime-2.1",
+    model: config.modelos?.openai?.modelo || "gpt-realtime-2.1",
     output_modalities: ["audio"],
-    instructions: PERSONA,
-    tools: HERRAMIENTAS.map(h => ({
+    instructions: await instruccionesDeSesion(config),
+    tools: todasLasHerramientas(config).map(h => ({
       type: "function",
       name: h.nombre,
       description: h.descripcion,
@@ -157,7 +190,7 @@ async function createRealtimeSession(req, res) {
     })),
     audio: {
       input: { turn_detection: { type: "server_vad", create_response: true, interrupt_response: true } },
-      output: { voice: "marin" }
+      output: { voice: config.modelos?.openai?.voz || "marin" }
     }
   }));
 
@@ -241,22 +274,23 @@ async function createGeminiToken(res) {
     return json(res, 502, { error: "Gemini no devolvió un token utilizable.", code: "GEMINI_TOKEN_VACIO" });
   }
 
+  const config = await cargarConfig();
   json(res, 200, {
     token,
     setup: {
-      model: MODELO_GEMINI,
+      model: config.modelos?.gemini?.modelo || MODELO_GEMINI,
       generationConfig: {
         responseModalities: ["AUDIO"],
         speechConfig: {
-          languageCode: "es-US",
-          voiceConfig: { prebuiltVoiceConfig: { voiceName: "Kore" } }
+          languageCode: config.modelos?.gemini?.idioma || "es-US",
+          voiceConfig: { prebuiltVoiceConfig: { voiceName: config.modelos?.gemini?.voz || "Kore" } }
         }
       },
-      systemInstruction: { parts: [{ text: PERSONA }] },
+      systemInstruction: { parts: [{ text: await instruccionesDeSesion(config) }] },
       // Sin esto no habría subtítulos ni historial con Gemini.
       outputAudioTranscription: {},
       tools: [{
-        functionDeclarations: HERRAMIENTAS.map(h => ({
+        functionDeclarations: todasLasHerramientas(config).map(h => ({
           name: h.nombre,
           description: h.descripcion,
           parameters: h.parametros
@@ -401,6 +435,98 @@ async function buscarReferencias(req, res) {
   }));
 
   json(res, 200, { referencias });
+}
+
+// Puerta del administrador.
+//
+// Cerrada por defecto y a propósito: el panel cambia el prompt, los modelos y
+// los conectores, así que dejarlo abierto en un sitio público sería entregar el
+// control de Catalina a cualquiera. Sin ADMIN_TOKEN sólo responde en el propio
+// equipo, donde ya hace falta estar sentado delante.
+function autorizado(req) {
+  const esperado = process.env.ADMIN_TOKEN?.trim();
+  if (esperado) {
+    const recibido = (req.headers.authorization || "").replace(/^Bearer\s+/i, "").trim();
+    return recibido.length > 0 && recibido === esperado;
+  }
+  return esLocal(req);
+}
+
+function esLocal(req) {
+  // Detrás de un proxy (Vercel) siempre hay cabecera de reenvío: la presencia
+  // de x-forwarded-for basta para saber que la petición no nació aquí.
+  if (req.headers["x-forwarded-for"]) return false;
+  const origen = req.socket.remoteAddress || "";
+  return origen === "127.0.0.1" || origen === "::1" || origen === "::ffff:127.0.0.1";
+}
+
+function motivoDeRechazo() {
+  return process.env.ADMIN_TOKEN?.trim()
+    ? "Token de administración incorrecto."
+    : "El administrador sólo está abierto en el equipo local. Define ADMIN_TOKEN para usarlo a distancia.";
+}
+
+// Uso de un conector durante la conversación. El navegador manda el nombre, no
+// la dirección: así una página manipulada no puede convertir esto en un puente
+// para llamar a donde quiera desde el servidor.
+async function usarConector(req, res) {
+  let peticion = {};
+  try { peticion = JSON.parse(await readBody(req)); } catch {}
+
+  const config = await cargarConfig();
+  const conector = (config.conectores ?? []).find(
+    item => item.nombre === peticion.nombre && item.activo !== false
+  );
+  if (!conector) return json(res, 404, { ok: false, error: "Conector no disponible." });
+
+  const resultado = await llamarConector(conector, String(peticion.consulta || ""));
+  json(res, 200, resultado);
+}
+
+// Prueba de un conector desde el panel, para no descubrir que está mal escrito
+// en mitad de una conversación.
+async function probarConector(req, res) {
+  let peticion = {};
+  try { peticion = JSON.parse(await readBody(req)); } catch {}
+  const resultado = await llamarConector(peticion, peticion.consulta || "prueba");
+  json(res, resultado.ok ? 200 : 502, resultado);
+}
+
+// Llamada a un conector. La URL vive en el servidor y nunca llega al navegador
+// ni al modelo: éste sólo conoce el nombre y para qué sirve.
+async function llamarConector(conector, consulta) {
+  let destino;
+  try {
+    destino = new URL(conector.url);
+  } catch {
+    return { ok: false, error: "La dirección del conector no es válida." };
+  }
+  if (destino.protocol !== "https:") {
+    return { ok: false, error: "Un conector debe usar https." };
+  }
+
+  const cabeceras = { Accept: "application/json" };
+  if (conector.cabecera && conector.valorCabecera) cabeceras[conector.cabecera] = conector.valorCabecera;
+
+  const metodo = conector.metodo === "POST" ? "POST" : "GET";
+  if (metodo === "POST") cabeceras["Content-Type"] = "application/json";
+  else destino.searchParams.set(conector.parametroConsulta || "q", consulta);
+
+  try {
+    const upstream = await fetch(destino, {
+      method: metodo,
+      headers: cabeceras,
+      body: metodo === "POST" ? JSON.stringify({ consulta }) : undefined,
+      signal: AbortSignal.timeout(12000)
+    });
+    const texto = await upstream.text();
+    if (!upstream.ok) return { ok: false, error: `El conector respondió ${upstream.status}.` };
+    // Se recorta: lo que vuelve entra en el contexto de una sesión de voz y un
+    // volcado entero de JSON la ahogaría.
+    return { ok: true, respuesta: texto.slice(0, 4000) };
+  } catch (error) {
+    return { ok: false, error: error.name === "TimeoutError" ? "El conector tardó demasiado." : "No se pudo contactar el conector." };
+  }
 }
 
 function limpiarHtml(valor) {

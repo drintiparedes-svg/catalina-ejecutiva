@@ -1,0 +1,438 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Catalina — Administrador</title>
+<style>
+:root {
+  color-scheme: dark;
+  font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --fondo: #050b12; --panel: rgba(255,255,255,.045); --linea: rgba(180,225,245,.16);
+  --texto: #eaf8ff; --tenue: rgba(209,229,239,.6); --acento: #6de4ff;
+}
+* { box-sizing: border-box; }
+body { margin: 0; min-height: 100vh; background: radial-gradient(circle at 20% 0%, #10222f, var(--fondo) 60%); color: var(--texto); }
+
+header.barra { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  padding: 14px clamp(16px, 4vw, 34px); border-bottom: 1px solid var(--linea);
+  background: rgba(5,11,18,.85); backdrop-filter: blur(18px); }
+.marca { font-size: 17px; font-weight: 600; letter-spacing: -.02em; }
+.marca span { color: var(--tenue); font-weight: 400; }
+.barra .crece { flex: 1; }
+.estado { font-size: 12.5px; color: var(--tenue); }
+.estado[data-tipo="ok"] { color: #7ee3a8; }
+.estado[data-tipo="error"] { color: #ff9a9a; }
+
+nav.secciones { display: flex; gap: 6px; overflow-x: auto; padding: 12px clamp(16px, 4vw, 34px) 0; }
+nav.secciones button { white-space: nowrap; }
+
+main { padding: 18px clamp(16px, 4vw, 34px) 60px; max-width: 1100px; }
+section[hidden] { display: none; }
+h2 { margin: 14px 0 4px; font-size: 19px; font-weight: 560; letter-spacing: -.02em; }
+.ayuda { margin: 0 0 18px; max-width: 70ch; color: var(--tenue); font-size: 13.5px; line-height: 1.55; }
+.aviso { margin: 0 0 18px; padding: 11px 14px; border: 1px solid rgba(255,196,120,.3); border-radius: 12px;
+  background: rgba(255,176,80,.08); color: #ffd9a8; font-size: 13px; line-height: 1.5; max-width: 70ch; }
+
+button { min-height: 38px; padding: 0 14px; border: 1px solid var(--linea); border-radius: 10px;
+  background: var(--panel); color: var(--texto); font: inherit; font-size: 13.5px; cursor: pointer; transition: .15s; }
+button:hover { background: rgba(255,255,255,.1); }
+button[aria-selected="true"] { border-color: rgba(109,228,255,.45); background: rgba(109,228,255,.15); color: #d6f6ff; }
+button.principal { border-color: rgba(109,228,255,.45); background: linear-gradient(135deg, rgba(25,134,173,.9), rgba(39,82,126,.9)); }
+button.peligro { border-color: rgba(255,140,140,.32); color: #ffc9c9; }
+
+label { display: block; margin: 14px 0 6px; font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: #a9d8ec; }
+input, textarea, select {
+  width: 100%; padding: 10px 12px; border: 1px solid var(--linea); border-radius: 10px;
+  background: rgba(3,9,15,.6); color: var(--texto); font: inherit; font-size: 14px;
+}
+textarea { min-height: 130px; line-height: 1.55; resize: vertical; }
+input:focus, textarea:focus, select:focus { outline: 2px solid rgba(109,228,255,.4); outline-offset: 1px; }
+
+.tarjeta { margin-top: 14px; padding: 15px 16px; border: 1px solid var(--linea); border-radius: 14px; background: var(--panel); }
+.tarjeta-cabecera { display: flex; align-items: center; gap: 12px; }
+.tarjeta-cabecera input[type="text"] { flex: 1; }
+.fila { display: flex; gap: 12px; flex-wrap: wrap; }
+.fila > * { flex: 1 1 220px; }
+.interruptor { display: flex; align-items: center; gap: 7px; margin: 0; font-size: 12px; text-transform: none; letter-spacing: 0; color: var(--tenue); }
+.interruptor input { width: auto; }
+.lista { list-style: none; margin: 0; padding: 0; }
+.lista li { display: flex; gap: 10px; margin-top: 8px; }
+.acciones { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 18px; }
+.marco { width: 100%; height: min(78vh, 820px); margin-top: 12px; border: 1px solid var(--linea); border-radius: 16px; background: #01060b; }
+code { padding: 1px 5px; border-radius: 5px; background: rgba(255,255,255,.08); font-size: 12.5px; }
+</style>
+</head>
+<body>
+
+<header class="barra">
+  <div class="marca">Catalina <span>· administrador</span></div>
+  <div class="crece"></div>
+  <span class="estado" id="estado">Cargando…</span>
+  <button class="principal" id="guardar">Guardar cambios</button>
+</header>
+
+<nav class="secciones" id="secciones">
+  <button data-seccion="banco" aria-selected="true">Banco de pruebas</button>
+  <button data-seccion="conocimiento" aria-selected="false">Conocimiento</button>
+  <button data-seccion="limites" aria-selected="false">Límites</button>
+  <button data-seccion="modelos" aria-selected="false">Modelos</button>
+  <button data-seccion="conectores" aria-selected="false">Conectores</button>
+</nav>
+
+<main>
+  <section id="banco">
+    <h2>Banco de pruebas</h2>
+    <p class="ayuda">El mismo banco de <code>/banco.html</code>, aquí dentro. Corre los módulos reales
+      del avatar, así que lo que veas es lo que hace la aplicación. El panel de calibración mueve la
+      apertura de boca en vivo.</p>
+    <iframe class="marco" id="marcoBanco" title="Banco de pruebas" src="about:blank"></iframe>
+  </section>
+
+  <section id="conocimiento" hidden>
+    <h2>Conocimiento propio</h2>
+    <p class="ayuda">Notas que Catalina antepone a lo que ya sabe. Se inyectan enteras en sus
+      instrucciones al empezar cada conversación, así que conviene que sean breves y concretas.</p>
+    <p class="aviso"><strong>Esto no es una búsqueda por similitud.</strong> Todo lo que esté activo viaja
+      en cada sesión, y una sesión de voz tiene un contexto limitado. Sirve para protocolos, criterios
+      propios o correcciones puntuales; para una biblioteca entera haría falta recuperar por embeddings,
+      que es otro trabajo.</p>
+    <div id="listaConocimiento"></div>
+    <div class="acciones"><button id="agregarNota">Agregar nota</button></div>
+  </section>
+
+  <section id="limites" hidden>
+    <h2>Persona y límites</h2>
+    <p class="ayuda">Quién es Catalina y qué puede o no puede hacer. Los límites se convierten en reglas
+      explícitas dentro de sus instrucciones.</p>
+    <p class="aviso">Son instrucciones al modelo, no un cortafuegos. Reducen mucho la conducta indeseada
+      pero no la vuelven imposible: para algo que deba cumplirse siempre, el sitio correcto es el código.</p>
+
+    <label for="instrucciones">Instrucciones de la persona</label>
+    <textarea id="instrucciones"></textarea>
+
+    <label>Puede hacer</label>
+    <ul class="lista" id="listaPermitido"></ul>
+    <div class="acciones"><button data-agregar="permitido">Agregar</button></div>
+
+    <label>Nunca debe hacer</label>
+    <ul class="lista" id="listaProhibido"></ul>
+    <div class="acciones"><button data-agregar="prohibido">Agregar</button></div>
+  </section>
+
+  <section id="modelos" hidden>
+    <h2>Modelos</h2>
+    <p class="ayuda">Qué modelo y qué voz usa cada proveedor. OpenAI es la voz principal; Gemini entra
+      solo cuando OpenAI se queda sin crédito o su clave falla.</p>
+    <p class="aviso">Sólo funcionan modelos <em>de voz en tiempo real</em>. Un modelo de texto no sirve
+      aquí: la conversación viaja como audio en ambos sentidos. Las claves siguen yendo en variables de
+      entorno, nunca en este panel.</p>
+
+    <div class="tarjeta">
+      <strong>OpenAI</strong>
+      <div class="fila">
+        <div><label for="modeloOpenai">Modelo</label><input id="modeloOpenai" type="text"></div>
+        <div><label for="vozOpenai">Voz</label><input id="vozOpenai" type="text"></div>
+      </div>
+    </div>
+
+    <div class="tarjeta">
+      <strong>Gemini (respaldo)</strong>
+      <div class="fila">
+        <div><label for="modeloGemini">Modelo</label><input id="modeloGemini" type="text"></div>
+        <div><label for="vozGemini">Voz</label><input id="vozGemini" type="text"></div>
+        <div><label for="idiomaGemini">Idioma</label><input id="idiomaGemini" type="text"></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="conectores" hidden>
+    <h2>Conectores</h2>
+    <p class="ayuda">Servicios propios que Catalina puede consultar. Cada conector activo se le ofrece
+      como una herramienta más: ella decide cuándo usarla según la descripción que escribas.</p>
+    <p class="aviso">La dirección vive en el servidor y nunca llega al navegador ni al modelo. Sólo se
+      admite <code>https</code>. Lo que devuelva el servicio se recorta a 4000 caracteres, porque entra
+      en el contexto de una conversación hablada.</p>
+    <div id="listaConectores"></div>
+    <div class="acciones"><button id="agregarConector">Agregar conector</button></div>
+  </section>
+</main>
+
+<script type="module">
+const $ = selector => document.querySelector(selector);
+const estado = $("#estado");
+let config = null;
+
+// El token viaja en la URL (#token=…) o se pide una vez y se guarda en esta
+// pestaña. No se escribe en disco: es la llave del administrador.
+let token = new URLSearchParams(location.hash.slice(1)).get("token") || sessionStorage.getItem("catalina.admin") || "";
+if (token) { sessionStorage.setItem("catalina.admin", token); history.replaceState(null, "", location.pathname); }
+
+const cabeceras = () => token ? { Authorization: `Bearer ${token}` } : {};
+
+function avisar(texto, tipo = "") {
+  estado.textContent = texto;
+  estado.dataset.tipo = tipo;
+}
+
+async function cargar() {
+  const respuesta = await fetch("/admin/config", { headers: cabeceras() });
+  if (respuesta.status === 401) {
+    const detalle = await respuesta.json().catch(() => ({}));
+    const dado = prompt(`${detalle.error}\n\nToken de administración:`);
+    if (!dado) return avisar("Sin acceso", "error");
+    token = dado.trim();
+    sessionStorage.setItem("catalina.admin", token);
+    return cargar();
+  }
+  if (!respuesta.ok) return avisar("No se pudo cargar la configuración", "error");
+  config = await respuesta.json();
+  pintar();
+  avisar("Configuración cargada");
+}
+
+function pintar() {
+  $("#instrucciones").value = config.persona?.instrucciones ?? "";
+  $("#modeloOpenai").value = config.modelos?.openai?.modelo ?? "";
+  $("#vozOpenai").value = config.modelos?.openai?.voz ?? "";
+  $("#modeloGemini").value = config.modelos?.gemini?.modelo ?? "";
+  $("#vozGemini").value = config.modelos?.gemini?.voz ?? "";
+  $("#idiomaGemini").value = config.modelos?.gemini?.idioma ?? "";
+  pintarPuntos("permitido");
+  pintarPuntos("prohibido");
+  pintarConocimiento();
+  pintarConectores();
+}
+
+function pintarPuntos(clave) {
+  const lista = clave === "permitido" ? $("#listaPermitido") : $("#listaProhibido");
+  lista.replaceChildren();
+  for (const [indice, texto] of (config.limites?.[clave] ?? []).entries()) {
+    const li = document.createElement("li");
+    const campo = document.createElement("input");
+    campo.type = "text";
+    campo.value = texto;
+    campo.addEventListener("input", () => { config.limites[clave][indice] = campo.value; });
+    const quitar = document.createElement("button");
+    quitar.className = "peligro";
+    quitar.textContent = "Quitar";
+    quitar.addEventListener("click", () => {
+      config.limites[clave].splice(indice, 1);
+      pintarPuntos(clave);
+    });
+    li.append(campo, quitar);
+    lista.append(li);
+  }
+}
+
+function pintarConocimiento() {
+  const contenedor = $("#listaConocimiento");
+  contenedor.replaceChildren();
+  for (const [indice, nota] of (config.conocimiento ?? []).entries()) {
+    const tarjeta = document.createElement("div");
+    tarjeta.className = "tarjeta";
+
+    const cabecera = document.createElement("div");
+    cabecera.className = "tarjeta-cabecera";
+
+    const titulo = document.createElement("input");
+    titulo.type = "text";
+    titulo.placeholder = "Título de la nota";
+    titulo.value = nota.titulo ?? "";
+    titulo.addEventListener("input", () => { nota.titulo = titulo.value; });
+
+    const activo = document.createElement("label");
+    activo.className = "interruptor";
+    const casilla = document.createElement("input");
+    casilla.type = "checkbox";
+    casilla.checked = nota.activo !== false;
+    casilla.addEventListener("change", () => { nota.activo = casilla.checked; });
+    activo.append(casilla, document.createTextNode("Activa"));
+
+    const quitar = document.createElement("button");
+    quitar.className = "peligro";
+    quitar.textContent = "Quitar";
+    quitar.addEventListener("click", () => { config.conocimiento.splice(indice, 1); pintarConocimiento(); });
+
+    cabecera.append(titulo, activo, quitar);
+
+    const texto = document.createElement("textarea");
+    texto.placeholder = "Contenido que Catalina debe tener en cuenta…";
+    texto.value = nota.texto ?? "";
+    texto.addEventListener("input", () => { nota.texto = texto.value; });
+
+    tarjeta.append(cabecera, texto);
+    contenedor.append(tarjeta);
+  }
+}
+
+function pintarConectores() {
+  const contenedor = $("#listaConectores");
+  contenedor.replaceChildren();
+  for (const [indice, conector] of (config.conectores ?? []).entries()) {
+    const tarjeta = document.createElement("div");
+    tarjeta.className = "tarjeta";
+
+    const cabecera = document.createElement("div");
+    cabecera.className = "tarjeta-cabecera";
+    const nombre = document.createElement("input");
+    nombre.type = "text";
+    nombre.placeholder = "nombre_sin_espacios";
+    nombre.value = conector.nombre ?? "";
+    nombre.addEventListener("input", () => { conector.nombre = nombre.value.replace(/\s+/g, "_"); });
+
+    const activo = document.createElement("label");
+    activo.className = "interruptor";
+    const casilla = document.createElement("input");
+    casilla.type = "checkbox";
+    casilla.checked = conector.activo !== false;
+    casilla.addEventListener("change", () => { conector.activo = casilla.checked; });
+    activo.append(casilla, document.createTextNode("Activo"));
+
+    const quitar = document.createElement("button");
+    quitar.className = "peligro";
+    quitar.textContent = "Quitar";
+    quitar.addEventListener("click", () => { config.conectores.splice(indice, 1); pintarConectores(); });
+
+    cabecera.append(nombre, activo, quitar);
+
+    const descripcion = document.createElement("input");
+    descripcion.type = "text";
+    descripcion.placeholder = "Cuándo debe usarlo Catalina";
+    descripcion.value = conector.descripcion ?? "";
+    descripcion.addEventListener("input", () => { conector.descripcion = descripcion.value; });
+
+    const fila = document.createElement("div");
+    fila.className = "fila";
+    fila.append(
+      campo("URL (https)", "url", conector, "url", "https://…"),
+      selector(conector),
+      campo("Cabecera (opcional)", "text", conector, "cabecera", "Authorization"),
+      campo("Valor de la cabecera", "text", conector, "valorCabecera", "Bearer …")
+    );
+
+    const acciones = document.createElement("div");
+    acciones.className = "acciones";
+    const probar = document.createElement("button");
+    probar.textContent = "Probar";
+    const resultado = document.createElement("span");
+    resultado.className = "estado";
+    probar.addEventListener("click", async () => {
+      resultado.textContent = "Probando…";
+      resultado.dataset.tipo = "";
+      const r = await fetch("/admin/probar-conector", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...cabeceras() },
+        body: JSON.stringify({ ...conector, consulta: "prueba" })
+      });
+      const d = await r.json().catch(() => ({}));
+      resultado.textContent = d.ok ? "Responde correctamente" : (d.error || "No respondió");
+      resultado.dataset.tipo = d.ok ? "ok" : "error";
+    });
+    acciones.append(probar, resultado);
+
+    tarjeta.append(cabecera, descripcion, fila, acciones);
+    contenedor.append(tarjeta);
+  }
+}
+
+function campo(etiqueta, tipo, objeto, clave, marcador) {
+  const envoltorio = document.createElement("div");
+  const label = document.createElement("label");
+  label.textContent = etiqueta;
+  const entrada = document.createElement("input");
+  entrada.type = tipo === "url" ? "url" : tipo;
+  entrada.placeholder = marcador ?? "";
+  entrada.value = objeto[clave] ?? "";
+  entrada.addEventListener("input", () => { objeto[clave] = entrada.value; });
+  envoltorio.append(label, entrada);
+  return envoltorio;
+}
+
+function selector(conector) {
+  const envoltorio = document.createElement("div");
+  const label = document.createElement("label");
+  label.textContent = "Método";
+  const select = document.createElement("select");
+  for (const metodo of ["GET", "POST"]) {
+    const opcion = document.createElement("option");
+    opcion.value = opcion.textContent = metodo;
+    opcion.selected = (conector.metodo || "GET") === metodo;
+    select.append(opcion);
+  }
+  select.addEventListener("change", () => { conector.metodo = select.value; });
+  envoltorio.append(label, select);
+  return envoltorio;
+}
+
+$("#secciones").addEventListener("click", evento => {
+  const boton = evento.target.closest("button");
+  if (!boton) return;
+  for (const otro of evento.currentTarget.querySelectorAll("button")) {
+    otro.setAttribute("aria-selected", String(otro === boton));
+  }
+  for (const seccion of document.querySelectorAll("main section")) {
+    seccion.hidden = seccion.id !== boton.dataset.seccion;
+  }
+  // El banco se carga sólo al abrirlo: arrastra la fotografía y el bucle de
+  // dibujo, y no tiene sentido pagarlo si nunca se mira.
+  if (boton.dataset.seccion === "banco") cargarBanco();
+});
+
+function cargarBanco() {
+  const marco = $("#marcoBanco");
+  if (marco.dataset.cargado) return;
+  marco.src = "/banco.html";
+  marco.dataset.cargado = "1";
+}
+
+$("#agregarNota").addEventListener("click", () => {
+  (config.conocimiento ??= []).push({ titulo: "", texto: "", activo: true });
+  pintarConocimiento();
+});
+
+$("#agregarConector").addEventListener("click", () => {
+  (config.conectores ??= []).push({ nombre: "", descripcion: "", url: "", metodo: "GET", activo: true });
+  pintarConectores();
+});
+
+for (const boton of document.querySelectorAll("[data-agregar]")) {
+  boton.addEventListener("click", () => {
+    const clave = boton.dataset.agregar;
+    (config.limites[clave] ??= []).push("");
+    pintarPuntos(clave);
+  });
+}
+
+$("#instrucciones").addEventListener("input", evento => {
+  config.persona.instrucciones = evento.target.value;
+});
+
+for (const [id, ruta] of Object.entries({
+  modeloOpenai: ["openai", "modelo"], vozOpenai: ["openai", "voz"],
+  modeloGemini: ["gemini", "modelo"], vozGemini: ["gemini", "voz"], idiomaGemini: ["gemini", "idioma"]
+})) {
+  $("#" + id).addEventListener("input", evento => {
+    config.modelos[ruta[0]][ruta[1]] = evento.target.value;
+  });
+}
+
+$("#guardar").addEventListener("click", async () => {
+  avisar("Guardando…");
+  const respuesta = await fetch("/admin/config", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...cabeceras() },
+    body: JSON.stringify(config)
+  });
+  const datos = await respuesta.json().catch(() => ({}));
+  if (!respuesta.ok) return avisar(datos.error || "No se pudo guardar", "error");
+  config = datos;
+  pintar();
+  avisar("Guardado · se aplica en la próxima conversación", "ok");
+});
+
+cargarBanco();
+cargar();
+</script>
+</body>
+</html>
