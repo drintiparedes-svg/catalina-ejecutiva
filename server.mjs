@@ -838,13 +838,22 @@ async function buscarSalud(req, res) {
     return json(res, 400, { ok: false, error: "Tipo no reconocido." });
   } catch (error) {
     console.error("salud:", error.message);
-    // Se dice que no se pudo consultar, no que no hay nada: son cosas
-    // distintas y confundirlas deja a alguien sin buscar por otra vía.
-    // `detalle` no lo lee Catalina; sirve para diagnosticar desde fuera por qué
-    // una fuente falla en el despliegue y no en local.
+    // Se distingue el bloqueo del fallo pasajero. El MINSAL rechaza las
+    // peticiones que vienen de un centro de datos, así que en el sitio
+    // publicado las farmacias no se pueden consultar por mucho que se
+    // reintente; decir «vuelve a intentarlo» sería engañar.
+    if (error.estado === 403) {
+      return json(res, 502, {
+        ok: false,
+        error: "El registro de farmacias del MINSAL no acepta consultas desde el servidor donde está publicada Catalina. "
+          + "Esta búsqueda sí funciona cuando Catalina se ejecuta en el equipo del usuario.",
+        code: "MINSAL_BLOQUEA_SERVIDOR"
+      });
+    }
     return json(res, 502, {
       ok: false,
       error: "No se pudo consultar la fuente oficial en este momento.",
+      code: "FUENTE_NO_DISPONIBLE",
       detalle: `${error.name}: ${error.message}`.slice(0, 200)
     });
   }
