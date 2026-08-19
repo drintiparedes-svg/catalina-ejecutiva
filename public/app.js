@@ -10,6 +10,7 @@ import { VoiceTracker } from "./audio/voice-tracker.js";
 import { RealtimeSession } from "./realtime/session.js";
 import { GeminiSession } from "./realtime/gemini-session.js";
 import { dibujarRuta } from "./mapa.js";
+import { EscuchaDeReunion, escuchaDisponible } from "./escucha.js";
 
 const canvas = document.querySelector("#avatar");
 const ctx = canvas.getContext("2d");
@@ -250,8 +251,8 @@ ui.mute.addEventListener("click", () => {
   ui.mute.textContent = muted ? "Activar micrófono" : "Silenciar micrófono";
   setStatus(muted ? "Micrófono silenciado" : "Te escucho");
 });
-ui.meetMode.addEventListener("click", () => ui.stage.classList.add("meet"));
-ui.exitMeet.addEventListener("click", () => ui.stage.classList.remove("meet"));
+ui.meetMode.addEventListener("click", () => entrarEnModoMeet());
+ui.exitMeet.addEventListener("click", () => salirDeModoMeet());
 ui.toggleCaption.addEventListener("click", () => fijarSubtitulos(!verSubtitulos));
 ui.togglePanel.addEventListener("click", () => fijarPanel(!verPanel));
 ui.panelClose.addEventListener("click", () => fijarPanel(false));
@@ -266,11 +267,13 @@ ui.referenciasCerrar.addEventListener("click", () => {
 document.addEventListener("keydown", event => {
   if (event.target.matches("input, textarea")) return;
   const tecla = event.key.toLowerCase();
-  if (tecla === "h") ui.stage.classList.toggle("meet");
+  if (tecla === "h") {
+    ui.stage.classList.contains("meet") ? salirDeModoMeet() : entrarEnModoMeet();
+  }
   if (tecla === "s") fijarSubtitulos(!verSubtitulos);
   if (event.key === "Escape") {
     if (verPanel) fijarPanel(false);
-    else ui.stage.classList.remove("meet");
+    else salirDeModoMeet();
   }
 });
 document.addEventListener("pointerdown", () => {
@@ -281,6 +284,88 @@ document.addEventListener("pointerdown", () => {
 
 function setStatus(text) {
   ui.status.textContent = text;
+}
+
+// Modo reunión.
+//
+// El micrófono queda abierto pero Catalina no habla salvo que la llamen por su
+// nombre. Para que eso no cueste una fortuna, la reunión no se le manda al
+// modelo: la transcribe el navegador, gratis, y sólo cuando alguien dice
+// «Catalina» se le envía lo hablado como texto y se le pide que conteste.
+//
+// La sesión de voz sigue abierta pero con el micrófono cortado, así que no se
+// envía audio y no se paga por escuchar; a cambio responde al instante y con su
+// voz, sin tener que reconectar.
+const escucha = new EscuchaDeReunion({
+  alTranscribir: () => hayActividad(),   // la reunión cuenta como vida
+  alLlamarla: (peticion, contexto) => atenderLlamado(peticion, contexto)
+});
+
+let enModoMeet = false;
+let micCortadoPorMeet = false;
+
+function entrarEnModoMeet() {
+  ui.stage.classList.add("meet");
+  if (enModoMeet) return;
+  enModoMeet = true;
+
+  if (!escuchaDisponible()) {
+    // Sin reconocimiento de voz el modo sigue sirviendo para capturar la
+    // pantalla, pero no puede escuchar. Mejor decirlo que fingir que escucha.
+    mostrarAviso("Este navegador no puede transcribir la reunión. Prueba con Chrome.");
+    return;
+  }
+
+  // Se corta el micrófono hacia el modelo: quien escucha ahora es el navegador.
+  if (connected && sesion && !sesion.muted) {
+    sesion.toggleMute();
+    micCortadoPorMeet = true;
+    ui.mute.textContent = "Activar micrófono";
+  }
+  escucha.olvidar();
+  escucha.empezar();
+  setStatus("En reunión · di «Catalina» para hablarme");
+}
+
+function salirDeModoMeet() {
+  ui.stage.classList.remove("meet");
+  if (!enModoMeet) return;
+  enModoMeet = false;
+
+  escucha.parar();
+  // Sólo se devuelve el micrófono si fue este modo quien lo quitó.
+  if (micCortadoPorMeet && connected && sesion?.muted) {
+    sesion.toggleMute();
+    ui.mute.textContent = "Silenciar micrófono";
+  }
+  micCortadoPorMeet = false;
+  setStatus(connected ? "Te escucho" : "Lista para comenzar");
+}
+
+// La llamaron por su nombre en mitad de la reunión.
+async function atenderLlamado(peticion, contexto) {
+  if (!connected || !sesion) {
+    // Sin sesión abierta no puede contestar; se avisa en vez de perder lo dicho.
+    setStatus("Me llamaste, pero la sesión está cerrada");
+    return;
+  }
+  hayActividad();
+
+  // Se le da lo hablado y lo que le piden, separados, para que sepa qué es
+  // contexto y qué es la pregunta.
+  const mensaje = [
+    "Estás escuchando una reunión. Esto es lo que se ha dicho hasta ahora, transcrito automáticamente:",
+    "",
+    contexto || "(todavía no hay nada transcrito)",
+    "",
+    `Acaban de dirigirse a ti y te han pedido: «${peticion}»`,
+    "",
+    "Responde sólo a eso, breve y en voz alta. No resumas la reunión entera salvo que te lo pidan.",
+    "La transcripción es automática y puede tener errores: si algo no cuadra, dilo en vez de darlo por cierto."
+  ].join("\n");
+
+  sesion.enviarTexto(mensaje);
+  setStatus("Respondiendo…");
 }
 
 // Herramientas de docencia.

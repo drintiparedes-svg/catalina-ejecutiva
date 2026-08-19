@@ -208,6 +208,19 @@ export class GeminiSession {
     }
   }
 
+  // Entrada por texto, igual que en la sesión de OpenAI. `turnComplete` es lo
+  // que le dice a Gemini que ya puede contestar.
+  enviarTexto(texto) {
+    if (this.socket?.readyState !== WebSocket.OPEN) return false;
+    this.socket.send(JSON.stringify({
+      clientContent: {
+        turns: [{ role: "user", parts: [{ text: texto }] }],
+        turnComplete: true
+      }
+    }));
+    return true;
+  }
+
   disconnect() {
     this.connected = false;
     this.#callar();

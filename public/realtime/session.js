@@ -158,6 +158,18 @@ export class RealtimeSession {
     this.channel.send(JSON.stringify({ type: "response.create" }));
   }
 
+  // Entrada por texto, para el modo Meet: allí no se le manda audio, se le
+  // manda lo que el navegador transcribió y se le pide que conteste.
+  enviarTexto(texto) {
+    if (this.channel?.readyState !== "open") return false;
+    this.channel.send(JSON.stringify({
+      type: "conversation.item.create",
+      item: { type: "message", role: "user", content: [{ type: "input_text", text: texto }] }
+    }));
+    this.channel.send(JSON.stringify({ type: "response.create" }));
+    return true;
+  }
+
   disconnect() {
     this.connected = false;
     this.channel?.close();
