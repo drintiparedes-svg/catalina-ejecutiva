@@ -286,7 +286,23 @@ rotula mal, y en docencia eso se aprende como si fuera cierto. Todo lo que
 aparece en pantalla existía antes de preguntar y se puede comprobar en su
 fuente.
 
-Dos detalles de la búsqueda que cuestan de adivinar:
+La búsqueda insiste antes de rendirse: dos tandas de tres consultas **en
+paralelo**, no una cascada en fila. Encadenadas encontraban imagen casi siempre
+pero sumaban hasta ocho viajes de red y la espera se hacía larga; lanzadas a la
+vez, la primera tanda cuesta lo que la más lenta de sus tres y resuelve la
+mayoría de los casos. Si Commons no da nada, se usa la imagen principal del
+artículo de Wikipedia —primero en español—, que suele ser el esquema que uno
+usaría para explicárselo a alguien.
+
+Cuando lo único encontrado no menciona el término, se devuelve marcado como
+**aproximado** y Catalina lo advierte al hablar, en vez de presentarlo como la
+estructura exacta.
+
+El material se prefiere esquemático y simple, para explicárselo a un paciente:
+puntúan alto el vectorial y los títulos con «diagram» o «esquema», y bajan la
+disección, la microscopía y las imágenes radiológicas.
+
+Tres detalles de la búsqueda que cuestan de adivinar:
 
 - La consulta a Commons va escueta (`estructura + "diagram"`). Con grupos de
   `OR` el buscador reparte el peso entre esas palabras y diluye el término real:
@@ -294,6 +310,9 @@ Dos detalles de la búsqueda que cuestan de adivinar:
 - La ordenación es jerárquica: primero que la lámina trate del tema, después que
   esté dibujada. Al revés —premiando sólo el «parece dibujo»— devolvía un
   esquema de caracol en SVG para una consulta de plexo braquial.
+- Wikimedia estrangula a quien no se identifica con un contacto en el
+  `User-Agent`. En ráfagas se nota mucho: las primeras consultas pasan y las
+  siguientes se rechazan sin más, que desde fuera parece «no hay imagen».
 
 Ni Commons ni PubMed necesitan clave.
 

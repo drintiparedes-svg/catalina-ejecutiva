@@ -98,10 +98,16 @@ const server = createServer(async (req, res) => {
 // carácter de Catalina sino cómo funcionan las herramientas, y si se pudiera
 // borrar por descuido el modelo empezaría a narrar láminas que nunca aparecieron.
 const USO_DE_HERRAMIENTAS = [
-  "Cuando expliques una estructura anatómica o un tema médico que se entienda mejor viéndolo, usa la herramienta buscar_imagen_medica.",
-  "La herramienta busca láminas de atlas y diagramas didácticos ya publicados; no inventa imágenes.",
-  "Si no encuentra nada adecuado, dilo con naturalidad y sigue explicando de palabra. Nunca afirmes que se ve algo que no apareció.",
+  "Apóyate en imágenes siempre que puedas: en cuanto expliques algo que se entienda mejor viéndolo, usa buscar_imagen_medica.",
+  "Pide términos anatómicos sencillos y en inglés; si no aparece nada, prueba otra vez con un término más general antes de rendirte.",
+  "La herramienta busca esquemas y diagramas ya publicados; no inventa imágenes.",
+  "Explica como si fuera para un paciente: lenguaje llano, lo esencial primero, sin tecnicismos innecesarios.",
   "Al mostrar una lámina, ve señalando lo que se ve y explícalo; no leas el pie de imagen.",
+  // La herramienta avisa cuando lo encontrado sólo se aproxima al tema. Sin
+  // esta regla el modelo lo narraría como si fuera exacto, que es justo el
+  // fallo que hace peligrosa una imagen equivocada en docencia.
+  "Si el resultado viene marcado como aproximado, dilo: preséntalo como una imagen parecida y no como la estructura exacta.",
+  "Si no aparece ninguna imagen, dilo con naturalidad y sigue explicando de palabra. Nunca afirmes que se ve algo que no apareció.",
   "Usa buscar_referencias para respaldar en la literatura lo que estés explicando."
 ].join(" ");
 
@@ -315,72 +321,181 @@ async function buscarImagenMedica(req, res) {
   }
   const detalle = String(peticion.detalle || "").trim();
 
-  // La consulta va deliberadamente escueta. Con grupos de OR («anatomy OR
-  // anatomical», «diagram OR illustration OR scheme») el buscador reparte el
-  // peso entre esas palabras y diluye el término que de verdad importa: para
-  // «nephron» llegó a devolver anatomía de poliqueto, de hormiga y de caracol.
-  // Un solo «diagram» basta para inclinarlo hacia material dibujado sin tapar
-  // la estructura preguntada; de separar dibujo de fotografía ya se encarga la
-  // puntuación posterior.
-  const consulta = [estructura, detalle, "diagram"].filter(Boolean).join(" ");
+  // Palabras con peso de la consulta, para comprobar que la lámina trata de lo
+  // que se preguntó y no sólo de que esté dibujada.
+  const terminos = estructura.toLowerCase().split(/\W+/).filter(palabra => palabra.length > 3);
+
+  // Dos tandas en paralelo, no una cascada en fila.
+  //
+  // Buscar por pasos encontraba imagen casi siempre, pero encadenaba hasta ocho
+  // viajes de red y la espera se hacía larga. Lanzadas a la vez, la primera
+  // tanda cuesta lo que la más lenta de sus tres consultas —no la suma— y
+  // resuelve la mayoría de los casos. La segunda sólo se paga cuando hace falta.
+  //
+  // Las consultas van escuetas a propósito. Con grupos de OR el buscador
+  // reparte el peso entre esas palabras y diluye el término que importa: para
+  // «nephron» llegaba a devolver anatomía de poliqueto y de caracol.
+  let lamina = await mejorDe([
+    buscarEnCommons([estructura, detalle, "diagram"], terminos, true),
+    buscarEnCommons([estructura, "anatomy diagram"], terminos, true),
+    // La imagen principal de un artículo suele ser el esquema que uno usaría
+    // para explicárselo a alguien. En español, que es el idioma de la charla.
+    buscarEnWikipedia("es", estructura, terminos)
+  ]);
+
+  if (!lamina) {
+    lamina = await mejorDe([
+      buscarEnCommons([estructura, detalle], terminos, true),
+      buscarEnWikipedia("en", estructura, terminos),
+      // Último recurso: lo mejor que dé Commons aunque el título no mencione el
+      // término. Va marcado como aproximado para que Catalina lo advierta en
+      // vez de explicarlo como si fuera exacto.
+      buscarEnCommons([estructura, "diagram"], terminos, false)
+    ]);
+  }
+
+  if (!lamina) {
+    return json(res, 404, { error: "No hay una lámina adecuada para eso.", code: "SIN_LAMINA" });
+  }
+  json(res, 200, { lamina });
+}
+
+// La mejor de varias búsquedas lanzadas a la vez. Una que falle o tarde no
+// arrastra a las demás: se descarta y se compara lo que sí llegó.
+async function mejorDe(promesas) {
+  const acabadas = await Promise.allSettled(promesas);
+  // Sin este registro, una consulta rota se descartaba igual que una que no
+  // encontró nada y el fallo quedaba invisible.
+  for (const r of acabadas) {
+    if (r.status === "rejected") console.error("búsqueda de lámina:", r.reason?.message || r.reason);
+  }
+  const resultados = acabadas
+    .filter(r => r.status === "fulfilled" && r.value)
+    .map(r => r.value);
+
+  // Criterio jerárquico. Primero la confianza en que trata del tema: ordenar
+  // sólo por «parece dibujo» llegó a devolver un esquema de caracol para una
+  // consulta de plexo braquial. Después, la más esquemática.
+  return resultados.sort((a, b) =>
+    (confianza(b) - confianza(a))
+    || (puntuarDibujo(b) - puntuarDibujo(a))
+    || (a.rango - b.rango))[0] ?? null;
+}
+
+// Una imagen de Wikipedia puede no repetir el término en el nombre del archivo
+// y aun así ser la correcta: la eligió el artículo que trata el tema. Ese
+// contexto vale tanto como la coincidencia literal, y más que una aproximada.
+function confianza(lamina) {
+  if (lamina.coincidencias > 0) return 2;
+  if (lamina.articulo) return 2;
+  return 0;
+}
+
+async function buscarEnCommons(partes, terminos, exigirCoincidencia) {
+  const consulta = partes.filter(Boolean).join(" ").trim();
+  if (!consulta) return null;
 
   const url = new URL("https://commons.wikimedia.org/w/api.php");
   url.search = new URLSearchParams({
     action: "query", generator: "search", gsrsearch: consulta,
-    gsrnamespace: "6", gsrlimit: "12",
+    gsrnamespace: "6", gsrlimit: "20",
     prop: "imageinfo", iiprop: "url|extmetadata|mime", iiurlwidth: "900",
     iiextmetadatafilter: "Artist|LicenseShortName|License|ImageDescription",
     format: "json", origin: "*"
   }).toString();
 
-  const upstream = await fetch(url, { headers: { "User-Agent": "Catalina/1.0 (docencia médica)" } });
-  if (!upstream.ok) {
-    console.error("Commons:", upstream.status);
-    return json(res, 502, { error: "No se pudo consultar el atlas.", code: "ATLAS_NO_DISPONIBLE" });
-  }
+  const upstream = await fetch(url, { headers: { "User-Agent": AGENTE }, signal: AbortSignal.timeout(7000) });
+  if (!upstream.ok) return null;
 
   const paginas = Object.values((await upstream.json())?.query?.pages ?? {});
-  // Palabras con peso de la consulta. Sirven para comprobar que la lámina trata
-  // de lo que se preguntó, no sólo de que esté dibujada.
-  const terminos = estructura.toLowerCase().split(/\W+/).filter(palabra => palabra.length > 3);
-
   const laminas = paginas
     .map(pagina => {
       const info = pagina.imageinfo?.[0];
-      if (!info || !String(info.mime || "").startsWith("image/")) return null;
-      const meta = info.extmetadata ?? {};
-      const titulo = String(pagina.title || "").replace(/^File:/, "").replace(/\.\w+$/, "");
-      return {
-        titulo,
-        imagen: info.thumburl || info.url,
-        mime: info.mime,
-        autor: limpiarHtml(meta.Artist?.value) || "Autoría en la ficha de origen",
-        licencia: limpiarHtml(meta.LicenseShortName?.value) || limpiarHtml(meta.License?.value) || "Ver ficha",
-        fuente: info.descriptionurl,
-        // `index` conserva el orden de relevancia que calculó Commons; sin él,
-        // el orden del objeto de páginas es arbitrario.
-        rango: pagina.index ?? 999,
-        coincidencias: contarCoincidencias(titulo, limpiarHtml(meta.ImageDescription?.value), terminos)
-      };
+      if (!info) return null;
+      // `index` conserva el orden de relevancia que calculó Commons; sin él, el
+      // orden del objeto de páginas es arbitrario.
+      return describirArchivo(pagina.title, info, terminos, pagina.index ?? 999);
     })
     .filter(Boolean)
-    // El orden importa y el criterio es jerárquico. Primero que trate del tema:
-    // ordenar sólo por «parece dibujo» llegó a devolver anatomía de un caracol
-    // para una consulta de plexo braquial, porque era un esquema en SVG.
-    // Después, entre las que sí tratan del tema, la que esté dibujada.
+    // Criterio jerárquico. Primero que trate del tema: ordenar sólo por «parece
+    // dibujo» llegó a devolver un esquema de caracol para una consulta de plexo
+    // braquial. Después, entre las que sí tratan del tema, la más esquemática.
     .sort((a, b) =>
       (b.coincidencias - a.coincidencias)
       || (puntuarDibujo(b) - puntuarDibujo(a))
       || (a.rango - b.rango));
 
-  // Una lámina que no menciona lo que se preguntó no vale: es preferible decir
-  // que no hay a mostrar algo de otro tema y explicarlo como si fuera correcto.
-  const elegida = laminas.find(lamina => lamina.coincidencias > 0);
-  if (!elegida) {
-    return json(res, 404, { error: "No hay una lámina adecuada para eso.", code: "SIN_LAMINA" });
-  }
-  json(res, 200, { lamina: elegida });
+  const elegida = exigirCoincidencia
+    ? laminas.find(lamina => lamina.coincidencias > 0)
+    : laminas[0];
+  if (!elegida) return null;
+  return { ...elegida, aproximada: elegida.coincidencias === 0 };
 }
+
+// Imagen principal del artículo de Wikipedia. Se resuelve después contra
+// Commons para poder mostrar autoría y licencia igual que el resto.
+async function buscarEnWikipedia(idioma, estructura, terminos) {
+  const url = new URL(`https://${idioma}.wikipedia.org/w/api.php`);
+  url.search = new URLSearchParams({
+    action: "query", generator: "search", gsrsearch: estructura,
+    gsrnamespace: "0", gsrlimit: "3",
+    prop: "pageimages", piprop: "name", format: "json", origin: "*"
+  }).toString();
+
+  const upstream = await fetch(url, { headers: { "User-Agent": AGENTE }, signal: AbortSignal.timeout(7000) });
+  if (!upstream.ok) return null;
+
+  const paginas = Object.values((await upstream.json())?.query?.pages ?? {})
+    .sort((a, b) => (a.index ?? 999) - (b.index ?? 999));
+
+  for (const pagina of paginas) {
+    if (!pagina.pageimage) continue;
+    const lamina = await detallarArchivo(`File:${pagina.pageimage}`, terminos);
+    // Se acepta aunque el nombre del archivo no repita el término: viene de la
+    // cabecera del artículo que Wikipedia considera más relevante, y ese
+    // contexto vale más que la coincidencia literal del nombre.
+    if (lamina) return { ...lamina, aproximada: false, articulo: pagina.title };
+  }
+  return null;
+}
+
+async function detallarArchivo(titulo, terminos) {
+  const url = new URL("https://commons.wikimedia.org/w/api.php");
+  url.search = new URLSearchParams({
+    action: "query", titles: titulo,
+    prop: "imageinfo", iiprop: "url|extmetadata|mime", iiurlwidth: "900",
+    iiextmetadatafilter: "Artist|LicenseShortName|License|ImageDescription",
+    format: "json", origin: "*"
+  }).toString();
+
+  const upstream = await fetch(url, { headers: { "User-Agent": AGENTE }, signal: AbortSignal.timeout(7000) });
+  if (!upstream.ok) return null;
+
+  const pagina = Object.values((await upstream.json())?.query?.pages ?? {})[0];
+  const info = pagina?.imageinfo?.[0];
+  return info ? describirArchivo(pagina.title, info, terminos, 0) : null;
+}
+
+function describirArchivo(tituloCompleto, info, terminos, rango) {
+  if (!String(info.mime || "").startsWith("image/")) return null;
+  const meta = info.extmetadata ?? {};
+  const titulo = String(tituloCompleto || "").replace(/^File:/, "").replace(/\.\w+$/, "");
+  return {
+    titulo,
+    imagen: info.thumburl || info.url,
+    mime: info.mime,
+    autor: limpiarHtml(meta.Artist?.value) || "Autoría en la ficha de origen",
+    licencia: limpiarHtml(meta.LicenseShortName?.value) || limpiarHtml(meta.License?.value) || "Ver ficha",
+    fuente: info.descriptionurl,
+    rango,
+    coincidencias: contarCoincidencias(titulo, limpiarHtml(meta.ImageDescription?.value), terminos)
+  };
+}
+
+// Wikimedia pide identificarse con un contacto y estrangula a quien no lo hace.
+// Con ráfagas de consultas se nota: las primeras pasan y las siguientes se
+// rechazan sin más, que desde fuera parece «no hay imagen».
+const AGENTE = "Catalina/1.0 (docencia médica; https://github.com/drintiparedes-svg/catalina-avatar)";
 
 function contarCoincidencias(titulo, descripcion, terminos) {
   if (!terminos.length) return 0;
@@ -388,13 +503,18 @@ function contarCoincidencias(titulo, descripcion, terminos) {
   return terminos.filter(palabra => texto.includes(palabra)).length;
 }
 
+// Qué tan servible es para explicarle algo a un paciente. Se busca lo
+// esquemático y simple: un dibujo limpio y rotulado se entiende de un vistazo,
+// mientras que una disección, una microscopía o una radiografía piden formación
+// previa y muchas veces impresionan.
 function puntuarDibujo(lamina) {
   let puntos = 0;
-  if (lamina.mime === "image/svg+xml") puntos += 3;
+  if (lamina.mime === "image/svg+xml") puntos += 3;   // vectorial: casi siempre un esquema
   if (lamina.mime === "image/png") puntos += 2;
   const titulo = lamina.titulo.toLowerCase();
-  if (/(diagram|scheme|illustration|plate|gray|anatomography)/.test(titulo)) puntos += 2;
-  if (/(photo|micrograph|cadaver|dissection|specimen)/.test(titulo)) puntos -= 3;
+  if (/(diagram|scheme|schema|illustration|esquema|diagrama|simple|plate|gray|anatomography)/.test(titulo)) puntos += 2;
+  if (/(photo|foto|micrograph|histolog|cadaver|dissection|specimen|autopsy)/.test(titulo)) puntos -= 4;
+  if (/(mri|ct scan|radiograph|angiogra|ultrasound|ecograf)/.test(titulo)) puntos -= 2;
   return puntos;
 }
 

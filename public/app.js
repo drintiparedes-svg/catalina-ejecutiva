@@ -260,7 +260,15 @@ async function pedirLamina(argumentos) {
     }
 
     mostrarLamina(datos.lamina);
-    return { ok: true, mostrada: true, titulo: datos.lamina.titulo, fuente: datos.lamina.fuente };
+    return {
+      ok: true,
+      mostrada: true,
+      titulo: datos.lamina.titulo,
+      fuente: datos.lamina.fuente,
+      // Va explícito para que Catalina lo advierta al hablar en vez de
+      // presentar como exacta una lámina que sólo se aproxima.
+      aproximada: datos.lamina.aproximada === true
+    };
   } catch (error) {
     console.error(error);
     mostrarLienzoDeImagen("oculto");
