@@ -321,9 +321,7 @@ async function buscarImagenMedica(req, res) {
   }
   const detalle = String(peticion.detalle || "").trim();
 
-  // Palabras con peso de la consulta, para comprobar que la lámina trata de lo
-  // que se preguntó y no sólo de que esté dibujada.
-  const terminos = estructura.toLowerCase().split(/\W+/).filter(palabra => palabra.length > 3);
+  const terminos = terminosDeTema(estructura);
 
   // Dos tandas en paralelo, no una cascada en fila.
   //
@@ -335,23 +333,62 @@ async function buscarImagenMedica(req, res) {
   // Las consultas van escuetas a propósito. Con grupos de OR el buscador
   // reparte el peso entre esas palabras y diluye el término que importa: para
   // «nephron» llegaba a devolver anatomía de poliqueto y de caracol.
+  // ¿La pregunta era clínica? Si alguien pide la hiperplasia de próstata,
+  // quiere verla; si pide la vía urinaria, no. Esa distinción es la que evita
+  // devolver un dispositivo o una enfermedad cuando se pidió anatomía normal.
+  const pideClinico = CLINICO.test(`${estructura} ${detalle}`);
+
   let lamina = await mejorDe([
-    buscarEnCommons([estructura, detalle, "diagram"], terminos, true),
-    buscarEnCommons([estructura, "anatomy diagram"], terminos, true),
+    buscarEnCommons([estructura, detalle, "diagram"], terminos, true, pideClinico),
+    // «human» aparta la lámina veterinaria y la de invertebrado, que en Commons
+    // abundan y comparten nombre con las humanas: «jaw anatomy» devolvía la
+    // mandíbula de una babosa marina. Va en esta consulta y no en una cuarta:
+    // con cuatro en paralelo Commons empezaba a cortar por tiempo y el
+    // resultado cambiaba de una llamada a otra.
+    buscarEnCommons([estructura, "human anatomy diagram"], terminos, true, pideClinico),
     // La imagen principal de un artículo suele ser el esquema que uno usaría
     // para explicárselo a alguien. En español, que es el idioma de la charla.
-    buscarEnWikipedia("es", estructura, terminos)
-  ]);
+    buscarEnWikipedia("es", estructura, terminos, pideClinico)
+  ], pideClinico);
 
-  if (!lamina) {
-    lamina = await mejorDe([
-      buscarEnCommons([estructura, detalle], terminos, true),
-      buscarEnWikipedia("en", estructura, terminos),
+  // Una lámina clínica cuando no se pidió nada clínico se descarta y se vuelve a
+  // buscar. Mostrar un dispositivo o una enfermedad como si fuera la anatomía
+  // normal es peor que tardar un poco más: quien lo mira es un paciente.
+  if (lamina && !pideClinico && CLINICO.test(`${lamina.titulo} ${lamina.descripcion || ""}`)) {
+    lamina = null;
+  }
+
+  // Listón mínimo de calidad didáctica. Sin él se aceptaba lo primero que
+  // coincidiera de palabra aunque no fuese un esquema: una foto de la planta
+  // «Phyllanthus urinaria» para la vía urinaria, o un trazado de ECG para el
+  // infarto. Si lo mejor de la primera tanda no parece un esquema, se busca
+  // también en la segunda y se elige entre ambas.
+  const primera = lamina;
+  if (!lamina || puntuarLamina(lamina, pideClinico) < 2) {
+    const segunda = await mejorDe([
+      buscarEnCommons([estructura, detalle], terminos, true, pideClinico),
+      // «system» y «anatomy» empujan hacia la lámina de conjunto que se usa
+      // para explicar, y apartan la complicación concreta.
+      buscarEnCommons([estructura.replace(/\btract\b/i, "system"), "anatomy"], terminos, true, pideClinico),
+      buscarEnWikipedia("en", estructura, terminos, pideClinico),
       // Último recurso: lo mejor que dé Commons aunque el título no mencione el
       // término. Va marcado como aproximado para que Catalina lo advierta en
       // vez de explicarlo como si fuera exacto.
-      buscarEnCommons([estructura, "diagram"], terminos, false)
-    ]);
+      buscarEnCommons([estructura, "diagram"], terminos, false, pideClinico)
+    ], pideClinico);
+
+    // Se queda la mejor de las dos tandas, no simplemente la segunda: a veces
+    // la primera ya traía lo correcto y sólo faltaba comprobarlo. El filtro
+    // clínico se repite aquí porque la segunda tanda no había pasado por él, y
+    // por ese hueco se colaba una lámina de hipertensión al pedir la vía
+    // urinaria.
+    const candidatas = [primera, segunda]
+      .filter(Boolean)
+      .filter(c => pideClinico || !CLINICO.test(`${c.titulo} ${c.descripcion || ""}`));
+
+    lamina = candidatas.sort(
+      (a, b) => puntuarLamina(b, pideClinico) - puntuarLamina(a, pideClinico)
+    )[0] ?? null;
   }
 
   if (!lamina) {
@@ -362,7 +399,7 @@ async function buscarImagenMedica(req, res) {
 
 // La mejor de varias búsquedas lanzadas a la vez. Una que falle o tarde no
 // arrastra a las demás: se descarta y se compara lo que sí llegó.
-async function mejorDe(promesas) {
+async function mejorDe(promesas, pideClinico = false) {
   const acabadas = await Promise.allSettled(promesas);
   // Sin este registro, una consulta rota se descartaba igual que una que no
   // encontró nada y el fallo quedaba invisible.
@@ -375,10 +412,10 @@ async function mejorDe(promesas) {
 
   // Criterio jerárquico. Primero la confianza en que trata del tema: ordenar
   // sólo por «parece dibujo» llegó a devolver un esquema de caracol para una
-  // consulta de plexo braquial. Después, la más esquemática.
+  // consulta de plexo braquial. Después, la más útil para explicar.
   return resultados.sort((a, b) =>
     (confianza(b) - confianza(a))
-    || (puntuarDibujo(b) - puntuarDibujo(a))
+    || (puntuarLamina(b, pideClinico) - puntuarLamina(a, pideClinico))
     || (a.rango - b.rango))[0] ?? null;
 }
 
@@ -391,7 +428,7 @@ function confianza(lamina) {
   return 0;
 }
 
-async function buscarEnCommons(partes, terminos, exigirCoincidencia) {
+async function buscarEnCommons(partes, terminos, exigirCoincidencia, pideClinico = false) {
   const consulta = partes.filter(Boolean).join(" ").trim();
   if (!consulta) return null;
 
@@ -417,24 +454,29 @@ async function buscarEnCommons(partes, terminos, exigirCoincidencia) {
       return describirArchivo(pagina.title, info, terminos, pagina.index ?? 999);
     })
     .filter(Boolean)
-    // Criterio jerárquico. Primero que trate del tema: ordenar sólo por «parece
-    // dibujo» llegó a devolver un esquema de caracol para una consulta de plexo
-    // braquial. Después, entre las que sí tratan del tema, la más esquemática.
+    // Criterio jerárquico. Antes mandaba la coincidencia de términos, y por eso
+    // «Urinary Tract Infection» ganaba: acertaba las dos palabras. Ahora manda
+    // la nota —que descuenta patología y dispositivos y premia lo esquemático—
+    // y la coincidencia decide los empates. El orden de Commons queda al final.
     .sort((a, b) =>
-      (b.coincidencias - a.coincidencias)
-      || (puntuarDibujo(b) - puntuarDibujo(a))
+      (puntuarLamina(b, pideClinico) - puntuarLamina(a, pideClinico))
+      || (b.coincidencias - a.coincidencias)
       || (a.rango - b.rango));
 
+  // La coincidencia tiene que estar en el título, no basta la descripción.
+  // «Dried cranberries» menciona la vía urinaria en su texto y llegó a colarse
+  // como lámina del aparato urinario; el nombre del archivo es mucho mejor
+  // indicio de qué muestra la imagen que su descripción libre.
   const elegida = exigirCoincidencia
-    ? laminas.find(lamina => lamina.coincidencias > 0)
+    ? laminas.find(lamina => lamina.enTitulo > 0)
     : laminas[0];
   if (!elegida) return null;
-  return { ...elegida, aproximada: elegida.coincidencias === 0 };
+  return { ...elegida, aproximada: elegida.enTitulo === 0 };
 }
 
 // Imagen principal del artículo de Wikipedia. Se resuelve después contra
 // Commons para poder mostrar autoría y licencia igual que el resto.
-async function buscarEnWikipedia(idioma, estructura, terminos) {
+async function buscarEnWikipedia(idioma, estructura, terminos, pideClinico = false) {
   const url = new URL(`https://${idioma}.wikipedia.org/w/api.php`);
   url.search = new URLSearchParams({
     action: "query", generator: "search", gsrsearch: estructura,
@@ -450,11 +492,29 @@ async function buscarEnWikipedia(idioma, estructura, terminos) {
 
   for (const pagina of paginas) {
     if (!pagina.pageimage) continue;
+
+    // Antes se tomaba el primer artículo sin mirar de qué trataba, y ahí nacía
+    // el error de la vía urinaria: para «urinary tract» el artículo mejor
+    // posicionado era la hiperplasia de próstata, y su imagen de cabecera
+    // llegaba como si fuese la anatomía pedida.
+    if (!pideClinico && CLINICO.test(pagina.title || "")) continue;
+
+    // El artículo tiene que hablar del tema. Sin esta comprobación, buscar «vía
+    // urinaria» daba con el artículo del arándano rojo —que la menciona por su
+    // uso preventivo— y se mostraba su foto de arándanos secos como si fuera
+    // la lámina pedida.
+    const tituloArticulo = (pagina.title || "").toLowerCase();
+    if (!terminos.some(palabra => tituloArticulo.includes(palabra))) continue;
+
     const lamina = await detallarArchivo(`File:${pagina.pageimage}`, terminos);
+    if (!lamina) continue;
+    if (!pideClinico && CLINICO.test(`${lamina.titulo} ${lamina.descripcion || ""}`)) continue;
+    if (NO_HUMANO.test(lamina.titulo)) continue;
+
     // Se acepta aunque el nombre del archivo no repita el término: viene de la
     // cabecera del artículo que Wikipedia considera más relevante, y ese
     // contexto vale más que la coincidencia literal del nombre.
-    if (lamina) return { ...lamina, aproximada: false, articulo: pagina.title };
+    return { ...lamina, aproximada: false, articulo: pagina.title };
   }
   return null;
 }
@@ -480,15 +540,19 @@ function describirArchivo(tituloCompleto, info, terminos, rango) {
   if (!String(info.mime || "").startsWith("image/")) return null;
   const meta = info.extmetadata ?? {};
   const titulo = String(tituloCompleto || "").replace(/^File:/, "").replace(/\.\w+$/, "");
+  const descripcion = limpiarHtml(meta.ImageDescription?.value);
   return {
     titulo,
+    descripcion,
     imagen: info.thumburl || info.url,
     mime: info.mime,
     autor: limpiarHtml(meta.Artist?.value) || "Autoría en la ficha de origen",
     licencia: limpiarHtml(meta.LicenseShortName?.value) || limpiarHtml(meta.License?.value) || "Ver ficha",
     fuente: info.descriptionurl,
     rango,
-    coincidencias: contarCoincidencias(titulo, limpiarHtml(meta.ImageDescription?.value), terminos)
+    ...(({ total, enTitulo }) => ({ coincidencias: total, enTitulo }))(
+      contarCoincidencias(titulo, descripcion, terminos)
+    )
   };
 }
 
@@ -497,10 +561,99 @@ function describirArchivo(tituloCompleto, info, terminos, rango) {
 // rechazan sin más, que desde fuera parece «no hay imagen».
 const AGENTE = "Catalina/1.0 (docencia médica; https://github.com/drintiparedes-svg/catalina-avatar)";
 
+// Palabras de andamiaje: dicen qué clase de lámina es, no de qué trata.
+// Contarlas como coincidencia hacía pasar «Scheme turtle anatomy» por una
+// lámina de hígado, porque compartían la palabra «anatomy».
+const GENERICAS = new Set([
+  "anatomy", "anatomia", "anatomía", "anatomical", "anatomic",
+  "diagram", "diagrama", "scheme", "esquema", "schema", "illustration", "ilustracion",
+  "system", "sistema", "human", "humano", "humana", "medical", "medico", "médico",
+  "body", "cuerpo", "structure", "estructura", "view", "vista", "chart", "labeled"
+]);
+
+// El tema real de la consulta, sin el andamiaje. Si sólo quedaran genéricas se
+// devuelven todas: es preferible una comprobación floja a ninguna.
+// El umbral es de tres letras, no de cuatro: con cuatro se caían «eye», «ear»,
+// «hip», «rib» y «jaw», y al quedarse la consulta sólo con la palabra genérica
+// «anatomy» cualquier lámina servía —«eye anatomy» devolvía la anatomía de un
+// anfípodo—.
+function terminosDeTema(texto) {
+  const palabras = texto.toLowerCase().split(/\W+/).filter(p => p.length > 2);
+  const concretas = palabras.filter(p => !GENERICAS.has(p));
+  return concretas.length ? concretas : palabras;
+}
+
+// El título pesa mucho más que la descripción. Una imagen de un dispositivo o
+// de una enfermedad suele mencionar el órgano en su descripción —«esfínter
+// urinario artificial» habla de la vía urinaria— y contando ambos por igual
+// empataba con la lámina de anatomía que sí se pedía.
 function contarCoincidencias(titulo, descripcion, terminos) {
-  if (!terminos.length) return 0;
-  const texto = `${titulo} ${descripcion || ""}`.toLowerCase();
-  return terminos.filter(palabra => texto.includes(palabra)).length;
+  if (!terminos.length) return { total: 0, enTitulo: 0 };
+  const enTitulo = terminos.filter(palabra => titulo.toLowerCase().includes(palabra)).length;
+  const enDescripcion = terminos.filter(palabra => (descripcion || "").toLowerCase().includes(palabra)).length;
+  return { total: enTitulo * 3 + enDescripcion, enTitulo };
+}
+
+// Señales de que la lámina muestra enfermedad, dispositivo o cirugía en lugar
+// de anatomía normal.
+//
+// Es la corrección más importante de la búsqueda. Pedir «vía urinaria» devolvía
+// un esfínter urinario artificial, y «urinary tract» una hiperplasia de
+// próstata: son coincidencias perfectas de término, pero no son lo que se
+// quiere para explicarle a un paciente cómo funciona su cuerpo. Sólo penaliza
+// cuando la pregunta no era clínica: si alguien pide justamente la hiperplasia,
+// la quiere ver.
+const CLINICO = new RegExp([
+  "infecc|infection|cancer|cáncer|carcinom|tumou?r|neoplas|metasta",
+  "hiperplas|hyperplas|hipertrof|hypertroph|enferm|disease|síndrom|syndrome",
+  "estenosis|stenosis|obstrucc|obstruct|lesion|lesión|fractur|absces|abscess",
+  "inflamac|inflammat|itis\\b|patolog|patholog|cálculo|calculi|stone|litiasis",
+  "hipertens|hypertens|diabet|insuficien|failure|isquem|ischem|infarto|infarct",
+  "displas|dysplas|malform|deform|atrofia|atroph|hernia|prolaps|aneurism|aneurysm",
+  "prótesis|prosthes|implant|artificial|catéter|catheter|stent|sonda|drenaje",
+  "cirug|surger|surgical|quirúrg|operac|operation|resecc|resect|injerto|graft",
+  "biopsia|biopsy|tratamiento|treatment|terapia|therapy|fármaco|drug"
+].join("|"), "i");
+
+// Colecciones modernas hechas para enseñar. `gray` se dejó fuera a propósito:
+// las planchas de 1918 son correctas pero densas y sin color, y para explicarle
+// algo a un paciente pierden contra un diagrama rotulado de hoy.
+const DIDACTICO = /(cruk|blausen|servier|anatomography|esquema|scheme|schema|diagram)/i;
+
+// Anatomía que no es humana. Commons está lleno de láminas veterinarias y de
+// animal de laboratorio: «liver anatomy» devolvía el hígado de un ratón.
+// El plural opcional importa: «Sheeps liver diagram» se colaba porque el
+// filtro exigía «sheep» exacto.
+const NO_HUMANO = new RegExp(
+  "\\b(mouse|mice|rat|rodent|murine|bovine|canine|feline|dog|cat|horse|equine|porcine"
+  + "|pig|sheep|goat|cow|cattle|chicken|avian|bird|fish|frog|toad|turtle|tortoise|reptile"
+  + "|amphibian|lizard|snake|zebrafish|drosophila|insect|ant|bee|snail|slug|worm|polychaeta"
+  + "|octopus|crab|spider|amphipod|krill|shrimp|crustacean|arthropod|mollusc|nudibranch"
+  + "|larva|fiona|plant|phyllanthus|veterinar"
+  + "|ratón|rata|perro|gato|caballo|cerdo|vaca|oveja|tortuga|serpiente|insecto|caracol|planta)"
+  + "e?s?\\b", "i");
+
+// Nota final de una lámina dentro de su tanda. Se separa del orden de Commons
+// a propósito: el buscador ordena por parecido de texto, no por si la imagen
+// sirve para explicarle algo a un paciente.
+function puntuarLamina(lamina, pideClinico) {
+  let puntos = puntuarDibujo(lamina);
+  const texto = `${lamina.titulo} ${lamina.descripcion || ""}`;
+
+  // Sin esto, «Urinary Tract Infection» le ganaba a la lámina del aparato
+  // urinario por tener las dos palabras exactas en el título.
+  if (!pideClinico && CLINICO.test(texto)) puntos -= 8;
+
+  if (NO_HUMANO.test(lamina.titulo)) puntos -= 6;
+  // Decirlo en el título es la señal más fiable de que la lámina es humana, y
+  // en Commons conviven con las veterinarias y las de invertebrados.
+  if (/\b(human|humano|humana)\b/i.test(lamina.titulo)) puntos += 2;
+
+  // Colecciones pensadas para enseñar: CRUK, Blausen, Servier, Anatomography.
+  // Suelen ser justo el esquema limpio y rotulado que se busca.
+  if (DIDACTICO.test(lamina.titulo)) puntos += 2;
+
+  return puntos;
 }
 
 // Qué tan servible es para explicarle algo a un paciente. Se busca lo
@@ -514,7 +667,9 @@ function puntuarDibujo(lamina) {
   const titulo = lamina.titulo.toLowerCase();
   if (/(diagram|scheme|schema|illustration|esquema|diagrama|simple|plate|gray|anatomography)/.test(titulo)) puntos += 2;
   if (/(photo|foto|micrograph|histolog|cadaver|dissection|specimen|autopsy)/.test(titulo)) puntos -= 4;
-  if (/(mri|ct scan|radiograph|angiogra|ultrasound|ecograf)/.test(titulo)) puntos -= 2;
+  // Registros y estudios: son reales y útiles, pero no explican la anatomía a
+  // un paciente. Un trazado de ECG salía como «esquema» del infarto.
+  if (/(mri|ct scan|radiograph|angiogra|ultrasound|ecograf|ecg|ekg|electrocardiogra|scintigra|endoscop)/.test(titulo)) puntos -= 3;
   return puntos;
 }
 
