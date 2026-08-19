@@ -194,6 +194,11 @@ const USO_DE_HERRAMIENTAS = [
   "Al relatar el camino, cuéntalo como se lo dirías a alguien en la calle: las calles y los giros que importan, no la lista entera de pasos.",
   "Menciona el tiempo caminando y en auto por separado, y que el mapa en pantalla se puede tocar para abrir el recorrido.",
 
+].join(" ");
+
+// Sólo se añade cuando las herramientas de llamada están disponibles: si no,
+// sería describirle a Catalina algo que no puede hacer.
+const USO_DEL_TELEFONO = [
   // Marcar es irreversible y la llamada la recibe un tercero. La confirmación
   // no puede quedar al criterio del modelo, así que se dice aquí y además la
   // herramienta la exige.
@@ -206,7 +211,12 @@ const USO_DE_HERRAMIENTAS = [
 // panel, lo de arriba es fijo. Los dos proveedores reciben exactamente lo mismo,
 // para que Catalina no cambie de carácter al pasar de uno a otro.
 async function instruccionesDeSesion(config) {
-  return [componerInstrucciones(config), USO_DE_HERRAMIENTAS].filter(Boolean).join(" ");
+  const puedeLlamar = telefoniaLista() && config.telefono?.activo !== false;
+  return [
+    componerInstrucciones(config),
+    USO_DE_HERRAMIENTAS,
+    puedeLlamar ? USO_DEL_TELEFONO : ""
+  ].filter(Boolean).join(" ");
 }
 
 // Herramienta de imagen.
@@ -358,17 +368,28 @@ const DESCRIPCION_ESTADO_LLAMADA = "Dice cómo va o cómo terminó una llamada. 
 
 const HERRAMIENTAS = [
   { nombre: "buscar_imagen_medica", descripcion: DESCRIPCION_IMAGEN, parametros: PARAMETROS_IMAGEN },
-  { nombre: "llamar_por_telefono", descripcion: DESCRIPCION_LLAMADA, parametros: PARAMETROS_LLAMADA },
-  { nombre: "consultar_llamada", descripcion: DESCRIPCION_ESTADO_LLAMADA, parametros: PARAMETROS_ESTADO_LLAMADA },
   { nombre: "como_llegar", descripcion: DESCRIPCION_RUTA, parametros: PARAMETROS_RUTA },
   { nombre: "buscar_salud_cerca", descripcion: DESCRIPCION_SALUD, parametros: PARAMETROS_SALUD },
   { nombre: "buscar_referencias", descripcion: DESCRIPCION_REFERENCIAS, parametros: PARAMETROS_REFERENCIAS },
   { nombre: "enviar_resumen", descripcion: DESCRIPCION_CORREO, parametros: PARAMETROS_CORREO }
 ];
 
-// Las internas más las que haya añadido el panel como conectores.
+// Las de llamada sólo se le ofrecen al modelo si la telefonía está de verdad
+// configurada. Declararlas siempre hacía que Catalina se ofreciera a llamar en
+// un despliegue donde no puede —Vercel no sostiene la conexión que hace falta—,
+// y prometer algo que luego falla es peor que no ofrecerlo.
+const HERRAMIENTAS_TELEFONO = [
+  { nombre: "llamar_por_telefono", descripcion: DESCRIPCION_LLAMADA, parametros: PARAMETROS_LLAMADA },
+  { nombre: "consultar_llamada", descripcion: DESCRIPCION_ESTADO_LLAMADA, parametros: PARAMETROS_ESTADO_LLAMADA }
+];
+
+// Las internas, las de teléfono si procede, y las que haya añadido el panel.
 function todasLasHerramientas(config) {
-  return [...HERRAMIENTAS, ...herramientasDeConectores(config)];
+  return [
+    ...HERRAMIENTAS,
+    ...(telefoniaLista() && config.telefono?.activo !== false ? HERRAMIENTAS_TELEFONO : []),
+    ...herramientasDeConectores(config)
+  ];
 }
 
 async function createRealtimeSession(req, res) {
