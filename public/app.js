@@ -342,8 +342,11 @@ async function comoLlegar(argumentos) {
     ?? lugaresEnPantalla.find(l => buscado.includes(l.nombre.toLowerCase()));
   if (!destino) return { ok: false, error: "Ese lugar no está entre los que se mostraron." };
 
-  const origen = ubicacionConocida ?? await ubicacionActual();
-  if (!origen) {
+  // Lo que diga la persona manda sobre el GPS: si aclara que sale de otro
+  // sitio, es porque el punto del dispositivo no es el que le interesa.
+  const desde = String(argumentos.desde || "").trim();
+  const origen = desde ? null : (ubicacionConocida ?? await ubicacionActual());
+  if (!origen && !desde) {
     // Se dice qué falta, para que Catalina lo pregunte en vez de inventarse un
     // punto de partida.
     return { ok: false, faltaOrigen: true, error: "No sé desde dónde sale la persona. Pregúntale dónde está." };
@@ -354,7 +357,7 @@ async function comoLlegar(argumentos) {
     const respuesta = await fetch("/ruta", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ origen, destino: { lat: destino.lat, lon: destino.lon } })
+      body: JSON.stringify({ origen, desde, destino: { lat: destino.lat, lon: destino.lon } })
     });
     const ruta = await respuesta.json().catch(() => ({}));
     if (!ruta.ok) {

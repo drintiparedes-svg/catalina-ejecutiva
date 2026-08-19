@@ -4,7 +4,7 @@ import {
   cargarConfig, guardarConfig, componerInstrucciones, herramientasDeConectores
 } from "./config.mjs";
 import { plantillaMediSmart, versionTexto, enviarPorResend } from "./correo.mjs";
-import { buscarFarmacias, buscarCentros, calcularRuta } from "./salud.mjs";
+import { buscarFarmacias, buscarCentros, calcularRuta, ubicarLugar } from "./salud.mjs";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -56,6 +56,16 @@ const server = createServer(async (req, res) => {
     if (req.method === "POST" && req.url === "/ruta") {
       let peticion = {};
       try { peticion = JSON.parse(await readBody(req)); } catch {}
+      // El punto de partida puede venir como coordenadas del dispositivo o como
+      // un sitio dicho en voz alta. Sin esta segunda vía, negar el permiso de
+      // ubicación dejaba la conversación en un bucle: Catalina preguntaba dónde
+      // estabas y no tenía forma de usar la respuesta.
+      if (!peticion.origen && peticion.desde) {
+        peticion.origen = await ubicarLugar(peticion.desde);
+        if (!peticion.origen) {
+          return json(res, 200, { ok: false, error: `No pude ubicar «${peticion.desde}».` });
+        }
+      }
       return json(res, 200, await calcularRuta(peticion));
     }
 
@@ -237,6 +247,12 @@ const PARAMETROS_RUTA = {
       type: "string",
       description: "Nombre del lugar, tal como apareció en la búsqueda anterior: "
         + "«Clínica Dávila», «LA BOTICA CUBANA». Debe ser uno de los que ya se mostraron."
+    },
+    desde: {
+      type: "string",
+      description: "Desde dónde sale la persona, tal como te lo diga: una comuna «Providencia», "
+        + "una calle «Avenida Matta 300», o un punto conocido «Plaza de Armas». "
+        + "Indícalo siempre que te lo hayan dicho, aunque creas que hay ubicación del dispositivo."
     }
   },
   required: ["destino"]

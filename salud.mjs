@@ -101,6 +101,47 @@ function distanciaKm(latA, lonA, latB, lonB) {
   return 2 * R * Math.asin(Math.sqrt(a));
 }
 
+// Geocodificador de respaldo, y en el despliegue el único.
+//
+// El centro de comuna se deducía del listado del MINSAL, que es más rico pero
+// está bloqueado desde el servidor: por eso en la web fallaba todo lo que se
+// pedía «por comuna» en lugar de por ubicación del dispositivo. Nominatim es
+// abierto, no pide clave y responde desde cualquier sitio. Se cachea porque su
+// política pide no repetir consultas.
+async function geocodificar(lugar) {
+  const consulta = String(lugar || "").trim();
+  if (!consulta) return null;
+
+  return conCache(`geo:${normalizar(consulta)}`, async () => {
+    const url = new URL("https://nominatim.openstreetmap.org/search");
+    url.search = new URLSearchParams({
+      q: /chile/i.test(consulta) ? consulta : `${consulta}, Chile`,
+      format: "json", limit: "1", countrycodes: "cl"
+    }).toString();
+
+    try {
+      const respuesta = await fetch(url, {
+        headers: { "User-Agent": AGENTE },
+        signal: AbortSignal.timeout(10000)
+      });
+      if (!respuesta.ok) return null;
+      const encontrado = (await respuesta.json())?.[0];
+      if (!encontrado) return null;
+      const lat = Number(encontrado.lat);
+      const lon = Number(encontrado.lon);
+      return coordenadaValida(lat, lon) ? { lat, lon } : null;
+    } catch {
+      return null;
+    }
+  });
+}
+
+// Se expone para que el servidor pueda resolver un punto de partida dicho en
+// voz alta —«estoy en Providencia»— sin depender de la geolocalización.
+export async function ubicarLugar(lugar) {
+  return (await centroDeComuna(lugar)) ?? (await geocodificar(lugar));
+}
+
 const farmaciasDeTurno = () => conCache("turnos", () => traerJson(MINSAL_TURNOS));
 const todasLasFarmacias = () => conCache("locales", () => traerJson(MINSAL_LOCALES));
 
@@ -108,7 +149,9 @@ const todasLasFarmacias = () => conCache("locales", () => traerJson(MINSAL_LOCAL
 // Evita depender de un geocodificador aparte: el dato ya viene en la respuesta
 // del MINSAL y cubre todo el país.
 async function centroDeComuna(comuna) {
-  const indice = await conCache("comunas", async () => {
+  let indice;
+  try {
+    indice = await conCache("comunas", async () => {
     const locales = await todasLasFarmacias();
     const porComuna = new Map();
     for (const local of locales) {
@@ -126,8 +169,12 @@ async function centroDeComuna(comuna) {
       centros.set(clave, { lat: mediana(l.lat), lon: mediana(l.lon) });
     }
     return centros;
-  });
-  return indice.get(normalizar(comuna)) ?? null;
+    });
+  } catch {
+    // El MINSAL bloquea al servidor: no hay indice, pero sí geocodificador.
+    return geocodificar(comuna);
+  }
+  return indice.get(normalizar(comuna)) ?? await geocodificar(comuna);
 }
 
 function describirFarmacia(local, origen) {
@@ -218,7 +265,7 @@ export async function buscarFarmacias({ deTurno, comuna, lat, lon, limite = 5 })
 
 export async function buscarCentros({ tipo, lat, lon, comuna, limite = 5 }) {
   let origen = Number.isFinite(lat) && Number.isFinite(lon) ? { lat, lon } : null;
-  if (!origen && comuna) origen = await centroDeComuna(comuna);
+  if (!origen && comuna) origen = await ubicarLugar(comuna);
   if (!origen) return { ok: false, error: "Necesito la comuna o la ubicación para buscar cerca." };
 
   const clases = tipo === "hospital" ? "hospital" : "clinic|doctors";
