@@ -5,6 +5,10 @@ import {
 } from "./config.mjs";
 import { plantillaMediSmart, versionTexto, enviarPorResend } from "./correo.mjs";
 import { buscarCentros, calcularRuta, ubicarLugar } from "./salud.mjs";
+import {
+  telefoniaLista, originarLlamada, estadoLlamada, twimlPuente,
+  firmaValida, atenderLlamadaEntrante, anotarEstadoTwilio
+} from "./telefonia.mjs";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -67,6 +71,48 @@ const server = createServer(async (req, res) => {
         }
       }
       return json(res, 200, await calcularRuta(peticion));
+    }
+
+    if (req.method === "POST" && req.url === "/llamada") {
+      return await pedirLlamada(req, res);
+    }
+
+    if (req.method === "GET" && req.url.startsWith("/llamada/")) {
+      const estado = estadoLlamada(decodeURIComponent(req.url.slice("/llamada/".length)));
+      return estado
+        ? json(res, 200, { ok: true, ...estado })
+        : json(res, 404, { ok: false, error: "No hay ninguna llamada con ese identificador." });
+    }
+
+    // Twilio viene a buscar aquí qué hacer cuando la persona contesta.
+    if (req.method === "POST" && req.url === "/telefonia/twiml") {
+      res.writeHead(200, { "Content-Type": "text/xml; charset=utf-8" });
+      return res.end(twimlPuente());
+    }
+
+    // Avisos de Twilio sobre el ciclo de vida de la llamada.
+    if (req.method === "POST" && req.url === "/telefonia/estado") {
+      anotarEstadoTwilio(new URLSearchParams(await readBody(req)));
+      res.writeHead(204);
+      return res.end();
+    }
+
+    // Webhook de OpenAI: la llamada acaba de entrarle por SIP.
+    if (req.method === "POST" && req.url === "/telefonia/webhook") {
+      const crudo = await readBody(req);
+      // Sin firma válida no se atiende: este webhook abre una llamada y
+      // configura una sesión de modelo.
+      if (!firmaValida(req.headers, crudo)) {
+        return json(res, 401, { error: "Firma no válida." });
+      }
+      let evento = {};
+      try { evento = JSON.parse(crudo); } catch {}
+      if (evento.type === "realtime.call.incoming") {
+        const config = await cargarConfig();
+        atenderLlamadaEntrante(evento, config.telefono?.dePartede || "una persona");
+      }
+      res.writeHead(200);
+      return res.end();
     }
 
     if (req.method === "POST" && req.url === "/correo") {
@@ -146,7 +192,14 @@ const USO_DE_HERRAMIENTAS = [
   "Para indicar cómo llegar a un sitio necesitas saber desde dónde sale la persona.",
   "Si no lo sabes, pregúntaselo primero —una referencia le basta: la comuna, una calle, un punto conocido— y luego usa como_llegar.",
   "Al relatar el camino, cuéntalo como se lo dirías a alguien en la calle: las calles y los giros que importan, no la lista entera de pasos.",
-  "Menciona el tiempo caminando y en auto por separado, y que el mapa en pantalla se puede tocar para abrir el recorrido."
+  "Menciona el tiempo caminando y en auto por separado, y que el mapa en pantalla se puede tocar para abrir el recorrido.",
+
+  // Marcar es irreversible y la llamada la recibe un tercero. La confirmación
+  // no puede quedar al criterio del modelo, así que se dice aquí y además la
+  // herramienta la exige.
+  "Antes de llamar por teléfono, repite en voz alta a qué número vas a llamar y para qué, y espera a que te lo confirmen. Nunca marques sin ese sí.",
+  "Mientras la llamada esté en curso, consulta su estado cada pocos segundos con consultar_llamada y ve contando lo que pasa.",
+  "Cuando termine, cuenta el desenlace con las palabras del resultado. No te inventes lo que se dijo en la llamada."
 ].join(" ");
 
 // Las instrucciones completas se arman en cada sesión: lo editable viene del
@@ -268,8 +321,45 @@ const DESCRIPCION_RUTA = "Muestra en pantalla el mapa del trayecto hasta uno de 
   + "si no hay ubicación del dispositivo, pregúntale desde dónde sale antes de usar esta herramienta. "
   + "Al responder, relata el camino con naturalidad —las calles y los giros principales—, no leas la lista entera.";
 
+const PARAMETROS_LLAMADA = {
+  type: "object",
+  properties: {
+    numero: {
+      type: "string",
+      description: "Número en formato internacional, por ejemplo +56912345678."
+    },
+    objetivo: {
+      type: "string",
+      description: "Qué debe conseguir en la llamada, concreto y en una frase: "
+        + "«pedir hora con el traumatólogo para la próxima semana», "
+        + "«preguntar si tienen metformina de 850 miligramos»."
+    },
+    confirmado: {
+      type: "boolean",
+      description: "Verdadero sólo después de haber repetido en voz alta el número y el objetivo "
+        + "y de que la persona haya dicho que sí. Nunca lo pongas en verdadero por tu cuenta."
+    }
+  },
+  required: ["numero", "objetivo", "confirmado"]
+};
+
+const DESCRIPCION_LLAMADA = "Llama por teléfono en nombre de la persona para gestionar algo concreto. "
+  + "Antes de usarla, repite en voz alta a quién vas a llamar y para qué, y espera que te lo confirmen. "
+  + "Devuelve un identificador; consulta después consultar_llamada para saber cómo terminó.";
+
+const PARAMETROS_ESTADO_LLAMADA = {
+  type: "object",
+  properties: { id: { type: "string", description: "El identificador que devolvió llamar_por_telefono." } },
+  required: ["id"]
+};
+
+const DESCRIPCION_ESTADO_LLAMADA = "Dice cómo va o cómo terminó una llamada. Consúltala cada pocos segundos "
+  + "mientras la llamada esté en curso, y cuenta el desenlace cuando lo haya.";
+
 const HERRAMIENTAS = [
   { nombre: "buscar_imagen_medica", descripcion: DESCRIPCION_IMAGEN, parametros: PARAMETROS_IMAGEN },
+  { nombre: "llamar_por_telefono", descripcion: DESCRIPCION_LLAMADA, parametros: PARAMETROS_LLAMADA },
+  { nombre: "consultar_llamada", descripcion: DESCRIPCION_ESTADO_LLAMADA, parametros: PARAMETROS_ESTADO_LLAMADA },
   { nombre: "como_llegar", descripcion: DESCRIPCION_RUTA, parametros: PARAMETROS_RUTA },
   { nombre: "buscar_salud_cerca", descripcion: DESCRIPCION_SALUD, parametros: PARAMETROS_SALUD },
   { nombre: "buscar_referencias", descripcion: DESCRIPCION_REFERENCIAS, parametros: PARAMETROS_REFERENCIAS },
@@ -988,6 +1078,48 @@ async function buscarSalud(req, res) {
     // distintas y confundirlas deja a alguien sin buscar por otra vía.
     return json(res, 502, { ok: false, error: "No se pudo consultar el mapa en este momento." });
   }
+}
+
+// Llamada telefónica. `confirmado` no es una formalidad: marcar es
+// irreversible, así que Catalina tiene que haber repetido número y objetivo y
+// haber recibido un sí antes de que esto haga nada.
+async function pedirLlamada(req, res) {
+  if (!telefoniaLista()) {
+    return json(res, 503, {
+      ok: false,
+      error: "Falta configurar la telefonía (Twilio y el proyecto de OpenAI).",
+      code: "TELEFONIA_SIN_CONFIGURAR"
+    });
+  }
+
+  let peticion = {};
+  try { peticion = JSON.parse(await readBody(req)); } catch {}
+
+  if (peticion.confirmado !== true) {
+    return json(res, 400, {
+      ok: false,
+      error: "Falta la confirmación de la persona.",
+      code: "SIN_CONFIRMAR",
+      queHacer: "Repite el número y el objetivo en voz alta, espera un sí, y vuelve a llamar a la herramienta con confirmado en verdadero."
+    });
+  }
+
+  const config = await cargarConfig();
+  const telefono = config.telefono ?? {};
+  if (telefono.activo === false) {
+    return json(res, 403, { ok: false, error: "Las llamadas están desactivadas.", code: "TELEFONIA_APAGADA" });
+  }
+
+  // La URL pública desde la que Twilio y OpenAI vendrán a buscarnos.
+  const base = (telefono.urlPublica || "").replace(/\/$/, "")
+    || `https://${req.headers.host}`;
+
+  return json(res, 200, await originarLlamada({
+    numero: peticion.numero,
+    objetivo: peticion.objetivo,
+    base,
+    maxSegundos: telefono.maxSegundos ?? 300
+  }));
 }
 
 // Envío del resumen por correo.

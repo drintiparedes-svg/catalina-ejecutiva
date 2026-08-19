@@ -236,6 +236,8 @@ async function atenderHerramienta(nombre, argumentos) {
   if (nombre === "buscar_referencias") return await pedirReferencias(argumentos);
   if (nombre === "enviar_resumen") return await enviarResumen(argumentos);
   if (nombre === "buscar_salud_cerca") return await buscarSaludCerca(argumentos);
+  if (nombre === "llamar_por_telefono") return await llamarPorTelefono(argumentos);
+  if (nombre === "consultar_llamada") return await consultarLlamada(argumentos);
   if (nombre === "como_llegar") return await comoLlegar(argumentos);
   // Cualquier otro nombre viene de un conector definido en el administrador.
   // Se manda el nombre, no la dirección: el servidor la resuelve.
@@ -444,6 +446,92 @@ function mostrarLugares(datos) {
   }
   ui.referencias.dataset.estado = "visible";
   referenciasEnPantalla = [];   // esto no son referencias: no debe viajar en el correo
+}
+
+// Llamadas telefónicas. El servidor hace el trabajo; aquí sólo se pide y se
+// consulta, y se refleja en pantalla en qué va.
+async function llamarPorTelefono(argumentos) {
+  setStatus("Llamando…");
+  try {
+    const respuesta = await fetch("/llamada", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        numero: argumentos.numero,
+        objetivo: argumentos.objetivo,
+        confirmado: argumentos.confirmado === true
+      })
+    });
+    const datos = await respuesta.json().catch(() => ({}));
+    if (!datos.ok) {
+      setStatus("Te escucho");
+      return datos;
+    }
+    mostrarLlamada({ estado: "marcando", numero: argumentos.numero, objetivo: argumentos.objetivo });
+    return datos;
+  } catch (error) {
+    console.error(error);
+    setStatus("Te escucho");
+    return { ok: false, error: "No se pudo iniciar la llamada" };
+  }
+}
+
+async function consultarLlamada(argumentos) {
+  const id = String(argumentos.id || "").trim();
+  if (!id) return { ok: false, error: "Falta el identificador de la llamada" };
+  try {
+    const respuesta = await fetch(`/llamada/${encodeURIComponent(id)}`);
+    const datos = await respuesta.json().catch(() => ({}));
+    if (!datos.ok) return datos;
+    mostrarLlamada(datos);
+    // La transcripción completa no se le devuelve al modelo: son minutos de
+    // conversación y lo que necesita para contarlo es el desenlace.
+    return {
+      ok: true,
+      estado: datos.estado,
+      resultado: datos.resultado,
+      enCurso: ["marcando", "sonando", "contestada", "hablando"].includes(datos.estado)
+    };
+  } catch (error) {
+    console.error(error);
+    return { ok: false, error: "No se pudo consultar la llamada" };
+  }
+}
+
+const ESTADOS_LLAMADA = {
+  marcando: "Marcando…", sonando: "Sonando…", contestada: "Contestaron",
+  hablando: "Catalina está hablando", terminada: "Llamada terminada",
+  ocupado: "Comunica", "sin respuesta": "No contestaron",
+  fallida: "La llamada falló", cancelada: "Llamada cancelada"
+};
+
+function mostrarLlamada(datos) {
+  ui.referenciasTitulo.textContent = "Llamada";
+  ui.referenciasLista.replaceChildren();
+
+  const cabecera = document.createElement("li");
+  cabecera.className = "referencia-nota";
+  cabecera.textContent = [ESTADOS_LLAMADA[datos.estado] || datos.estado, datos.numero]
+    .filter(Boolean).join(" · ");
+  ui.referenciasLista.append(cabecera);
+
+  if (datos.objetivo) {
+    const objetivo = document.createElement("li");
+    objetivo.className = "referencia-nota";
+    objetivo.textContent = datos.objetivo;
+    ui.referenciasLista.append(objetivo);
+  }
+
+  if (datos.resultado) {
+    const resultado = document.createElement("li");
+    resultado.className = "referencia-nota";
+    resultado.textContent = (datos.resultado.logrado ? "✓ " : "· ") + datos.resultado.detalle;
+    ui.referenciasLista.append(resultado);
+  }
+
+  ui.referencias.dataset.estado = "visible";
+  referenciasEnPantalla = [];
+  setStatus(ESTADOS_LLAMADA[datos.estado] || "Te escucho");
 }
 
 async function usarConector(nombre, argumentos) {

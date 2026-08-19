@@ -85,6 +85,22 @@ export const CONFIG_POR_DEFECTO = {
   // se declara ante el modelo igual que las herramientas internas.
   conectores: [],
 
+  // Llamadas telefónicas salientes.
+  //
+  // Las credenciales no están aquí sino en variables de entorno, como todas.
+  // Esto es lo que sí tiene sentido cambiar sin tocar código.
+  telefono: {
+    activo: true,
+    // De parte de quién dice Catalina que llama. Es lo primero que se oye en la
+    // llamada, así que tiene que ser un nombre reconocible para quien contesta.
+    dePartede: "el doctor Inti Paredes",
+    maxSegundos: 300,
+    // URL pública desde la que Twilio y OpenAI vienen a buscar al servidor. En
+    // local hace falta un túnel; si se deja vacía se usa la del propio
+    // servidor, que sólo sirve si ya está publicado.
+    urlPublica: ""
+  },
+
   // Envío de resúmenes por correo.
   //
   // El destinatario vive aquí y no lo elige el modelo: Catalina sólo aporta el
