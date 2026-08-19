@@ -44,7 +44,7 @@ export function plantillaMediSmart({ titulo, resumen, lamina, referencias = [] }
                pero si algún día llega una lámina sin recortar, el correo no se
                convierte en una columna interminable. -->
           <img src="${escapar(lamina.imagen)}" alt="${escapar(lamina.titulo)}"
-               style="display:block;margin:0 auto;max-width:100%;max-height:420px;width:auto;height:auto;border-radius:8px;background:${PAPEL}">
+               style="display:block;margin:0 auto;max-width:100%;max-height:420px;width:auto;height:auto;border-radius:8px;background:${PAPEL};padding:12px">
           <p style="margin:14px 0 0;font-size:14px;line-height:1.5;color:${TEXTO};font-weight:600">
             ${escapar(lamina.titulo)}</p>
           <p style="margin:4px 0 0;font-size:12px;line-height:1.5;color:${TENUE}">

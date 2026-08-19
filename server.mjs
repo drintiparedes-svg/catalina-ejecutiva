@@ -682,6 +682,39 @@ const CLINICO = new RegExp([
 // algo a un paciente pierden contra un diagrama rotulado de hoy.
 const DIDACTICO = /(cruk|blausen|servier|anatomography|esquema|scheme|schema|diagram)/i;
 
+// Idioma de los rótulos.
+//
+// Commons guarda la misma lámina traducida a decenas de idiomas y lo marca en
+// el nombre del archivo: «Carpal-Tunnel-ar», «Nephron pl», «Knee diagram tr»,
+// «Anatomy of the Human Ear in farsi numbers». Una lámina rotulada en farsi o
+// en polaco no sirve para explicarle nada a nadie aquí, por correcta que sea.
+const IDIOMA_BIENVENIDO = /(\b(es|en|esp|eng|spa)\b|\b(spanish|english|espa[nñ]ol|ingl[eé]s)\b)/i;
+
+// Códigos de dos o tres letras al final del nombre, que es donde Commons pone
+// la marca de idioma.
+const SUFIJO_DE_IDIOMA = /[\s\-_]([a-z]{2,3})$/i;
+const OTROS_CODIGOS = new Set([
+  "ar", "fa", "ur", "he", "pl", "tr", "la", "de", "fr", "it", "ru", "uk", "zh", "ja", "jp",
+  "ko", "pt", "nl", "sv", "cs", "sk", "sl", "hu", "ro", "bg", "hr", "sr", "mk", "sq", "el",
+  "da", "fi", "no", "nb", "is", "lt", "lv", "et", "hi", "bn", "ta", "ml", "th", "vi", "id",
+  "ms", "az", "kk", "hy", "ka", "eu", "gl", "ca", "cy", "ga", "af", "sw", "yi"
+]);
+
+const NOMBRE_DE_OTRO_IDIOMA = new RegExp(
+  "\\b(farsi|persian|arabic|japanese|chinese|mandarin|korean|german|deutsch|french|italian"
+  + "|russian|polish|polski|turkish|hebrew|hindi|thai|dutch|swedish|czech|greek|portuguese"
+  + "|vietnamese|indonesian|romanian|hungarian|ukrainian|serbian|croatian|slovak|danish"
+  + "|finnish|norwegian|catalan|basque|galician|latin)\\b", "i");
+
+function puntuarIdioma(titulo) {
+  if (IDIOMA_BIENVENIDO.test(titulo)) return 3;
+  if (NOMBRE_DE_OTRO_IDIOMA.test(titulo)) return -6;
+  const sufijo = titulo.match(SUFIJO_DE_IDIOMA)?.[1]?.toLowerCase();
+  if (sufijo && OTROS_CODIGOS.has(sufijo)) return -6;
+  // Sin marca: casi siempre está en inglés o sin rótulos, que también sirve.
+  return 0;
+}
+
 // Anatomía que no es humana. Commons está lleno de láminas veterinarias y de
 // animal de laboratorio: «liver anatomy» devolvía el hígado de un ratón.
 // El plural opcional importa: «Sheeps liver diagram» se colaba porque el
@@ -714,6 +747,7 @@ function puntuarLamina(lamina, pideClinico) {
   // Colecciones pensadas para enseñar: CRUK, Blausen, Servier, Anatomography.
   // Suelen ser justo el esquema limpio y rotulado que se busca.
   if (DIDACTICO.test(lamina.titulo)) puntos += 2;
+  puntos += puntuarIdioma(lamina.titulo);
 
   return puntos;
 }

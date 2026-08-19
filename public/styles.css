@@ -107,7 +107,15 @@ h1 { margin: 0; font-size: clamp(26px, 4vw, 44px); font-weight: 420; letter-spac
 .imagen[data-estado="visible"], .imagen[data-estado="cargando"] {
   opacity: 1; visibility: visible; transform: translateY(0) scale(1);
 }
-.imagen img { display: none; width: 100%; border-radius: 11px; }
+/* Fondo claro bajo la lámina, siempre.
+   Los diagramas anatómicos se dibujan pensando en papel blanco: muchos vienen
+   con fondo transparente y rótulos negros, y sobre el panel oscuro las
+   etiquetas desaparecían. El relleno separa el dibujo del borde, que es lo que
+   permite leer lo que hay pegado a las esquinas. */
+.imagen img {
+  display: none; width: 100%; border-radius: 11px;
+  background: #fff; padding: 14px;
+}
 .imagen[data-estado="visible"] img { display: block; }
 .imagen figcaption { display: block; margin: 9px 3px 3px; color: rgba(233,246,252,.8); font-size: 12.5px; line-height: 1.45; }
 .imagen[data-estado="cargando"] figcaption { display: none; }
@@ -205,7 +213,7 @@ button.primary { border-color: rgba(109,228,255,.45); background: linear-gradien
   .panel { right: 12px; left: 12px; top: auto; width: auto; height: min(46dvh, 330px); }
   /* En vertical no hay sitio a un lado: la imagen se centra arriba. */
   .imagen { left: 12px; right: 12px; width: auto; top: calc(76px + env(safe-area-inset-top)); }
-  .imagen img { max-height: 34dvh; object-fit: contain; }
+  .imagen img { max-height: 34dvh; object-fit: contain; padding: 10px; }
   .referencias { left: 12px; right: 12px; width: auto; max-height: 30dvh; }
   /* Con el panel abierto el subtítulo repetiría el mismo texto que se está
      leyendo justo debajo, así que cede el sitio. */
