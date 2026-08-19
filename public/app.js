@@ -9,6 +9,7 @@ import { PerformanceDirector } from "./animation/director.js";
 import { VoiceTracker } from "./audio/voice-tracker.js";
 import { RealtimeSession } from "./realtime/session.js";
 import { GeminiSession } from "./realtime/gemini-session.js";
+import { dibujarRuta } from "./mapa.js";
 
 const canvas = document.querySelector("#avatar");
 const ctx = canvas.getContext("2d");
@@ -235,6 +236,7 @@ async function atenderHerramienta(nombre, argumentos) {
   if (nombre === "buscar_referencias") return await pedirReferencias(argumentos);
   if (nombre === "enviar_resumen") return await enviarResumen(argumentos);
   if (nombre === "buscar_salud_cerca") return await buscarSaludCerca(argumentos);
+  if (nombre === "como_llegar") return await comoLlegar(argumentos);
   // Cualquier otro nombre viene de un conector definido en el administrador.
   // Se manda el nombre, no la dirección: el servidor la resuelve.
   return await usarConector(nombre, argumentos);
@@ -292,6 +294,7 @@ async function buscarSaludCerca(argumentos) {
 
   setStatus("Buscando cerca…");
   const ubicacion = await ubicacionActual();
+  if (ubicacion) ubicacionConocida = ubicacion;
   try {
     const respuesta = await fetch("/salud", {
       method: "POST",
@@ -312,6 +315,7 @@ async function buscarSaludCerca(argumentos) {
       setStatus("Te escucho");
       return { ok: true, resultados: [], nota: "No se encontró nada cerca con esos datos." };
     }
+    lugaresEnPantalla = datos.resultados;
     mostrarLugares(datos);
     setStatus("Te escucho");
     return datos;
@@ -320,6 +324,79 @@ async function buscarSaludCerca(argumentos) {
     setStatus("Te escucho");
     return { ok: false, error: "Falló la conexión al buscar" };
   }
+}
+
+// Lo último que se listó y desde dónde se buscó. Sin esto, para trazar la ruta
+// habría que hacerle repetir al modelo unas coordenadas que no vio nunca.
+let lugaresEnPantalla = [];
+let ubicacionConocida = null;
+
+async function comoLlegar(argumentos) {
+  const buscado = String(argumentos.destino || "").trim().toLowerCase();
+  if (!buscado) return { ok: false, error: "Falta el destino" };
+  if (!lugaresEnPantalla.length) {
+    return { ok: false, error: "Primero hay que buscar lugares cerca." };
+  }
+
+  const destino = lugaresEnPantalla.find(l => l.nombre.toLowerCase().includes(buscado))
+    ?? lugaresEnPantalla.find(l => buscado.includes(l.nombre.toLowerCase()));
+  if (!destino) return { ok: false, error: "Ese lugar no está entre los que se mostraron." };
+
+  const origen = ubicacionConocida ?? await ubicacionActual();
+  if (!origen) {
+    // Se dice qué falta, para que Catalina lo pregunte en vez de inventarse un
+    // punto de partida.
+    return { ok: false, faltaOrigen: true, error: "No sé desde dónde sale la persona. Pregúntale dónde está." };
+  }
+
+  setStatus("Trazando el camino…");
+  try {
+    const respuesta = await fetch("/ruta", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ origen, destino: { lat: destino.lat, lon: destino.lon } })
+    });
+    const ruta = await respuesta.json().catch(() => ({}));
+    if (!ruta.ok) {
+      setStatus("Te escucho");
+      return { ok: false, error: ruta.error || "No se pudo trazar el camino" };
+    }
+
+    await mostrarMapa(ruta, destino);
+    setStatus("Te escucho");
+    return {
+      ok: true,
+      destino: destino.nombre,
+      distanciaKm: ruta.distanciaKm,
+      minutosEnAuto: ruta.minutosEnAuto,
+      minutosCaminando: ruta.minutosCaminando,
+      pasos: ruta.pasos
+    };
+  } catch (error) {
+    console.error(error);
+    setStatus("Te escucho");
+    return { ok: false, error: "Falló la conexión al trazar el camino" };
+  }
+}
+
+// El mapa entra en la misma tarjeta que las láminas: es una imagen más, y así
+// no aparece otra ventana que tape la cara.
+async function mostrarMapa(ruta, destino) {
+  mostrarLienzoDeImagen("cargando");
+  const imagen = await dibujarRuta(ruta);
+  if (!imagen) { mostrarLienzoDeImagen("oculto"); return; }
+
+  ui.imagenFoto.src = imagen;
+  ui.imagenFoto.alt = `Mapa del trayecto hasta ${destino.nombre}`;
+  ui.imagenPie.textContent = `${destino.nombre} · ${ruta.distanciaKm} km`;
+  ui.imagenCredito.textContent = "Abrir el recorrido en Google Maps";
+  ui.imagenCredito.href = ruta.enlace;
+  // El propio mapa también lleva al recorrido: es lo primero que uno intenta
+  // tocar cuando quiere verlo en grande.
+  ui.imagenFoto.style.cursor = "pointer";
+  ui.imagenFoto.onclick = () => window.open(ruta.enlace, "_blank", "noopener");
+  laminaEnPantalla = null;   // un mapa no es una lámina: no debe viajar en el correo
+  mostrarLienzoDeImagen("visible");
 }
 
 const TITULOS_LUGARES = {
@@ -449,6 +526,8 @@ function mostrarLienzoDeImagen(estado) {
 
 function mostrarLamina(lamina) {
   laminaEnPantalla = lamina;
+  ui.imagenFoto.onclick = null;
+  ui.imagenFoto.style.cursor = "";
   ui.imagenFoto.src = lamina.imagen;
   ui.imagenFoto.alt = lamina.titulo;
   ui.imagenPie.textContent = lamina.titulo;

@@ -4,7 +4,7 @@ import {
   cargarConfig, guardarConfig, componerInstrucciones, herramientasDeConectores
 } from "./config.mjs";
 import { plantillaMediSmart, versionTexto, enviarPorResend } from "./correo.mjs";
-import { buscarFarmacias, buscarCentros } from "./salud.mjs";
+import { buscarFarmacias, buscarCentros, calcularRuta } from "./salud.mjs";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -51,6 +51,12 @@ const server = createServer(async (req, res) => {
 
     if (req.method === "POST" && req.url === "/salud") {
       return await buscarSalud(req, res);
+    }
+
+    if (req.method === "POST" && req.url === "/ruta") {
+      let peticion = {};
+      try { peticion = JSON.parse(await readBody(req)); } catch {}
+      return json(res, 200, await calcularRuta(peticion));
     }
 
     if (req.method === "POST" && req.url === "/correo") {
@@ -118,7 +124,14 @@ const USO_DE_HERRAMIENTAS = [
   // fallo que hace peligrosa una imagen equivocada en docencia.
   "Si el resultado viene marcado como aproximado, dilo: preséntalo como una imagen parecida y no como la estructura exacta.",
   "Si no aparece ninguna imagen, dilo con naturalidad y sigue explicando de palabra. Nunca afirmes que se ve algo que no apareció.",
-  "Usa buscar_referencias para respaldar en la literatura lo que estés explicando."
+  "Usa buscar_referencias para respaldar en la literatura lo que estés explicando.",
+
+  // Sin esto el modelo llama a como_llegar a ciegas y la herramienta responde
+  // que falta el origen, lo que gasta un turno entero en nada.
+  "Para indicar cómo llegar a un sitio necesitas saber desde dónde sale la persona.",
+  "Si no lo sabes, pregúntaselo primero —una referencia le basta: la comuna, una calle, un punto conocido— y luego usa como_llegar.",
+  "Al relatar el camino, cuéntalo como se lo dirías a alguien en la calle: las calles y los giros que importan, no la lista entera de pasos.",
+  "Menciona el tiempo caminando y en auto por separado, y que el mapa en pantalla se puede tocar para abrir el recorrido."
 ].join(" ");
 
 // Las instrucciones completas se arman en cada sesión: lo editable viene del
@@ -217,8 +230,26 @@ const DESCRIPCION_SALUD = "Busca farmacias, farmacias de turno, hospitales y cl�
   + "Usa la ubicación del dispositivo si está disponible; si no, pide la comuna. "
   + "Al responder, di la dirección y a qué distancia queda, y recuerda que conviene confirmar por teléfono.";
 
+const PARAMETROS_RUTA = {
+  type: "object",
+  properties: {
+    destino: {
+      type: "string",
+      description: "Nombre del lugar, tal como apareció en la búsqueda anterior: "
+        + "«Clínica Dávila», «LA BOTICA CUBANA». Debe ser uno de los que ya se mostraron."
+    }
+  },
+  required: ["destino"]
+};
+
+const DESCRIPCION_RUTA = "Muestra en pantalla el mapa del trayecto hasta uno de los lugares que acabas de "
+  + "listar, y devuelve la distancia y las indicaciones para llegar. Necesita saber dónde está la persona: "
+  + "si no hay ubicación del dispositivo, pregúntale desde dónde sale antes de usar esta herramienta. "
+  + "Al responder, relata el camino con naturalidad —las calles y los giros principales—, no leas la lista entera.";
+
 const HERRAMIENTAS = [
   { nombre: "buscar_imagen_medica", descripcion: DESCRIPCION_IMAGEN, parametros: PARAMETROS_IMAGEN },
+  { nombre: "como_llegar", descripcion: DESCRIPCION_RUTA, parametros: PARAMETROS_RUTA },
   { nombre: "buscar_salud_cerca", descripcion: DESCRIPCION_SALUD, parametros: PARAMETROS_SALUD },
   { nombre: "buscar_referencias", descripcion: DESCRIPCION_REFERENCIAS, parametros: PARAMETROS_REFERENCIAS },
   { nombre: "enviar_resumen", descripcion: DESCRIPCION_CORREO, parametros: PARAMETROS_CORREO }

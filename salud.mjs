@@ -287,3 +287,90 @@ export async function buscarCentros({ tipo, lat, lon, comuna, limite = 5 }) {
     advertencia: "Datos de OpenStreetMap: pueden estar incompletos o desactualizados."
   };
 }
+
+// ---------------------------------------------------------------------------
+// Cómo llegar.
+//
+// El trazado y la distancia salen de OSRM, que es abierto y no pide clave. El
+// tiempo, en cambio, hay que tratarlo con cuidado: el servidor público sirve el
+// perfil de coche pase lo que pase —pedirle «a pie» devuelve los mismos 32 km/h—,
+// así que el tiempo caminando se estima aquí a partir de la distancia en vez de
+// repetir un dato que sería falso.
+const OSRM = "https://router.project-osrm.org/route/v1/driving";
+const VELOCIDAD_A_PIE = 4.5;   // km/h, paso normal de un adulto
+
+// Los tipos de maniobra vienen en inglés; se traducen para poder decirlos en voz
+// alta sin leer jerga.
+const MANIOBRAS = {
+  depart: "Sal", arrive: "Llegas a destino", turn: "Gira", "new name": "Sigue",
+  continue: "Continúa", merge: "Incorpórate", fork: "Toma el desvío",
+  "end of road": "Al final de la calle, gira", roundabout: "En la rotonda, toma",
+  rotary: "En la rotonda, toma", "roundabout turn": "En la rotonda, gira",
+  ramp: "Toma la salida", "on ramp": "Toma la incorporación", "off ramp": "Toma la salida"
+};
+const DIRECCIONES = {
+  left: "a la izquierda", right: "a la derecha", straight: "recto",
+  "slight left": "levemente a la izquierda", "slight right": "levemente a la derecha",
+  "sharp left": "cerrado a la izquierda", "sharp right": "cerrado a la derecha",
+  uturn: "en sentido contrario"
+};
+
+function describirPaso(paso) {
+  const maniobra = paso.maniobra ?? {};
+  const verbo = MANIOBRAS[maniobra.type] ?? "Continúa";
+  const giro = DIRECCIONES[maniobra.modifier] ?? "";
+  const calle = paso.nombre ? ` por ${paso.nombre}` : "";
+  if (maniobra.type === "arrive") return "Llegas a destino";
+  const metros = paso.metros >= 1000
+    ? `${(paso.metros / 1000).toFixed(1)} km`
+    : `${Math.round(paso.metros)} m`;
+  return `${verbo}${giro ? " " + giro : ""}${calle} (${metros})`;
+}
+
+export async function calcularRuta({ origen, destino }) {
+  if (!coordenadaValida(origen?.lat, origen?.lon) || !coordenadaValida(destino?.lat, destino?.lon)) {
+    return { ok: false, error: "Faltan las coordenadas de origen o destino." };
+  }
+
+  const url = `${OSRM}/${origen.lon},${origen.lat};${destino.lon},${destino.lat}`
+    + "?overview=simplified&geometries=geojson&steps=true";
+
+  let datos;
+  try {
+    const respuesta = await fetch(url, {
+      headers: { "User-Agent": AGENTE },
+      signal: AbortSignal.timeout(15000)
+    });
+    if (!respuesta.ok) throw new Error(`OSRM respondió ${respuesta.status}`);
+    datos = await respuesta.json();
+  } catch {
+    return { ok: false, error: "No se pudo calcular el trayecto." };
+  }
+  if (datos.code !== "Ok" || !datos.routes?.length) {
+    return { ok: false, error: "No hay una ruta entre esos dos puntos." };
+  }
+
+  const ruta = datos.routes[0];
+  const km = ruta.distance / 1000;
+  const pasos = (ruta.legs?.[0]?.steps ?? [])
+    .map(p => ({ maniobra: p.maneuver ?? {}, nombre: (p.name || "").trim(), metros: p.distance ?? 0 }))
+    // Los tramos de pocos metros son ruido al escucharlos: nadie dice «gira a la
+    // derecha durante 8 metros».
+    .filter((p, i, todos) => p.metros >= 25 || i === todos.length - 1)
+    .map(describirPaso);
+
+  return {
+    ok: true,
+    distanciaKm: Number(km.toFixed(2)),
+    minutosEnAuto: Math.max(1, Math.round(ruta.duration / 60)),
+    minutosCaminando: Math.max(1, Math.round((km / VELOCIDAD_A_PIE) * 60)),
+    pasos: pasos.slice(0, 12),
+    // Puntos del trazado, para dibujarlo sobre el mapa en el navegador.
+    trazado: (ruta.geometry?.coordinates ?? []).map(([lon, lat]) => ({ lat, lon })),
+    origen, destino,
+    // El clic abre Google Maps con el recorrido ya cargado: no hace falta clave
+    // para eso, y es lo que la gente ya sabe usar.
+    enlace: `https://www.google.com/maps/dir/?api=1&origin=${origen.lat},${origen.lon}`
+      + `&destination=${destino.lat},${destino.lon}&travelmode=driving`
+  };
+}
