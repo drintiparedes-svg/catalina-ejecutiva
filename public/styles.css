@@ -229,3 +229,4 @@ button.primary { border-color: rgba(109,228,255,.45); background: linear-gradien
   .caption, .panel { transition: opacity .01s; }
   .turno[data-vivo="true"] .turno-texto::after { animation: none; }
 }
+.referencia-nota { list-style: none; margin-left: -18px; margin-top: 12px; color: rgba(209,229,239,.5); font-size: 11.5px; line-height: 1.45; }

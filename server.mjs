@@ -4,6 +4,7 @@ import {
   cargarConfig, guardarConfig, componerInstrucciones, herramientasDeConectores
 } from "./config.mjs";
 import { plantillaMediSmart, versionTexto, enviarPorResend } from "./correo.mjs";
+import { buscarFarmacias, buscarCentros } from "./salud.mjs";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -46,6 +47,10 @@ const server = createServer(async (req, res) => {
 
     if (req.method === "POST" && req.url === "/referencias") {
       return await buscarReferencias(req, res);
+    }
+
+    if (req.method === "POST" && req.url === "/salud") {
+      return await buscarSalud(req, res);
     }
 
     if (req.method === "POST" && req.url === "/correo") {
@@ -190,8 +195,31 @@ const DESCRIPCION_CORREO = "Envía por correo un resumen de lo explicado, con la
   + "que estén en pantalla, en la plantilla MediSmart. Úsala sólo cuando te lo pidan expresamente. "
   + "El destinatario ya está configurado: no lo preguntes ni lo elijas.";
 
+const PARAMETROS_SALUD = {
+  type: "object",
+  properties: {
+    tipo: {
+      type: "string",
+      enum: ["farmacia_turno", "farmacia", "hospital", "clinica"],
+      description: "Qué se busca. «farmacia_turno» es la que está de turno hoy, para urgencias fuera de horario."
+    },
+    comuna: {
+      type: "string",
+      description: "Comuna de Chile donde buscar, tal como la diga la persona: «Providencia», «Ñuñoa», «Viña del Mar». "
+        + "Pregúntala si no la sabes y no hay ubicación disponible."
+    }
+  },
+  required: ["tipo"]
+};
+
+const DESCRIPCION_SALUD = "Busca farmacias, farmacias de turno, hospitales y clínicas cerca, en Chile. "
+  + "Las farmacias de turno vienen del MINSAL y los centros de salud de OpenStreetMap. "
+  + "Usa la ubicación del dispositivo si está disponible; si no, pide la comuna. "
+  + "Al responder, di la dirección y a qué distancia queda, y recuerda que conviene confirmar por teléfono.";
+
 const HERRAMIENTAS = [
   { nombre: "buscar_imagen_medica", descripcion: DESCRIPCION_IMAGEN, parametros: PARAMETROS_IMAGEN },
+  { nombre: "buscar_salud_cerca", descripcion: DESCRIPCION_SALUD, parametros: PARAMETROS_SALUD },
   { nombre: "buscar_referencias", descripcion: DESCRIPCION_REFERENCIAS, parametros: PARAMETROS_REFERENCIAS },
   { nombre: "enviar_resumen", descripcion: DESCRIPCION_CORREO, parametros: PARAMETROS_CORREO }
 ];
@@ -786,6 +814,34 @@ function motivoDeRechazo() {
   return process.env.ADMIN_TOKEN?.trim()
     ? "Token de administración incorrecto."
     : "El administrador sólo está abierto en el equipo local. Define ADMIN_TOKEN para usarlo a distancia.";
+}
+
+// Búsqueda de recursos de salud cercanos.
+async function buscarSalud(req, res) {
+  let peticion = {};
+  try { peticion = JSON.parse(await readBody(req)); } catch {}
+
+  const tipo = String(peticion.tipo || "").trim();
+  const comuna = String(peticion.comuna || "").trim();
+  const lat = Number(peticion.lat);
+  const lon = Number(peticion.lon);
+
+  try {
+    if (tipo === "farmacia_turno" || tipo === "farmacia") {
+      return json(res, 200, await buscarFarmacias({
+        deTurno: tipo === "farmacia_turno", comuna, lat, lon
+      }));
+    }
+    if (tipo === "hospital" || tipo === "clinica") {
+      return json(res, 200, await buscarCentros({ tipo, comuna, lat, lon }));
+    }
+    return json(res, 400, { ok: false, error: "Tipo no reconocido." });
+  } catch (error) {
+    console.error("salud:", error.message);
+    // Se dice que no se pudo consultar, no que no hay nada: son cosas
+    // distintas y confundirlas deja a alguien sin buscar por otra vía.
+    return json(res, 502, { ok: false, error: "No se pudo consultar la fuente oficial en este momento." });
+  }
 }
 
 // Envío del resumen por correo.

@@ -26,6 +26,7 @@ const ui = {
   imagenCerrar: document.querySelector("#imagenCerrar"),
   referencias: document.querySelector("#referencias"),
   referenciasLista: document.querySelector("#referenciasLista"),
+  referenciasTitulo: document.querySelector("#referenciasTitulo"),
   referenciasCerrar: document.querySelector("#referenciasCerrar"),
   panel: document.querySelector("#panel"),
   panelBody: document.querySelector("#panelBody"),
@@ -233,6 +234,7 @@ async function atenderHerramienta(nombre, argumentos) {
   if (nombre === "buscar_imagen_medica") return await pedirLamina(argumentos);
   if (nombre === "buscar_referencias") return await pedirReferencias(argumentos);
   if (nombre === "enviar_resumen") return await enviarResumen(argumentos);
+  if (nombre === "buscar_salud_cerca") return await buscarSaludCerca(argumentos);
   // Cualquier otro nombre viene de un conector definido en el administrador.
   // Se manda el nombre, no la dirección: el servidor la resuelve.
   return await usarConector(nombre, argumentos);
@@ -266,6 +268,103 @@ async function enviarResumen(argumentos) {
     setStatus("No se pudo enviar el correo");
     return { ok: false, error: "Falló la conexión al enviar el correo" };
   }
+}
+
+// Ubicación del dispositivo. Se pide sólo cuando hace falta —al buscar una
+// farmacia de turno—, no al arrancar: un permiso de geolocalización pedido sin
+// motivo se deniega, y luego ya no se puede volver a pedir.
+function ubicacionActual() {
+  if (!navigator.geolocation) return Promise.resolve(null);
+  return new Promise(resolver => {
+    navigator.geolocation.getCurrentPosition(
+      posicion => resolver({ lat: posicion.coords.latitude, lon: posicion.coords.longitude }),
+      // Si lo deniegan o tarda, se sigue con la comuna que haya dicho la
+      // persona: quedarse sin responder sería peor.
+      () => resolver(null),
+      { timeout: 8000, maximumAge: 300000 }
+    );
+  });
+}
+
+async function buscarSaludCerca(argumentos) {
+  const tipo = String(argumentos.tipo || "").trim();
+  if (!tipo) return { ok: false, error: "Falta qué buscar" };
+
+  setStatus("Buscando cerca…");
+  const ubicacion = await ubicacionActual();
+  try {
+    const respuesta = await fetch("/salud", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        tipo,
+        comuna: argumentos.comuna || "",
+        lat: ubicacion?.lat,
+        lon: ubicacion?.lon
+      })
+    });
+    const datos = await respuesta.json().catch(() => ({}));
+    if (!respuesta.ok || !datos.ok) {
+      setStatus("Te escucho");
+      return { ok: false, error: datos.error || "No se pudo buscar" };
+    }
+    if (!datos.resultados?.length) {
+      setStatus("Te escucho");
+      return { ok: true, resultados: [], nota: "No se encontró nada cerca con esos datos." };
+    }
+    mostrarLugares(datos);
+    setStatus("Te escucho");
+    return datos;
+  } catch (error) {
+    console.error(error);
+    setStatus("Te escucho");
+    return { ok: false, error: "Falló la conexión al buscar" };
+  }
+}
+
+const TITULOS_LUGARES = {
+  farmacia_turno: "Farmacias de turno",
+  farmacia: "Farmacias",
+  hospital: "Hospitales",
+  clinica: "Clínicas"
+};
+
+// Se reutiliza el panel de referencias: es la misma forma —una lista corta con
+// un enlace por elemento— y así no se añade otra tarjeta que tape la cara.
+function mostrarLugares(datos) {
+  ui.referenciasTitulo.textContent = TITULOS_LUGARES[datos.tipo] || "Cerca de ti";
+  ui.referenciasLista.replaceChildren();
+
+  for (const lugar of datos.resultados) {
+    const item = document.createElement("li");
+
+    const enlace = document.createElement("a");
+    enlace.href = lugar.mapa || "#";
+    enlace.target = "_blank";
+    enlace.rel = "noopener noreferrer";
+    enlace.textContent = lugar.nombre;
+
+    const pie = document.createElement("span");
+    pie.className = "referencia-pie";
+    pie.textContent = [
+      [lugar.direccion, lugar.comuna].filter(Boolean).join(", "),
+      lugar.horario,
+      lugar.telefono,
+      lugar.distanciaKm != null ? `a ${lugar.distanciaKm} km` : ""
+    ].filter(Boolean).join(" · ");
+
+    item.append(enlace, pie);
+    ui.referenciasLista.append(item);
+  }
+
+  if (datos.advertencia) {
+    const nota = document.createElement("li");
+    nota.className = "referencia-nota";
+    nota.textContent = datos.advertencia;
+    ui.referenciasLista.append(nota);
+  }
+  ui.referencias.dataset.estado = "visible";
+  referenciasEnPantalla = [];   // esto no son referencias: no debe viajar en el correo
 }
 
 async function usarConector(nombre, argumentos) {
@@ -362,6 +461,7 @@ function mostrarLamina(lamina) {
 
 function mostrarReferencias(referencias) {
   referenciasEnPantalla = referencias;
+  ui.referenciasTitulo.textContent = "Referencias";
   ui.referenciasLista.replaceChildren();
   for (const referencia of referencias) {
     const item = document.createElement("li");
