@@ -136,6 +136,10 @@ const USO_DE_HERRAMIENTAS = [
   "Si no aparece ninguna imagen, dilo con naturalidad y sigue explicando de palabra. Nunca afirmes que se ve algo que no apareció.",
   "Usa buscar_referencias para respaldar en la literatura lo que estés explicando.",
 
+  // Las búsquedas tardan entre uno y ocho segundos, y durante ese rato no sale
+  // audio. Sin avisar antes, el silencio parece que se cortó la llamada.
+  "Antes de usar cualquier herramienta, di en voz alta una frase corta de que vas a buscarlo, y sigue hablando de lo que sepas mientras tanto. No te quedes en silencio esperando el resultado.",
+
   // Sin esto el modelo llama a como_llegar a ciegas y la herramienta responde
   // que falta el origen, lo que gasta un turno entero en nada.
   "Para indicar cómo llegar a un sitio necesitas saber desde dónde sale la persona.",
@@ -298,7 +302,21 @@ async function createRealtimeSession(req, res) {
       parameters: h.parametros
     })),
     audio: {
-      input: { turn_detection: { type: "server_vad", create_response: true, interrupt_response: true } },
+      input: {
+        turn_detection: {
+          type: "server_vad",
+          create_response: true,
+          interrupt_response: true,
+          // Umbral alto: hace falta voz de verdad para interrumpirla. Con el
+          // valor por defecto, un ruido de fondo bastaba para cortarle la frase.
+          threshold: 0.72,
+          prefix_padding_ms: 300,
+          // Casi un segundo de silencio antes de dar el turno por terminado.
+          // Con menos, una pausa para pensar se leía como «ya acabé» y la
+          // conversación se atropellaba.
+          silence_duration_ms: 900
+        }
+      },
       output: { voice: config.modelos?.openai?.voz || "marin" }
     }
   }));
@@ -396,6 +414,17 @@ async function createGeminiToken(res) {
         }
       },
       systemInstruction: { parts: [{ text: await instruccionesDeSesion(config) }] },
+      // Mismo criterio que en OpenAI: cuesta más interrumpirla y se espera más
+      // antes de dar el turno por cerrado.
+      realtimeInputConfig: {
+        automaticActivityDetection: {
+          disabled: false,
+          startOfSpeechSensitivity: "START_SENSITIVITY_LOW",
+          endOfSpeechSensitivity: "END_SENSITIVITY_LOW",
+          prefixPaddingMs: 300,
+          silenceDurationMs: 900
+        }
+      },
       // Sin esto no habría subtítulos ni historial con Gemini.
       outputAudioTranscription: {},
       tools: [{
