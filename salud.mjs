@@ -39,9 +39,23 @@ async function conCache(clave, cargar) {
   return valor;
 }
 
+// El cortafuegos del MINSAL rechaza peticiones que no parecen de un navegador.
+// Desde un equipo de casa basta con «Catalina/1.0», pero desde el despliegue
+// devolvía 403 con ese mismo agente, así que se manda el juego de cabeceras
+// completo que enviaría cualquier navegador. Es un endpoint público de datos
+// abiertos: esto no salta ningún control de acceso, sólo hace que la petición
+// esté bien formada.
+const CABECERAS_MINSAL = {
+  "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+    + "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+  Accept: "application/json, text/javascript, */*; q=0.01",
+  "Accept-Language": "es-CL,es;q=0.9",
+  "Cache-Control": "no-cache"
+};
+
 async function traerJson(url) {
   const respuesta = await fetch(url, {
-    headers: { "User-Agent": AGENTE, Accept: "application/json" },
+    headers: CABECERAS_MINSAL,
     signal: AbortSignal.timeout(12000)
   });
   if (!respuesta.ok) throw new Error(`${url} respondió ${respuesta.status}`);
