@@ -96,7 +96,8 @@ export class GeminiSession {
     this.salida = new AudioContext({ sampleRate: SALIDA_HZ });
     await this.salida.resume().catch(() => {});
     this.destino = this.salida.createMediaStreamDestination();
-    // Se oye por los altavoces y a la vez alimenta el analizador de labios.
+    // Este stream hace las dos cosas: lo reproduce el elemento <audio> de la
+    // página y lo analiza el seguidor de labios. Una sola salida de sonido.
     this.#emit("onRemoteStream", this.destino.stream);
   }
 
@@ -112,8 +113,14 @@ export class GeminiSession {
 
     const fuente = this.salida.createBufferSource();
     fuente.buffer = buffer;
+    // Sólo al destino de MediaStream, nunca también a los altavoces.
+    //
+    // Conectar a los dos hacía que la voz sonara dos veces: una por esta vía y
+    // otra por el elemento <audio>, que reproduce este mismo stream. Con unos
+    // milisegundos de diferencia entre ambas, se oía como eco. El camino de
+    // OpenAI no lo sufría porque su pista remota llega ya al elemento <audio> y
+    // no pasa por aquí.
     fuente.connect(this.destino);
-    fuente.connect(this.salida.destination);
 
     const ahora = this.salida.currentTime;
     // Un colchón corto absorbe los saltos de la red sin que se note retraso.
