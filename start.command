@@ -2,34 +2,18 @@
 set -e
 cd "${0:A:h}"
 
-# Node.js. Al abrir con doble clic el PATH puede venir incompleto, así que
-# además de buscarlo en el entorno se prueban las rutas habituales de macOS:
-# Homebrew en Apple Silicon, Homebrew en Intel, instalador oficial y nvm.
-#
-# NULL_GLOB es imprescindible: sin él, zsh aborta con «no matches found» al
-# llegar al comodín de nvm en un equipo que no use nvm, y el script muere antes
-# de haber probado el resto de candidatos.
-setopt NULL_GLOB
-
-CATALINA_NODE=""
-if command -v node >/dev/null 2>&1; then
-  CATALINA_NODE="$(command -v node)"
-else
-  for CANDIDATO in \
-    /opt/homebrew/bin/node \
-    /usr/local/bin/node \
-    /usr/bin/node \
-    "$HOME/.nvm/versions/node"/*/bin/node \
-    "$HOME/.volta/bin/node"
-  do
-    if [[ -x "$CANDIDATO" ]]; then
-      CATALINA_NODE="$CANDIDATO"
-      break
-    fi
-  done
+# Node.js. La búsqueda vive en work/node.sh y no aquí: teniéndola duplicada se
+# desincronizó, y este archivo se quedó sin la ruta del runtime de Codex que sí
+# tenía el otro. Resultado: no encontraba Node y no arrancaba, justo al abrirlo
+# con doble clic, que es como se usa.
+CATALINA_NODE="${0:A:h}/work/node.sh"
+if [[ ! -x "$CATALINA_NODE" ]]; then
+  echo "Falta work/node.sh. Vuelve a descargar el proyecto completo."
+  read "?Presiona Enter para cerrar…"
+  exit 1
 fi
 
-if [[ -z "$CATALINA_NODE" || ! -x "$CATALINA_NODE" ]]; then
+if ! "$CATALINA_NODE" --version >/dev/null 2>&1; then
   echo "No encuentro Node.js en este equipo."
   echo "Instálalo desde https://nodejs.org (versión LTS) y vuelve a abrir este archivo."
   read "?Presiona Enter para cerrar…"
