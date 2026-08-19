@@ -65,6 +65,7 @@ const manejadores = {
   },
   onConnected: () => {
     connected = true;
+    hayActividad();
     mostrarAviso("");   // si el intento anterior falló, su aviso ya no aplica
     ui.signal.classList.add("online");
     ui.connect.textContent = "Finalizar";
@@ -73,6 +74,7 @@ const manejadores = {
   },
   onDisconnected: () => {
     connected = false;
+    pararRelojes();
     // El historial se conserva: sirve para releer lo dicho al terminar. Lo que
     // se va es el subtítulo, que sólo tiene sentido mientras Catalina habla.
     cerrarTurno();
@@ -90,6 +92,7 @@ const manejadores = {
     setStatus("Lista para comenzar");
   },
   onPhase: phase => {
+    hayActividad();
     if (phase !== "speaking") faseDeSesion = phase;
     director.setState(phase);
     // La expresión sigue al turno: se concentra mientras piensa y se recompone
@@ -104,6 +107,7 @@ const manejadores = {
   // apagados: son cosas que la persona necesita leer para poder seguir.
   onHelp: mostrarAviso,
   onTranscript: text => {
+    hayActividad();
     anotarTurno(text);
     aplicarExpresionDeFrase(text);
   },
@@ -117,35 +121,98 @@ const manejadores = {
 
 // Relevo de proveedor.
 //
-// Cada intento empieza por OpenAI, incluso después de haber caído a Gemini: si
-// el crédito se repone, Catalina vuelve sola a la voz principal sin tener que
-// tocar nada. El intento fallido no cuesta nada, porque un 429 se rechaza antes
-// de consumir tokens.
+// Gemini va primero por precio: su audio cuesta unas diez veces menos que el de
+// OpenAI ($3 y $12 por millón de tokens frente a $32 y $64), y para lo que hace
+// Catalina la diferencia de calidad no lo justifica. OpenAI queda de respaldo,
+// que es justo el reparto contrario al que había.
+//
+// Cada intento vuelve a empezar por el principal: si falló por un tope de uso,
+// al reponerse se vuelve solo sin tener que tocar nada.
 const sesiones = {
   openai: new RealtimeSession(manejadores),
   gemini: new GeminiSession(manejadores)
 };
 
-// Motivos por los que OpenAI no va a funcionar por mucho que se reintente: sin
-// crédito o sin clave válida. Un fallo de red no entra aquí, porque cambiar de
-// proveedor no lo arreglaría y ocultaría el problema real.
-const MOTIVOS_DE_RELEVO = new Set(["API_RATE_LIMIT", "API_KEY_MISSING", "API_KEY_INVALID"]);
+const ORDEN = ["gemini", "openai"];
 
-let proveedor = "openai";
-let sesion = sesiones.openai;
-let geminiDisponible = false;
+// Motivos por los que ese proveedor no va a funcionar por mucho que se
+// reintente: sin crédito o sin clave válida. Un fallo de red no entra aquí,
+// porque cambiar de proveedor no lo arreglaría y ocultaría el problema real.
+const MOTIVOS_DE_RELEVO = new Set([
+  "API_RATE_LIMIT", "API_KEY_MISSING", "API_KEY_INVALID",
+  "GEMINI_KEY_MISSING", "GEMINI_KEY_INVALID", "GEMINI_SESSION_ERROR"
+]);
+
+const disponible = { openai: false, gemini: false };
+let proveedor = null;
+let sesion = null;
+
+function proveedoresUtiles() {
+  return ORDEN.filter(nombre => disponible[nombre]);
+}
+
+async function conectar() {
+  const cadena = proveedoresUtiles();
+  if (!cadena.length) {
+    setStatus("No hay ninguna voz configurada");
+    mostrarAviso("Falta una clave de OpenAI o de Gemini para poder conversar.");
+    ui.connect.disabled = false;
+    return;
+  }
+  proveedor = cadena[0];
+  sesion = sesiones[proveedor];
+  ui.connect.disabled = true;
+  await sesion.connect();
+}
+
+// Corte por inactividad.
+//
+// Una sesión abierta sigue enviando el micrófono aunque nadie hable, y eso se
+// paga: con OpenAI son unos tres dólares por hora de silencio. Antes no había
+// nada que la cerrara, así que alejarse del equipo costaba dinero sin dar nada
+// a cambio.
+const INACTIVIDAD_MS = 2 * 60 * 1000;
+const AVISO_MS = 15 * 1000;          // se avisa quince segundos antes de colgar
+let relojInactividad = null;
+let relojAviso = null;
+
+function hayActividad() {
+  clearTimeout(relojInactividad);
+  clearTimeout(relojAviso);
+  if (!connected) return;
+
+  relojAviso = setTimeout(() => {
+    if (connected) setStatus("Sin actividad; voy a cerrar la sesión");
+  }, INACTIVIDAD_MS - AVISO_MS);
+
+  relojInactividad = setTimeout(() => {
+    if (!connected) return;
+    sesion?.disconnect();
+    // Se dice por qué se cerró: si no, parece que se cayó.
+    setStatus("Sesión cerrada por inactividad");
+    mostrarAviso("Cerré la sesión porque no hubo actividad. Pulsa «Iniciar conversación» para seguir.");
+  }, INACTIVIDAD_MS);
+}
+
+function pararRelojes() {
+  clearTimeout(relojInactividad);
+  clearTimeout(relojAviso);
+  relojInactividad = relojAviso = null;
+}
 
 async function atenderFallo(error) {
-  const puedeRelevar = proveedor === "openai" && geminiDisponible && MOTIVOS_DE_RELEVO.has(error.code);
-  if (!puedeRelevar) {
+  const cadena = proveedoresUtiles();
+  const siguiente = cadena[cadena.indexOf(proveedor) + 1];
+
+  if (!siguiente || !MOTIVOS_DE_RELEVO.has(error.code)) {
     setStatus(error.mensaje || "No se pudo conectar");
     mostrarAviso(error.ayuda || "");
     return;
   }
 
-  proveedor = "gemini";
-  sesion = sesiones.gemini;
-  setStatus(error.code === "API_RATE_LIMIT" ? "Sin crédito en OpenAI, paso a Gemini…" : "Paso a Gemini…");
+  proveedor = siguiente;
+  sesion = sesiones[siguiente];
+  setStatus(`Paso a ${siguiente === "openai" ? "OpenAI" : "Gemini"}…`);
   mostrarAviso("");
   ui.connect.disabled = true;
   await sesion.connect();
@@ -175,15 +242,11 @@ window.visualViewport?.addEventListener("resize", alCambiarLaVista);
 resize();
 
 ui.connect.addEventListener("click", () => {
-  if (connected) return sesion.disconnect();
-  // Cada intento vuelve a empezar por OpenAI, por si el crédito se repuso.
-  proveedor = "openai";
-  sesion = sesiones.openai;
-  ui.connect.disabled = true;
-  sesion.connect();
+  if (connected) return sesion?.disconnect();
+  conectar();
 });
 ui.mute.addEventListener("click", () => {
-  const muted = sesion.toggleMute();
+  const muted = sesion?.toggleMute();
   ui.mute.textContent = muted ? "Activar micrófono" : "Silenciar micrófono";
   setStatus(muted ? "Micrófono silenciado" : "Te escucho");
 });
@@ -211,6 +274,7 @@ document.addEventListener("keydown", event => {
   }
 });
 document.addEventListener("pointerdown", () => {
+  hayActividad();
   voice.resume();
   if (ui.audio.srcObject && ui.audio.paused) ui.audio.play().catch(() => {});
 }, { passive: true });
@@ -791,8 +855,11 @@ fijarPanel(verPanel);
 // que OpenAI fallara para descubrir que tampoco hay respaldo.
 fetch("/health")
   .then(respuesta => respuesta.json())
-  .then(estado => { geminiDisponible = Boolean(estado.proveedores?.gemini); })
-  .catch(() => { geminiDisponible = false; });
+  .then(estado => {
+    disponible.openai = Boolean(estado.proveedores?.openai);
+    disponible.gemini = Boolean(estado.proveedores?.gemini);
+  })
+  .catch(() => {});
 
 // Va después de fijar la vista: el aviso necesita que el estado ya exista, y
 // además debe poder pasar por encima de unos subtítulos apagados.
@@ -864,6 +931,7 @@ window.catalina = {
   sesiones,
   manejadores,
   get session() { return sesion; },
+  get disponible() { return disponible; },
   get proveedor() { return proveedor; },
   expresionDeFrase: aplicarExpresionDeFrase,
   get renderer() { return renderer; },
