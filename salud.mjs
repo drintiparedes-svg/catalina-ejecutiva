@@ -1,18 +1,17 @@
 // Búsqueda de recursos de salud cercanos en Chile.
 //
-// Dos fuentes, ambas abiertas y sin clave:
+// Todo sale de OpenStreetMap: farmacias, hospitales y clínicas se buscan igual,
+// por radio alrededor de un punto, y el punto se resuelve con Nominatim cuando
+// la persona dice dónde está en vez de dar su ubicación.
 //
-//   · Farmacias — MINSAL publica el listado nacional y el de turnos del día.
-//     Es el dato oficial, y el único que sabe qué farmacia está de turno.
-//   · Hospitales y clínicas — OpenStreetMap vía Overpass, que permite buscar
-//     por radio alrededor de un punto.
+// Antes las farmacias venían del MINSAL, que además publicaba los turnos. Se
+// retiró: bloquea las peticiones que no vienen de un equipo particular, así que
+// en el sitio publicado no funcionaba nunca, y sus coordenadas traían errores
+// —registros en una comuna con el punto en otra, a 40 km— que obligaban a
+// descartar resultados. Aquí sólo se ubica la farmacia; si está abierta o de
+// turno hay que confirmarlo llamando.
 //
-// Nada de esto se inventa: si una fuente no responde, se dice que no se pudo
-// consultar. Mandar a alguien de madrugada a una farmacia que no está de turno
-// es peor que decirle que hay que confirmarlo por teléfono.
-
-const MINSAL_TURNOS = "https://midas.minsal.cl/farmacia_v2/WS/getLocalesTurnos.php";
-const MINSAL_LOCALES = "https://midas.minsal.cl/farmacia_v2/WS/getLocales.php";
+// Nada se inventa: si la fuente no responde, se dice que no se pudo consultar.
 
 // Overpass se satura a menudo y devuelve 504; con un solo servidor la búsqueda
 // de hospitales fallaría de forma intermitente sin motivo aparente.
@@ -22,12 +21,8 @@ const OVERPASS = [
   "https://overpass.private.coffee/api/interpreter"
 ];
 
-// ASCII y sin paréntesis, a propósito. El cortafuegos del MINSAL devuelve 403
-// ante un User-Agent con paréntesis o acentos: con «Catalina/1.0 (asistente de
-// docencia médica)» rechazaba todas las peticiones, y con «Catalina/1.0»
-// responde con normalidad. Costó verlo porque curl sí pasaba.
 const AGENTE = "Catalina/1.0";
-const VIGENCIA = 30 * 60 * 1000;   // media hora: los turnos cambian a diario
+const VIGENCIA = 30 * 60 * 1000;
 
 const cache = new Map();
 
@@ -39,57 +34,14 @@ async function conCache(clave, cargar) {
   return valor;
 }
 
-// El MINSAL bloquea por dirección de origen, no por cómo se vea la petición.
-// Desde un equipo particular responde con normalidad; desde el despliegue
-// devuelve 403 aunque se manden las cabeceras completas de un navegador. Se
-// probó y no cambia nada, así que aquí va un agente honesto: disfrazarse no
-// servía y encima ocultaba la causa real.
-async function traerJson(url) {
-  const respuesta = await fetch(url, {
-    headers: { "User-Agent": AGENTE, Accept: "application/json" },
-    signal: AbortSignal.timeout(12000)
-  });
-  if (!respuesta.ok) {
-    const error = new Error(`${url} respondió ${respuesta.status}`);
-    error.estado = respuesta.status;
-    throw error;
-  }
-  return respuesta.json();
-}
-
-// La fecha de hoy en Chile, no la del servidor. Vercel corre en UTC y en
-// Sudamérica eso adelanta el cambio de día varias horas: de madrugada habría
-// mostrado los turnos de mañana, que es justo cuando más importa acertar.
-function hoyEnChile() {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/Santiago", year: "numeric", month: "2-digit", day: "2-digit"
-  }).format(new Date());
-}
-
-// Sin acentos y en mayúsculas: el MINSAL escribe «ÑUÑOA» y la gente dice
-// «nunoa», y sin normalizar no se encuentran.
-const normalizar = texto => String(texto ?? "")
-  .normalize("NFD").replace(/[̀-ͯ]/g, "")
-  .toUpperCase().trim();
-
-// Chile continental, más Isla de Pascua por el oeste. El listado del MINSAL
-// trae coordenadas corruptas —ceros, valores invertidos— y sin este filtro se
-// colaban farmacias «a 11.755 km» y, peor, esas coordenadas falsas arrastraban
-// el centro de la comuna a mitad del océano, dejando el resto de la búsqueda
-// sin sentido.
+// Chile continental, más Isla de Pascua por el oeste. Descarta coordenadas
+// disparatadas antes de que lleguen a una respuesta.
 function coordenadaValida(lat, lon) {
   return Number.isFinite(lat) && Number.isFinite(lon)
     && lat < -17 && lat > -57
     && lon < -65 && lon > -110;
 }
 
-// Mediana y no promedio: basta una coordenada disparatada para desplazar un
-// promedio cientos de kilómetros, y la mediana ni se entera.
-function mediana(valores) {
-  const orden = [...valores].sort((a, b) => a - b);
-  const medio = Math.floor(orden.length / 2);
-  return orden.length % 2 ? orden[medio] : (orden[medio - 1] + orden[medio]) / 2;
-}
 
 function distanciaKm(latA, lonA, latB, lonB) {
   const R = 6371;
@@ -101,13 +53,15 @@ function distanciaKm(latA, lonA, latB, lonB) {
   return 2 * R * Math.asin(Math.sqrt(a));
 }
 
-// Geocodificador de respaldo, y en el despliegue el único.
-//
-// El centro de comuna se deducía del listado del MINSAL, que es más rico pero
-// está bloqueado desde el servidor: por eso en la web fallaba todo lo que se
-// pedía «por comuna» en lugar de por ubicación del dispositivo. Nominatim es
-// abierto, no pide clave y responde desde cualquier sitio. Se cachea porque su
-// política pide no repetir consultas.
+// Sin acentos y en mayúsculas, para que la clave de caché de «Ñuñoa» y la de
+// «nunoa» sean la misma.
+const normalizar = texto => String(texto ?? "")
+  .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+  .toUpperCase().trim();
+
+// Geocodificador. Convierte «Providencia» o «Avenida Matta 300» en un punto.
+// Nominatim es abierto, no pide clave y responde desde cualquier sitio. Se
+// cachea porque su política pide no repetir consultas.
 async function geocodificar(lugar) {
   const consulta = String(lugar || "").trim();
   if (!consulta) return null;
@@ -139,128 +93,7 @@ async function geocodificar(lugar) {
 // Se expone para que el servidor pueda resolver un punto de partida dicho en
 // voz alta —«estoy en Providencia»— sin depender de la geolocalización.
 export async function ubicarLugar(lugar) {
-  return (await centroDeComuna(lugar)) ?? (await geocodificar(lugar));
-}
-
-const farmaciasDeTurno = () => conCache("turnos", () => traerJson(MINSAL_TURNOS));
-const todasLasFarmacias = () => conCache("locales", () => traerJson(MINSAL_LOCALES));
-
-// Centro aproximado de cada comuna, deducido de las farmacias que hay en ella.
-// Evita depender de un geocodificador aparte: el dato ya viene en la respuesta
-// del MINSAL y cubre todo el país.
-async function centroDeComuna(comuna) {
-  let indice;
-  try {
-    indice = await conCache("comunas", async () => {
-    const locales = await todasLasFarmacias();
-    const porComuna = new Map();
-    for (const local of locales) {
-      const lat = Number(local.local_lat);
-      const lon = Number(local.local_lng);
-      if (!coordenadaValida(lat, lon)) continue;
-      const clave = normalizar(local.comuna_nombre);
-      if (!clave) continue;
-      const lista = porComuna.get(clave) ?? { lat: [], lon: [] };
-      lista.lat.push(lat); lista.lon.push(lon);
-      porComuna.set(clave, lista);
-    }
-    const centros = new Map();
-    for (const [clave, l] of porComuna) {
-      centros.set(clave, { lat: mediana(l.lat), lon: mediana(l.lon) });
-    }
-    return centros;
-    });
-  } catch {
-    // El MINSAL bloquea al servidor: no hay indice, pero sí geocodificador.
-    return geocodificar(comuna);
-  }
-  return indice.get(normalizar(comuna)) ?? await geocodificar(comuna);
-}
-
-function describirFarmacia(local, origen) {
-  const lat = Number(local.local_lat);
-  const lon = Number(local.local_lng);
-  return {
-    nombre: local.local_nombre?.trim() || "Farmacia",
-    direccion: local.local_direccion?.trim() || "",
-    comuna: local.comuna_nombre?.trim() || "",
-    telefono: local.local_telefono?.trim() || "",
-    horario: local.funcionamiento_hora_apertura && local.funcionamiento_hora_cierre
-      ? `${local.funcionamiento_hora_apertura.slice(0, 5)} a ${local.funcionamiento_hora_cierre.slice(0, 5)}`
-      : "",
-    lat, lon,
-    distanciaKm: origen && coordenadaValida(lat, lon)
-      ? Number(distanciaKm(origen.lat, origen.lon, lat, lon).toFixed(1))
-      : null,
-    mapa: coordenadaValida(lat, lon)
-      ? `https://www.google.com/maps/search/?api=1&query=${lat},${lon}` : ""
-  };
-}
-
-// Coherencia entre la coordenada y la comuna declarada. Hay registros con una
-// cosa u otra mal: «LA BOTICA PANDA» dice estar en Paine y sus coordenadas caen
-// en pleno Santiago, a 40 km. No se puede saber cuál de los dos campos miente,
-// así que se descarta el registro: enviar a alguien a una dirección equivocada
-// de madrugada es peor que darle una opción menos.
-async function coherente(local) {
-  const lat = Number(local.local_lat);
-  const lon = Number(local.local_lng);
-  if (!coordenadaValida(lat, lon)) return false;
-  const centro = await centroDeComuna(local.comuna_nombre);
-  if (!centro) return true;   // comuna desconocida: no hay con qué contrastar
-  return distanciaKm(centro.lat, centro.lon, lat, lon) < 25;
-}
-
-export async function buscarFarmacias({ deTurno, comuna, lat, lon, limite = 5 }) {
-  const listado = deTurno ? await farmaciasDeTurno() : await todasLasFarmacias();
-
-  // El listado de turnos arrastra registros de días anteriores. Sin filtrar por
-  // la fecha de hoy se anunciaría como abierta una farmacia que estuvo de turno
-  // el mes pasado.
-  const hoy = hoyEnChile();
-  const vigentes = deTurno ? listado.filter(x => x.fecha === hoy) : listado;
-
-  let origen = Number.isFinite(lat) && Number.isFinite(lon) ? { lat, lon } : null;
-  if (!origen && comuna) origen = await centroDeComuna(comuna);
-
-  let candidatas = vigentes;
-  let fueraDeLaComuna = false;
-  if (comuna) {
-    const buscada = normalizar(comuna);
-    const enLaComuna = vigentes.filter(x => normalizar(x.comuna_nombre) === buscada);
-    if (enLaComuna.length) {
-      candidatas = enLaComuna;
-    } else if (origen) {
-      // De noche la farmacia de la comuna vecina sirve, así que se amplía por
-      // cercanía en vez de decir que no hay nada. Pero se avisa: dar una de
-      // otra comuna sin decirlo hace creer que queda al lado.
-      fueraDeLaComuna = true;
-    }
-  }
-
-  const coherencias = await Promise.all(candidatas.map(coherente));
-  const resultados = candidatas
-    .filter((_, i) => coherencias[i])
-    .map(local => describirFarmacia(local, origen))
-    .filter(f => coordenadaValida(f.lat, f.lon));
-
-  if (origen) resultados.sort((a, b) => (a.distanciaKm ?? 1e9) - (b.distanciaKm ?? 1e9));
-
-  return {
-    ok: true,
-    tipo: deTurno ? "farmacia_turno" : "farmacia",
-    fecha: deTurno ? hoy : undefined,
-    resultados: resultados.slice(0, limite),
-    // Se devuelve para que Catalina pueda advertirlo: el turno lo publica el
-    // MINSAL, pero los horarios cambian y conviene llamar antes de ir.
-    // Se devuelve para que Catalina pueda advertirlo: el turno lo publica el
-    // MINSAL, pero los horarios cambian y conviene llamar antes de ir.
-    fueraDeLaComuna: fueraDeLaComuna || undefined,
-    advertencia: [
-      fueraDeLaComuna ? `No hay farmacia de turno en ${comuna}; estas son las más cercanas de otras comunas.` : "",
-      deTurno ? "Turnos publicados por el MINSAL para hoy. Conviene llamar antes de ir." : ""
-    ].filter(Boolean).join(" ") || undefined
-  };
+  return geocodificar(lugar);
 }
 
 export async function buscarCentros({ tipo, lat, lon, comuna, limite = 5 }) {
@@ -268,14 +101,16 @@ export async function buscarCentros({ tipo, lat, lon, comuna, limite = 5 }) {
   if (!origen && comuna) origen = await ubicarLugar(comuna);
   if (!origen) return { ok: false, error: "Necesito la comuna o la ubicación para buscar cerca." };
 
-  const clases = tipo === "hospital" ? "hospital" : "clinic|doctors";
+  const clases = tipo === "hospital" ? "hospital"
+    : tipo === "farmacia" ? "pharmacy"
+    : "clinic|doctors";
   const consulta = `[out:json][timeout:20];`
     + `(node["amenity"~"^(${clases})$"](around:6000,${origen.lat},${origen.lon});`
     + `way["amenity"~"^(${clases})$"](around:6000,${origen.lat},${origen.lon}););`
     + `out center 40;`;
 
   // Overpass devuelve 504 por sobrecarga con bastante frecuencia, y no por
-  // falta de cupo: el estado del servidor sigue anunciando turnos libres. Se
+  // falta de cupo: el estado del servidor sigue anunciando cupo libre. Se
   // reintenta en cada espejo con una pausa corta antes de darlo por perdido.
   //
   // Además se guarda la respuesta por zona durante un día: un hospital no se
@@ -304,7 +139,7 @@ export async function buscarCentros({ tipo, lat, lon, comuna, limite = 5 }) {
     }
     if (!datos && intento === 0) await new Promise(r => setTimeout(r, 1500));
   }
-  if (!datos) return { ok: false, error: "No se pudo consultar el mapa de centros de salud." };
+  if (!datos) return { ok: false, error: "No se pudo consultar el mapa en este momento." };
 
   const resultados = (datos.elements ?? [])
     .map(elemento => {
@@ -331,7 +166,9 @@ export async function buscarCentros({ tipo, lat, lon, comuna, limite = 5 }) {
     ok: true,
     tipo,
     resultados: resultados.slice(0, limite),
-    advertencia: "Datos de OpenStreetMap: pueden estar incompletos o desactualizados."
+    advertencia: tipo === "farmacia"
+      ? "Datos de OpenStreetMap. Aquí sólo aparece dónde está la farmacia: si está abierta o de turno hay que confirmarlo llamando."
+      : "Datos de OpenStreetMap: pueden estar incompletos o desactualizados."
   };
 }
 

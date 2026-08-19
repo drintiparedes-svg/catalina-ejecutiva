@@ -403,7 +403,6 @@ async function mostrarMapa(ruta, destino) {
 }
 
 const TITULOS_LUGARES = {
-  farmacia_turno: "Farmacias de turno",
   farmacia: "Farmacias",
   hospital: "Hospitales",
   clinica: "Clínicas"

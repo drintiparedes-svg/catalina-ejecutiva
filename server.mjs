@@ -4,7 +4,7 @@ import {
   cargarConfig, guardarConfig, componerInstrucciones, herramientasDeConectores
 } from "./config.mjs";
 import { plantillaMediSmart, versionTexto, enviarPorResend } from "./correo.mjs";
-import { buscarFarmacias, buscarCentros, calcularRuta, ubicarLugar } from "./salud.mjs";
+import { buscarCentros, calcularRuta, ubicarLugar } from "./salud.mjs";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -129,11 +129,12 @@ const USO_DE_HERRAMIENTAS = [
   "La herramienta busca esquemas y diagramas ya publicados; no inventa imágenes.",
   "Explica como si fuera para un paciente: lenguaje llano, lo esencial primero, sin tecnicismos innecesarios.",
   "Al mostrar una lámina, ve señalando lo que se ve y explícalo; no leas el pie de imagen.",
-  // La herramienta avisa cuando lo encontrado sólo se aproxima al tema. Sin
-  // esta regla el modelo lo narraría como si fuera exacto, que es justo el
-  // fallo que hace peligrosa una imagen equivocada en docencia.
-  "Si el resultado viene marcado como aproximado, dilo: preséntalo como una imagen parecida y no como la estructura exacta.",
-  "Si no aparece ninguna imagen, dilo con naturalidad y sigue explicando de palabra. Nunca afirmes que se ve algo que no apareció.",
+  // Sólo se muestran láminas de colecciones con respaldo editorial, así que
+  // ahora la herramienta encuentra menos. Eso es deliberado, y el modelo tiene
+  // que saber qué hacer con el hueco en vez de rellenarlo.
+  "Sólo verás láminas de fuentes médicas verificadas. Si no aparece ninguna, di sin rodeos que no la encontraste.",
+  "Cuando no la encuentres, pregunta: pide la estructura concreta, la vista o el detalle que le interesa, y vuelve a intentarlo con eso.",
+  "Nunca describas una imagen que no apareció en pantalla, ni sustituyas la lámina por una descripción como si se estuviera viendo.",
   "Usa buscar_referencias para respaldar en la literatura lo que estés explicando.",
 
   // Las búsquedas tardan entre uno y ocho segundos, y durante ese rato no sale
@@ -227,8 +228,8 @@ const PARAMETROS_SALUD = {
   properties: {
     tipo: {
       type: "string",
-      enum: ["farmacia_turno", "farmacia", "hospital", "clinica"],
-      description: "Qué se busca. «farmacia_turno» es la que está de turno hoy, para urgencias fuera de horario."
+      enum: ["farmacia", "hospital", "clinica"],
+      description: "Qué se busca cerca: una farmacia, un hospital o una clínica."
     },
     comuna: {
       type: "string",
@@ -239,10 +240,10 @@ const PARAMETROS_SALUD = {
   required: ["tipo"]
 };
 
-const DESCRIPCION_SALUD = "Busca farmacias, farmacias de turno, hospitales y clínicas cerca, en Chile. "
-  + "Las farmacias de turno vienen del MINSAL y los centros de salud de OpenStreetMap. "
+const DESCRIPCION_SALUD = "Busca farmacias, hospitales y clínicas cerca, en Chile, y dice dónde están. "
   + "Usa la ubicación del dispositivo si está disponible; si no, pide la comuna. "
-  + "Al responder, di la dirección y a qué distancia queda, y recuerda que conviene confirmar por teléfono.";
+  + "Al responder, di la dirección y a qué distancia queda. "
+  + "No sabe si están abiertos: si preguntan por horarios o por farmacia de turno, di que eso hay que confirmarlo llamando.";
 
 const PARAMETROS_RUTA = {
   type: "object",
@@ -502,11 +503,11 @@ async function buscarImagenMedica(req, res) {
       // «system» y «anatomy» empujan hacia la lámina de conjunto que se usa
       // para explicar, y apartan la complicación concreta.
       buscarEnCommons([estructura.replace(/\btract\b/i, "system"), "anatomy"], terminos, true, pideClinico),
-      buscarEnWikipedia("en", estructura, terminos, pideClinico),
-      // Último recurso: lo mejor que dé Commons aunque el título no mencione el
-      // término. Va marcado como aproximado para que Catalina lo advierta en
-      // vez de explicarlo como si fuera exacto.
-      buscarEnCommons([estructura, "diagram"], terminos, false, pideClinico)
+      buscarEnWikipedia("en", estructura, terminos, pideClinico)
+      // Aquí había un último recurso que devolvía lo mejor que hubiera aunque no
+      // tratara del tema, marcado como «aproximado». Se retira: en docencia una
+      // lámina parecida se explica igual que la exacta y se aprende mal. Si no
+      // hay nada verificado, se dice que no hay.
     ], pideClinico);
 
     // Se queda la mejor de las dos tandas, no simplemente la segunda: a veces
@@ -524,7 +525,14 @@ async function buscarImagenMedica(req, res) {
   }
 
   if (!lamina) {
-    return json(res, 404, { error: "No hay una lámina adecuada para eso.", code: "SIN_LAMINA" });
+    return json(res, 404, {
+      error: "No encontré una lámina verificada de eso.",
+      code: "SIN_LAMINA",
+      // Se le dice al modelo qué hacer, porque su reflejo es rellenar el hueco
+      // describiendo de memoria una imagen que nadie está viendo.
+      queHacer: "Dilo con naturalidad: no la encontraste. Si crees que con otro término o con más "
+        + "detalle podrías dar con ella, pregúntaselo a la persona. No describas ninguna imagen."
+    });
   }
   json(res, 200, { lamina });
 }
@@ -598,15 +606,12 @@ async function buscarEnCommons(partes, terminos, exigirCoincidencia, pideClinico
       || (b.coincidencias - a.coincidencias)
       || (a.rango - b.rango));
 
-  // La coincidencia tiene que estar en el título, no basta la descripción.
-  // «Dried cranberries» menciona la vía urinaria en su texto y llegó a colarse
-  // como lámina del aparato urinario; el nombre del archivo es mucho mejor
-  // indicio de qué muestra la imagen que su descripción libre.
-  const elegida = exigirCoincidencia
-    ? laminas.find(lamina => lamina.enTitulo > 0)
-    : laminas[0];
+  // Dos condiciones, ambas obligatorias: que trate del tema —y eso se juzga por
+  // el título, no por la descripción, que «Dried cranberries» también mencionaba
+  // la vía urinaria— y que venga de una colección con respaldo editorial.
+  const elegida = laminas.find(lamina => lamina.enTitulo > 0 && fuenteVerificada(lamina));
   if (!elegida) return null;
-  return { ...elegida, aproximada: elegida.enTitulo === 0 };
+  return elegida;
 }
 
 // Imagen principal del artículo de Wikipedia. Se resuelve después contra
@@ -645,11 +650,14 @@ async function buscarEnWikipedia(idioma, estructura, terminos, pideClinico = fal
     if (!lamina) continue;
     if (!pideClinico && CLINICO.test(`${lamina.titulo} ${lamina.descripcion || ""}`)) continue;
     if (NO_HUMANO.test(lamina.titulo)) continue;
+    // Mismo listón que en Commons: la imagen de cabecera de un artículo suele
+    // salir del mismo sitio y tampoco tiene por qué estar revisada.
+    if (!fuenteVerificada(lamina)) continue;
 
     // Se acepta aunque el nombre del archivo no repita el término: viene de la
     // cabecera del artículo que Wikipedia considera más relevante, y ese
     // contexto vale más que la coincidencia literal del nombre.
-    return { ...lamina, aproximada: false, articulo: pagina.title };
+    return { ...lamina, articulo: pagina.title };
   }
   return null;
 }
@@ -756,6 +764,37 @@ const CLINICO = new RegExp([
 // Colecciones modernas hechas para enseñar. `gray` se dejó fuera a propósito:
 // las planchas de 1918 son correctas pero densas y sin color, y para explicarle
 // algo a un paciente pierden contra un diagrama rotulado de hoy.
+// Fuentes con respaldo editorial.
+//
+// Commons acepta a cualquiera, y la mayoría de las láminas anatómicas las suben
+// aficionados: se ven correctas y no lo están. Aquí sólo se admite material de
+// colecciones que pasaron por una revisión —libros de texto, atlas publicados,
+// institutos públicos de salud, ilustradores médicos profesionales—, porque en
+// docencia una imagen imprecisa se aprende como si fuera cierta.
+const FUENTES_VERIFICADAS = new RegExp([
+  "cancer research uk|cruk",                    // diagramas clínicos, revisados
+  "blausen",                                     // publicado en WikiJournal of Medicine
+  "servier",                                     // Servier Medical Art
+  "openstax|cnx\\.org",                          // libro de texto con revisión por pares
+  "anatomography|bodyparts3d|dbcls",             // base de datos científica japonesa
+  "gray'?s? anatomy|\\bgray\\s?\\d{2,4}\\b",       // planchas del atlas de Gray
+  "wellcome",                                    // Wellcome Collection
+  "\\bnih\\b|\\bnci\\b|\\bnhlbi\\b|\\bniddk\\b|\\bseer\\b",
+  "national cancer institute|national institutes of health|national heart",
+  "patrick j\\.? lynch",                         // ilustrador médico de Yale
+  "h[aä]ggstr[oö]m",                             // Mikael Häggström, publicado en WikiJournal
+  "scientific animations|medical gallery"
+].join("|"), "i");
+
+// La procedencia se busca en el autor, en el título y en la descripción: unas
+// colecciones se identifican por quién firma y otras por cómo se nombra el
+// archivo.
+function fuenteVerificada(lamina) {
+  return FUENTES_VERIFICADAS.test(
+    `${lamina.autor || ""} ${lamina.titulo || ""} ${lamina.descripcion || ""}`
+  );
+}
+
 const DIDACTICO = /(cruk|blausen|servier|anatomography|esquema|scheme|schema|diagram)/i;
 
 // Idioma de los rótulos.
@@ -932,40 +971,22 @@ async function buscarSalud(req, res) {
   try { peticion = JSON.parse(await readBody(req)); } catch {}
 
   const tipo = String(peticion.tipo || "").trim();
-  const comuna = String(peticion.comuna || "").trim();
-  const lat = Number(peticion.lat);
-  const lon = Number(peticion.lon);
+  if (!["farmacia", "hospital", "clinica"].includes(tipo)) {
+    return json(res, 400, { ok: false, error: "Tipo no reconocido." });
+  }
 
   try {
-    if (tipo === "farmacia_turno" || tipo === "farmacia") {
-      return json(res, 200, await buscarFarmacias({
-        deTurno: tipo === "farmacia_turno", comuna, lat, lon
-      }));
-    }
-    if (tipo === "hospital" || tipo === "clinica") {
-      return json(res, 200, await buscarCentros({ tipo, comuna, lat, lon }));
-    }
-    return json(res, 400, { ok: false, error: "Tipo no reconocido." });
+    return json(res, 200, await buscarCentros({
+      tipo,
+      comuna: String(peticion.comuna || "").trim(),
+      lat: Number(peticion.lat),
+      lon: Number(peticion.lon)
+    }));
   } catch (error) {
     console.error("salud:", error.message);
-    // Se distingue el bloqueo del fallo pasajero. El MINSAL rechaza las
-    // peticiones que vienen de un centro de datos, así que en el sitio
-    // publicado las farmacias no se pueden consultar por mucho que se
-    // reintente; decir «vuelve a intentarlo» sería engañar.
-    if (error.estado === 403) {
-      return json(res, 502, {
-        ok: false,
-        error: "El registro de farmacias del MINSAL no acepta consultas desde el servidor donde está publicada Catalina. "
-          + "Esta búsqueda sí funciona cuando Catalina se ejecuta en el equipo del usuario.",
-        code: "MINSAL_BLOQUEA_SERVIDOR"
-      });
-    }
-    return json(res, 502, {
-      ok: false,
-      error: "No se pudo consultar la fuente oficial en este momento.",
-      code: "FUENTE_NO_DISPONIBLE",
-      detalle: `${error.name}: ${error.message}`.slice(0, 200)
-    });
+    // Se dice que no se pudo consultar, no que no hay nada: son cosas
+    // distintas y confundirlas deja a alguien sin buscar por otra vía.
+    return json(res, 502, { ok: false, error: "No se pudo consultar el mapa en este momento." });
   }
 }
 
