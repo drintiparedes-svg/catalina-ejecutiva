@@ -840,7 +840,13 @@ async function buscarSalud(req, res) {
     console.error("salud:", error.message);
     // Se dice que no se pudo consultar, no que no hay nada: son cosas
     // distintas y confundirlas deja a alguien sin buscar por otra vía.
-    return json(res, 502, { ok: false, error: "No se pudo consultar la fuente oficial en este momento." });
+    // `detalle` no lo lee Catalina; sirve para diagnosticar desde fuera por qué
+    // una fuente falla en el despliegue y no en local.
+    return json(res, 502, {
+      ok: false,
+      error: "No se pudo consultar la fuente oficial en este momento.",
+      detalle: `${error.name}: ${error.message}`.slice(0, 200)
+    });
   }
 }
 
