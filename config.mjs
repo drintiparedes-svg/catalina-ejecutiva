@@ -71,7 +71,20 @@ export const CONFIG_POR_DEFECTO = {
 
   // Conectores: herramientas HTTP propias que Catalina puede llamar. Cada uno
   // se declara ante el modelo igual que las herramientas internas.
-  conectores: []
+  conectores: [],
+
+  // Envío de resúmenes por correo.
+  //
+  // El destinatario vive aquí y no lo elige el modelo: Catalina sólo aporta el
+  // asunto y el texto. Si pudiera indicar a quién escribir, bastaría una
+  // instrucción colada en una página web para desviar el correo a otra parte.
+  correo: {
+    activo: true,
+    destinatario: "dr.intiparedes@gmail.com",
+    // Remitente. Resend permite «onboarding@resend.dev» sin verificar dominio,
+    // que sirve para empezar; con dominio propio se cambia por uno propio.
+    remitente: "Catalina <onboarding@resend.dev>"
+  }
 };
 
 export async function cargarConfig() {

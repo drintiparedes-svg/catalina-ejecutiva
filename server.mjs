@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import {
   cargarConfig, guardarConfig, componerInstrucciones, herramientasDeConectores
 } from "./config.mjs";
+import { plantillaMediSmart, versionTexto, enviarPorResend } from "./correo.mjs";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -45,6 +46,10 @@ const server = createServer(async (req, res) => {
 
     if (req.method === "POST" && req.url === "/referencias") {
       return await buscarReferencias(req, res);
+    }
+
+    if (req.method === "POST" && req.url === "/correo") {
+      return await enviarResumen(req, res);
     }
 
     if (req.method === "POST" && req.url === "/conector") {
@@ -163,9 +168,32 @@ const PARAMETROS_REFERENCIAS = {
 const DESCRIPCION_REFERENCIAS = "Busca en PubMed referencias que respalden lo que estás explicando y las muestra en pantalla. "
   + "Úsala cuando expliques un concepto médico, para que quien escucha pueda comprobarlo en la literatura.";
 
+// Envío del resumen. El modelo aporta el asunto y el texto; nunca el
+// destinatario, que vive en la configuración del servidor.
+const PARAMETROS_CORREO = {
+  type: "object",
+  properties: {
+    titulo: {
+      type: "string",
+      description: "Título del resumen, claro y concreto. Por ejemplo «Cómo funciona la vía urinaria»."
+    },
+    resumen: {
+      type: "string",
+      description: "La explicación redactada para que se lea después, en español y en párrafos cortos. "
+        + "Escríbela completa: quien la reciba no tendrá delante la conversación."
+    }
+  },
+  required: ["titulo", "resumen"]
+};
+
+const DESCRIPCION_CORREO = "Envía por correo un resumen de lo explicado, con la lámina y las referencias "
+  + "que estén en pantalla, en la plantilla MediSmart. Úsala sólo cuando te lo pidan expresamente. "
+  + "El destinatario ya está configurado: no lo preguntes ni lo elijas.";
+
 const HERRAMIENTAS = [
   { nombre: "buscar_imagen_medica", descripcion: DESCRIPCION_IMAGEN, parametros: PARAMETROS_IMAGEN },
-  { nombre: "buscar_referencias", descripcion: DESCRIPCION_REFERENCIAS, parametros: PARAMETROS_REFERENCIAS }
+  { nombre: "buscar_referencias", descripcion: DESCRIPCION_REFERENCIAS, parametros: PARAMETROS_REFERENCIAS },
+  { nombre: "enviar_resumen", descripcion: DESCRIPCION_CORREO, parametros: PARAMETROS_CORREO }
 ];
 
 // Las internas más las que haya añadido el panel como conectores.
@@ -436,7 +464,10 @@ async function buscarEnCommons(partes, terminos, exigirCoincidencia, pideClinico
   url.search = new URLSearchParams({
     action: "query", generator: "search", gsrsearch: consulta,
     gsrnamespace: "6", gsrlimit: "20",
-    prop: "imageinfo", iiprop: "url|extmetadata|mime", iiurlwidth: "900",
+    // Acotar también el alto es lo que hace usable la lámina fuera de la
+    // pantalla: muchas son verticales y muy largas —la del aparato urinario
+    // mide 795×1769— y sin este límite ocupaban el correo entero.
+    prop: "imageinfo", iiprop: "url|extmetadata|mime", iiurlwidth: "900", iiurlheight: "620",
     iiextmetadatafilter: "Artist|LicenseShortName|License|ImageDescription",
     format: "json", origin: "*"
   }).toString();
@@ -523,7 +554,10 @@ async function detallarArchivo(titulo, terminos) {
   const url = new URL("https://commons.wikimedia.org/w/api.php");
   url.search = new URLSearchParams({
     action: "query", titles: titulo,
-    prop: "imageinfo", iiprop: "url|extmetadata|mime", iiurlwidth: "900",
+    // Acotar también el alto es lo que hace usable la lámina fuera de la
+    // pantalla: muchas son verticales y muy largas —la del aparato urinario
+    // mide 795×1769— y sin este límite ocupaban el correo entero.
+    prop: "imageinfo", iiprop: "url|extmetadata|mime", iiurlwidth: "900", iiurlheight: "620",
     iiextmetadatafilter: "Artist|LicenseShortName|License|ImageDescription",
     format: "json", origin: "*"
   }).toString();
@@ -684,9 +718,22 @@ async function buscarReferencias(req, res) {
   const base = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils";
   const comunes = { db: "pubmed", retmode: "json", tool: "catalina", email: "catalina@local" };
 
-  const busqueda = await fetch(`${base}/esearch.fcgi?` + new URLSearchParams({
-    ...comunes, term: tema, retmax: "4", sort: "relevance"
+  // El filtro de humanos no es un adorno. Sin él, «urinary tract anatomy»
+  // devolvía citología renal en una revista veterinaria y anatomía comparada de
+  // la cobaya: correctas como ciencia, inútiles para explicarle algo a un
+  // paciente. Si no hubiera nada con el filtro, se reintenta sin él.
+  const conFiltro = await fetch(`${base}/esearch.fcgi?` + new URLSearchParams({
+    ...comunes, term: `${tema} AND humans[MeSH Terms]`, retmax: "4", sort: "relevance"
   }));
+  let busqueda = conFiltro;
+  if (conFiltro.ok) {
+    const previo = (await conFiltro.clone().json())?.esearchresult?.idlist ?? [];
+    if (!previo.length) {
+      busqueda = await fetch(`${base}/esearch.fcgi?` + new URLSearchParams({
+        ...comunes, term: tema, retmax: "4", sort: "relevance"
+      }));
+    }
+  }
   if (!busqueda.ok) {
     return json(res, 502, { error: "No se pudo consultar PubMed.", code: "PUBMED_NO_DISPONIBLE" });
   }
@@ -739,6 +786,64 @@ function motivoDeRechazo() {
   return process.env.ADMIN_TOKEN?.trim()
     ? "Token de administración incorrecto."
     : "El administrador sólo está abierto en el equipo local. Define ADMIN_TOKEN para usarlo a distancia.";
+}
+
+// Envío del resumen por correo.
+//
+// El destinatario y el remitente salen de la configuración; del navegador sólo
+// llega el contenido. Es la diferencia entre una herramienta que redacta y una
+// que además decide a quién escribir: lo segundo convertiría cualquier texto
+// leído en voz alta en una vía para sacar información a otra dirección.
+async function enviarResumen(req, res) {
+  const apiKey = process.env.RESEND_API_KEY?.trim();
+  if (!apiKey) {
+    return json(res, 503, {
+      ok: false,
+      error: "Falta RESEND_API_KEY: no hay forma de enviar correo.",
+      code: "CORREO_SIN_CLAVE"
+    });
+  }
+
+  const config = await cargarConfig();
+  const correo = config.correo ?? {};
+  if (correo.activo === false) {
+    return json(res, 403, { ok: false, error: "El envío de correo está desactivado.", code: "CORREO_DESACTIVADO" });
+  }
+  if (!correo.destinatario) {
+    return json(res, 503, { ok: false, error: "No hay destinatario configurado.", code: "CORREO_SIN_DESTINO" });
+  }
+
+  let peticion = {};
+  try { peticion = JSON.parse(await readBody(req)); } catch {}
+
+  const titulo = String(peticion.titulo || "").trim();
+  const resumen = String(peticion.resumen || "").trim();
+  if (!titulo || !resumen) {
+    return json(res, 400, { ok: false, error: "Falta el título o el resumen.", code: "CORREO_INCOMPLETO" });
+  }
+
+  const datos = {
+    titulo,
+    resumen,
+    lamina: peticion.lamina || null,
+    referencias: Array.isArray(peticion.referencias) ? peticion.referencias.slice(0, 8) : []
+  };
+
+  const resultado = await enviarPorResend({
+    apiKey,
+    remitente: correo.remitente || "Catalina <onboarding@resend.dev>",
+    destinatario: correo.destinatario,
+    asunto: `MediSmart · ${titulo}`,
+    html: plantillaMediSmart(datos),
+    texto: versionTexto(datos)
+  });
+
+  if (!resultado.ok) {
+    console.error("Correo:", resultado.estado, resultado.error);
+    return json(res, 502, { ok: false, error: resultado.error, code: "CORREO_RECHAZADO" });
+  }
+  // El destinatario se devuelve para que Catalina pueda confirmarlo en voz alta.
+  json(res, 200, { ok: true, destinatario: correo.destinatario });
 }
 
 // Uso de un conector durante la conversación. El navegador manda el nombre, no

@@ -190,8 +190,14 @@ ui.exitMeet.addEventListener("click", () => ui.stage.classList.remove("meet"));
 ui.toggleCaption.addEventListener("click", () => fijarSubtitulos(!verSubtitulos));
 ui.togglePanel.addEventListener("click", () => fijarPanel(!verPanel));
 ui.panelClose.addEventListener("click", () => fijarPanel(false));
-ui.imagenCerrar.addEventListener("click", () => mostrarLienzoDeImagen("oculto"));
-ui.referenciasCerrar.addEventListener("click", () => { ui.referencias.dataset.estado = "oculto"; });
+ui.imagenCerrar.addEventListener("click", () => {
+  mostrarLienzoDeImagen("oculto");
+  laminaEnPantalla = null;
+});
+ui.referenciasCerrar.addEventListener("click", () => {
+  ui.referencias.dataset.estado = "oculto";
+  referenciasEnPantalla = [];
+});
 document.addEventListener("keydown", event => {
   if (event.target.matches("input, textarea")) return;
   const tecla = event.key.toLowerCase();
@@ -217,12 +223,49 @@ function setStatus(text) {
 // el modelo decide cuándo usarlas. Ninguna inventa nada — una recupera láminas
 // ya publicadas, la otra referencias de PubMed—, y lo que se devuelve al modelo
 // es deliberadamente escueto para que comente lo que se ve sin releerlo.
+// Lo último que se mostró en pantalla. El correo lo adjunta sin que el modelo
+// tenga que repetirlo: ya lo tenemos aquí, y hacérselo dictar de nuevo sería
+// pedirle que reconstruya de memoria algo que puede recordar mal.
+let laminaEnPantalla = null;
+let referenciasEnPantalla = [];
+
 async function atenderHerramienta(nombre, argumentos) {
   if (nombre === "buscar_imagen_medica") return await pedirLamina(argumentos);
   if (nombre === "buscar_referencias") return await pedirReferencias(argumentos);
+  if (nombre === "enviar_resumen") return await enviarResumen(argumentos);
   // Cualquier otro nombre viene de un conector definido en el administrador.
   // Se manda el nombre, no la dirección: el servidor la resuelve.
   return await usarConector(nombre, argumentos);
+}
+
+async function enviarResumen(argumentos) {
+  const titulo = String(argumentos.titulo || "").trim();
+  const resumen = String(argumentos.resumen || "").trim();
+  if (!titulo || !resumen) return { ok: false, error: "Falta el título o el resumen" };
+
+  setStatus("Enviando el resumen…");
+  try {
+    const respuesta = await fetch("/correo", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        titulo, resumen,
+        lamina: laminaEnPantalla,
+        referencias: referenciasEnPantalla
+      })
+    });
+    const datos = await respuesta.json().catch(() => ({}));
+    if (!respuesta.ok || !datos.ok) {
+      setStatus("No se pudo enviar el correo");
+      return { ok: false, error: datos.error || "No se pudo enviar el correo" };
+    }
+    setStatus("Resumen enviado");
+    return { ok: true, enviado: true, destinatario: datos.destinatario };
+  } catch (error) {
+    console.error(error);
+    setStatus("No se pudo enviar el correo");
+    return { ok: false, error: "Falló la conexión al enviar el correo" };
+  }
 }
 
 async function usarConector(nombre, argumentos) {
@@ -306,6 +349,7 @@ function mostrarLienzoDeImagen(estado) {
 }
 
 function mostrarLamina(lamina) {
+  laminaEnPantalla = lamina;
   ui.imagenFoto.src = lamina.imagen;
   ui.imagenFoto.alt = lamina.titulo;
   ui.imagenPie.textContent = lamina.titulo;
@@ -317,6 +361,7 @@ function mostrarLamina(lamina) {
 }
 
 function mostrarReferencias(referencias) {
+  referenciasEnPantalla = referencias;
   ui.referenciasLista.replaceChildren();
   for (const referencia of referencias) {
     const item = document.createElement("li");
