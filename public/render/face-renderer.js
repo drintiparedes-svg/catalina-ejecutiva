@@ -6,6 +6,7 @@
 
 import { IMAGE, HEAD_PIVOT } from "./rig.js";
 import { MouthLayer } from "./mouth-layer.js";
+import { NoseLayer } from "./nose-layer.js";
 import { EyesLayer } from "./eyes-layer.js";
 import { BrowLayer } from "./brow-layer.js";
 import { createSurface } from "./surface.js";
@@ -14,6 +15,7 @@ export class FaceRenderer {
   constructor(image, createSurfaceImpl = createSurface) {
     this.image = image;
     this.mouth = new MouthLayer(createSurfaceImpl);
+    this.nose = new NoseLayer(createSurfaceImpl);
     this.eyes = new EyesLayer();
     this.brows = new BrowLayer(createSurfaceImpl);
   }
@@ -56,6 +58,10 @@ export class FaceRenderer {
 
     ctx.drawImage(this.image, dx, dy, box.width, box.height);
     this.mouth.draw(ctx, this.image, view, pose.mouth);
+    // Después de la boca: el parche de la boca empieza en y=324 y vuelve a
+    // estampar la zona de la base de la nariz, así que dibujarla antes la
+    // borraría.
+    this.nose.draw(ctx, this.image, view, pose.breath.nasal);
     this.eyes.draw(ctx, this.image, view, pose.eyes);
     this.brows.draw(ctx, this.image, view, pose.brows);
     ctx.restore();

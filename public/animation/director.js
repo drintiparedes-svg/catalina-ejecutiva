@@ -104,7 +104,7 @@ export class PerformanceDirector {
     this.pose = {
       body: { x: 0, y: 0 },
       head: { x: 0, y: 0, tilt: 0 },
-      breath: { expand: 0, lift: 0 },
+      breath: { expand: 0, lift: 0, nasal: 0 },
       eyes: { left: 0, right: 0, gaze: { x: 0, y: 0 } },
       brows: [{ raise: 0, tilt: 0 }, { raise: 0, tilt: 0 }],
       mouth: this.mouth,
@@ -297,6 +297,10 @@ export class PerformanceDirector {
 
     this.pose.breath.expand = wave * .0019;
     this.pose.breath.lift = -wave * .55;
+    // La nariz sigue el mismo ciclo que el tórax, no uno propio: si el ala se
+    // abriera en un tiempo distinto del que se ensancha el pecho, se leería
+    // como dos movimientos sueltos en vez de como una respiración.
+    this.pose.breath.nasal = wave;
     this.pose.body.x = this.headNoise[2](this.time * .045) * .9;
     this.pose.body.y = this.headNoise[2](this.time * .031 + 4) * .5;
   }

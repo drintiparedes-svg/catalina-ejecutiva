@@ -35,6 +35,53 @@ export const MOUTH = {
   mask: { centerX: 705, centerY: 460, radiusX: 168, radiusY: 134, solid: .80 }
 };
 
+// Nariz. Medida sobre el retrato con perfiles de brillo del borde alar:
+//   · Eje: x≈705, el mismo de la boca.
+//   · Ala: borde exterior en x≈667 y x≈743 a la altura y≈335–350 → semiancho 38.
+//   · Dorso: se estrecha a un semiancho ≈24 hacia y≈310.
+//   · Base: y≈356, que es donde arranca la franja del labio superior.
+//
+// El parche se corta en y=354 a propósito: por debajo empieza el labio, y la
+// respiración basal no debe moverlo. Si esa zona se viera afectada, la imagen
+// transmitiría esfuerzo respiratorio en vez de ventilación tranquila.
+export const NOSE = {
+  centerX: 705,
+  alarHalfWidth: 38,
+
+  // Peso del desplazamiento por altura. Es el gradiente vertical: dorso casi
+  // inmóvil como ancla visual, máximo en el ala, y de vuelta a cero antes del
+  // labio. Entre anclas se interpola con suavidad, sin fronteras duras.
+  perfilY: [
+    { y: 276, peso: 0 },      // dorso alto: inmóvil
+    { y: 292, peso: .05 },    // dorso: 0–5 %
+    { y: 306, peso: .16 },    // pared lateral superior: 10–20 %
+    { y: 320, peso: .42 },    // pared lateral inferior: 30–50 %
+    { y: 334, peso: .82 },
+    { y: 342, peso: 1 },      // ala: amplitud máxima
+    { y: 349, peso: .55 },
+    { y: 354, peso: 0 }       // borde inferior: el labio no se toca
+  ],
+
+  // Peso por distancia al eje. La columela y la línea media se mueven poco
+  // (5–15 %), el máximo está en el borde alar y se apaga en el tejido
+  // perinasal.
+  columelaPeso: .10,
+  columelaAncho: 10,
+  alcance: 60,
+
+  // El parche lleva un margen estático por los cuatro lados: el campo ya vale
+  // cero antes de llegar al borde (fuera de `alcance` en horizontal, fuera del
+  // primer y último ancla de `perfilY` en vertical), así que lo que se vuelve a
+  // estampar ahí es idéntico al original y no puede aparecer una costura.
+  patch: { x: 634, y: 268, width: 142, height: 96 },
+  // La máscara es sólo un seguro contra el error de remuestreo en el margen, no
+  // el recorte de la nariz. Ha de ser opaca sobre todo el ala: una elipse
+  // centrada en la nariz deja las alas en sus esquinas inferolaterales, que es
+  // su punto más lejano, y con un radio corto las borraba justo donde ocurre
+  // todo el movimiento.
+  mask: { centerX: 705, centerY: 316, radiusX: 72, radiusY: 54, solid: .88 }
+};
+
 export const EYES = [
   {
     // Ojo a la izquierda en pantalla.
