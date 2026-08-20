@@ -290,6 +290,7 @@
         <button data-zoom="4.6" aria-pressed="false">Boca</button>
         <button data-zoom="5.4" aria-pressed="false">Nariz</button>
         <button data-zoom="3.6" aria-pressed="false">Ojos</button>
+        <button data-zoom="1.7" aria-pressed="false">Cabellera</button>
       </div>
     </section>
 
@@ -385,6 +386,25 @@
         <input type="range" id="sRelieve" min="0" max="30" value="5" aria-label="Realce de luz del ala">
       </div>
       <div class="control">
+        <div class="control-cabecera"><span>Brisa en el pelo</span><span id="vBrisa">7.0</span></div>
+        <input type="range" id="sBrisa" min="0" max="300" value="70" aria-label="Recorrido de la punta del pelo">
+      </div>
+      <div class="control">
+        <div class="control-cabecera"><span>Velocidad del aire</span><span id="vBrisaVel">0.16</span></div>
+        <input type="range" id="sBrisaVel" min="2" max="80" value="16" aria-label="Velocidad de la brisa">
+      </div>
+      <div class="control">
+        <div class="control-cabecera"><span>Retardo de la onda</span><span id="vBrisaRet">1.35</span></div>
+        <input type="range" id="sBrisaRet" min="0" max="400" value="135" aria-label="Retardo de la onda al bajar por el pelo">
+      </div>
+      <div class="control">
+        <div class="control-cabecera"><span>Arco de la punta</span><span id="vBrisaElev">0.22</span></div>
+        <input type="range" id="sBrisaElev" min="0" max="80" value="22" aria-label="Cuánto sube la punta al desplazarse">
+      </div>
+      <p class="nota">El <b>retardo</b> es lo que separa una brisa de un limpiaparabrisas: con 0 el mechón
+        entero bascula a la vez. Súbelo hasta que se vea la onda bajar de la raíz a la punta.</p>
+
+      <div class="control">
         <div class="control-cabecera"><span>Fase respiratoria</span><span id="vFase">ciclo</span></div>
         <input type="range" id="sFase" min="-1" max="100" value="-1" aria-label="Congelar la fase respiratoria">
       </div>
@@ -422,7 +442,10 @@ const FOCOS = {
   "2.1": { x: 705, y: 330 },
   "4.6": { x: 705, y: 408 },
   "5.4": { x: 705, y: 330 },
-  "3.6": { x: 703, y: 248 }
+  "3.6": { x: 703, y: 248 },
+  // La zona baja del pelo, con los dos mechones dentro del cuadro: el
+  // movimiento hay que juzgarlo comparando un lado con el otro.
+  "1.7": { x: 704, y: 640 }
 };
 
 // Secuencia de la frase. Cada entrada es un símbolo y su duración en
@@ -648,7 +671,11 @@ const MANDOS = [
   { id: "sLabio",    lectura: "vLabio",    clave: "lipEvert",  escala: 10,  decimales: 1 },
   { id: "sNasal",    lectura: "vNasal",    clave: "nasalApertura", escala: 10,  decimales: 1 },
   { id: "sNasalY",   lectura: "vNasalY",   clave: "nasalDescenso", escala: 100, decimales: 2 },
-  { id: "sRelieve",  lectura: "vRelieve",  clave: "nasalRelieve",  escala: 100, decimales: 2 }
+  { id: "sRelieve",  lectura: "vRelieve",  clave: "nasalRelieve",  escala: 100, decimales: 2 },
+  { id: "sBrisa",     lectura: "vBrisa",     clave: "brisaAmplitud",  escala: 10,  decimales: 1 },
+  { id: "sBrisaVel",  lectura: "vBrisaVel",  clave: "brisaVelocidad", escala: 100, decimales: 2 },
+  { id: "sBrisaRet",  lectura: "vBrisaRet",  clave: "brisaRetardo",   escala: 100, decimales: 2 },
+  { id: "sBrisaElev", lectura: "vBrisaElev", clave: "brisaElevacion", escala: 100, decimales: 2 }
 ];
 
 // Congelar la respiración. Con el ciclo corriendo es casi imposible juzgar una
@@ -689,7 +716,11 @@ document.querySelector("#copiarTuning").addEventListener("click", async () => {
     // No tiene deslizador —la asimetría es anatómica, no se afina a ojo— pero
     // tiene que salir aquí: la capa de la nariz lo lee en cada cuadro, y pegar
     // un bloque sin él dejaría el valor sin definir.
-    "  nasalAsimetria: " + TUNING.nasalAsimetria.toFixed(2)
+    "  nasalAsimetria: " + TUNING.nasalAsimetria.toFixed(2) + ",",
+    "  brisaAmplitud: " + TUNING.brisaAmplitud.toFixed(1) + ",",
+    "  brisaVelocidad: " + TUNING.brisaVelocidad.toFixed(2) + ",",
+    "  brisaRetardo: " + TUNING.brisaRetardo.toFixed(2) + ",",
+    "  brisaElevacion: " + TUNING.brisaElevacion.toFixed(2)
   ].join("\n");
   try {
     await navigator.clipboard.writeText(bloque);

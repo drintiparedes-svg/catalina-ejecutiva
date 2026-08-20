@@ -109,4 +109,44 @@ export const BROWS = [
 ];
 
 // Pivote del giro de cabeza: base del cráneo, no el centro del lienzo.
+// Cabellera. Medida sobre el retrato con perfiles de luz por fila:
+//   · Mechón izquierdo: del x≈329 en y=460 al x≈222 en y=740; se abre al caer.
+//   · Mechón derecho:   del x≈1051 en y=460 al x≈1190 en y=720.
+//   · Entre ambos, x 576..928, está el cuerpo, y ahí no se toca nada.
+//   · El destello decorativo vive en x≈1350, y≈700: queda fuera de los parches
+//     a propósito, porque una brisa no mueve un adorno.
+//
+// Sólo se mueve de la altura del hombro hacia abajo. Arriba el pelo va pegado
+// a la cabeza y ya sigue sus giros; moverlo también ahí lo despegaría del
+// cráneo, que es el error que delata este tipo de animación.
+//
+// Los parches empiezan en y=540 aunque el anclaje esté en 486: a esa altura el
+// recorrido es de 0,3 px, invisible, y recomponer las 74 filas de encima para
+// eso costaría un tercio del trabajo de cada cuadro.
+export const HAIR = {
+  // El pelo queda sujeto aquí y se suelta hacia abajo.
+  anclaY: 486,
+  mechones: [
+    {
+      nombre: "izquierdo",
+      // Con margen de sobra por fuera: al desplazarse, el mechón entra en él.
+      // El margen es fondo negro, así que estirarlo no se ve.
+      patch: { x: 176, y: 540, width: 452, height: 228 },
+      // El campo vale 1 en el pelo suelto y se apaga antes de llegar al cuerpo.
+      bordeLibre: 520,
+      bordeInterior: 624,
+      semilla: 101
+    },
+    {
+      nombre: "derecho",
+      patch: { x: 884, y: 540, width: 400, height: 228 },
+      bordeLibre: 992,
+      bordeInterior: 888,
+      // Semilla distinta: con la misma, los dos mechones se moverían iguales y
+      // el aire no hace eso.
+      semilla: 211
+    }
+  ]
+};
+
 export const HEAD_PIVOT = { x: 705, y: 330 };

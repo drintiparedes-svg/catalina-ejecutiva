@@ -7,6 +7,7 @@
 import { IMAGE, HEAD_PIVOT } from "./rig.js";
 import { MouthLayer } from "./mouth-layer.js";
 import { NoseLayer } from "./nose-layer.js";
+import { HairLayer } from "./hair-layer.js";
 import { EyesLayer } from "./eyes-layer.js";
 import { BrowLayer } from "./brow-layer.js";
 import { createSurface } from "./surface.js";
@@ -16,6 +17,7 @@ export class FaceRenderer {
     this.image = image;
     this.mouth = new MouthLayer(createSurfaceImpl);
     this.nose = new NoseLayer(createSurfaceImpl);
+    this.hair = new HairLayer(createSurfaceImpl);
     this.eyes = new EyesLayer();
     this.brows = new BrowLayer(createSurfaceImpl);
   }
@@ -57,6 +59,9 @@ export class FaceRenderer {
     ctx.translate(-pivotX, -pivotY);
 
     ctx.drawImage(this.image, dx, dy, box.width, box.height);
+    // Antes que la cara: el parche del pelo se solapa con el de la boca por el
+    // lado del mentón, y estampándolo después le borraría el gesto.
+    this.hair.draw(ctx, this.image, view, pose.hair);
     this.mouth.draw(ctx, this.image, view, pose.mouth);
     // Después de la boca: el parche de la boca empieza en y=324 y vuelve a
     // estampar la zona de la base de la nariz, así que dibujarla antes la

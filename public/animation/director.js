@@ -105,6 +105,7 @@ export class PerformanceDirector {
       body: { x: 0, y: 0 },
       head: { x: 0, y: 0, tilt: 0 },
       breath: { expand: 0, lift: 0, nasal: 0 },
+      hair: { tiempo: 0, intensidad: 1 },
       eyes: { left: 0, right: 0, gaze: { x: 0, y: 0 } },
       brows: [{ raise: 0, tilt: 0 }, { raise: 0, tilt: 0 }],
       mouth: this.mouth,
@@ -301,6 +302,12 @@ export class PerformanceDirector {
     // abriera en un tiempo distinto del que se ensancha el pecho, se leería
     // como dos movimientos sueltos en vez de como una respiración.
     this.pose.breath.nasal = wave;
+
+    // La brisa no depende de la respiración ni del turno: es el aire de la
+    // habitación, y sigue ahí mientras nadie habla. Sólo se le pasa el reloj;
+    // la forma de la onda la resuelve la capa, que es la que sabe a qué
+    // profundidad está cada franja de pelo.
+    this.pose.hair.tiempo = this.time;
     this.pose.body.x = this.headNoise[2](this.time * .045) * .9;
     this.pose.body.y = this.headNoise[2](this.time * .031 + 4) * .5;
   }

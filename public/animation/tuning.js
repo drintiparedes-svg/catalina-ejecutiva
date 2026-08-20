@@ -45,5 +45,18 @@ export const TUNING = {
   // La anatomía real no es simétrica. Se aplica una diferencia fija entre
   // lados, nunca una alternancia visible: el ciclo nasal existe, pero verlo
   // alternar en pantalla parecería un fallo.
-  nasalAsimetria: .94
+  nasalAsimetria: .94,
+
+  // Brisa en la cabellera.
+  //
+  // Lo que distingue una brisa de un limpiaparabrisas no es la amplitud sino
+  // el retardo: en el pelo real la ráfaga viaja desde el nacimiento hacia las
+  // puntas, así que cada franja va un poco por detrás de la de encima. Con
+  // retardo 0 el mechón entero bascula a la vez y se ve artificial por mucho
+  // que se baje la amplitud.
+  brisaAmplitud: 7,      // px que se desplaza la punta en una ráfaga fuerte
+  brisaVelocidad: .16,   // cada cuánto cambia el aire; bajo es aire lento
+  brisaRetardo: 1.35,    // cuánto tarda la onda en bajar de la raíz a la punta
+  brisaElevacion: .22    // parte del recorrido lateral que sube: al oscilar,
+                         // la punta describe un arco, no una recta
 };
