@@ -59,9 +59,16 @@
       <button id="togglePanel" aria-pressed="false" title="Abre el historial de la conversación">Historial</button>
       <button id="meetMode" title="Oculta los controles para capturar la ventana">Modo Meet</button>
     </nav>
+    <!-- Señal de escucha del modo reunión. Es lo único que se ve en ese modo
+         aparte de la cara: sin ella no hay forma de saber si está oyendo. -->
+    <div class="oyendo" id="oyendo" hidden>
+      <span class="oyendo-punto"></span>
+      <span id="oyendoTexto">Escuchando…</span>
+    </div>
+
     <button class="exit-meet" id="exitMeet" aria-label="Salir del modo Meet">Mostrar controles</button>
   </main>
   <audio id="remoteAudio" autoplay></audio>
-  <script type="module" src="app.js?v=23"></script>
+  <script type="module" src="app.js?v=24"></script>
 </body>
 </html>

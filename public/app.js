@@ -21,6 +21,8 @@ const ui = {
   status: document.querySelector("#status"),
   signal: document.querySelector("#signal"),
   caption: document.querySelector("#caption"),
+  oyendo: document.querySelector("#oyendo"),
+  oyendoTexto: document.querySelector("#oyendoTexto"),
   imagen: document.querySelector("#imagen"),
   imagenFoto: document.querySelector("#imagenFoto"),
   imagenPie: document.querySelector("#imagenPie"),
@@ -297,9 +299,20 @@ function setStatus(text) {
 // envía audio y no se paga por escuchar; a cambio responde al instante y con su
 // voz, sin tener que reconectar.
 const escucha = new EscuchaDeReunion({
-  alTranscribir: () => hayActividad(),   // la reunión cuenta como vida
-  alLlamarla: (peticion, contexto) => atenderLlamado(peticion, contexto)
+  alTranscribir: texto => {
+    hayActividad();                       // la reunión cuenta como vida
+    señalar("Escuchando · " + texto, "");  // se ve lo último entendido
+  },
+  alLlamarla: (peticion, contexto) => atenderLlamado(peticion, contexto),
+  alFallar: motivo => señalar(motivo, "problema")
 });
+
+// La señal de escucha es lo único visible en modo reunión. Muestra lo último
+// que entendió el navegador, que además sirve para ver si transcribe bien.
+function señalar(texto, estado = "") {
+  ui.oyendoTexto.textContent = texto;
+  ui.oyendo.dataset.estado = estado;
+}
 
 let enModoMeet = false;
 let micCortadoPorMeet = false;
@@ -309,22 +322,33 @@ function entrarEnModoMeet() {
   if (enModoMeet) return;
   enModoMeet = true;
 
+  ui.oyendo.hidden = false;
+
   if (!escuchaDisponible()) {
     // Sin reconocimiento de voz el modo sigue sirviendo para capturar la
     // pantalla, pero no puede escuchar. Mejor decirlo que fingir que escucha.
-    mostrarAviso("Este navegador no puede transcribir la reunión. Prueba con Chrome.");
+    señalar("Este navegador no puede transcribir. Usa Chrome.", "problema");
+    return;
+  }
+  if (!connected) {
+    señalar("Inicia la conversación antes de entrar en reunión", "problema");
     return;
   }
 
-  // Se corta el micrófono hacia el modelo: quien escucha ahora es el navegador.
-  if (connected && sesion && !sesion.muted) {
-    sesion.toggleMute();
+  // Se deja de enviar audio al modelo sin apagar la pista: quien escucha ahora
+  // es el navegador, y con la pista apagada no oiría nada.
+  if (sesion && !sesion.muted) {
+    sesion.pausarEnvio(true);
     micCortadoPorMeet = true;
     ui.mute.textContent = "Activar micrófono";
   }
   escucha.olvidar();
-  escucha.empezar();
-  setStatus("En reunión · di «Catalina» para hablarme");
+  if (escucha.empezar()) {
+    señalar("Escuchando · di «Catalina» para hablarme");
+    setStatus("En reunión");
+  } else {
+    señalar("No se pudo iniciar la escucha", "problema");
+  }
 }
 
 function salirDeModoMeet() {
@@ -333,9 +357,10 @@ function salirDeModoMeet() {
   enModoMeet = false;
 
   escucha.parar();
+  ui.oyendo.hidden = true;
   // Sólo se devuelve el micrófono si fue este modo quien lo quitó.
-  if (micCortadoPorMeet && connected && sesion?.muted) {
-    sesion.toggleMute();
+  if (micCortadoPorMeet && sesion?.muted) {
+    sesion.pausarEnvio(false);
     ui.mute.textContent = "Silenciar micrófono";
   }
   micCortadoPorMeet = false;
@@ -346,7 +371,7 @@ function salirDeModoMeet() {
 async function atenderLlamado(peticion, contexto) {
   if (!connected || !sesion) {
     // Sin sesión abierta no puede contestar; se avisa en vez de perder lo dicho.
-    setStatus("Me llamaste, pero la sesión está cerrada");
+    señalar("Me llamaste, pero la sesión está cerrada", "problema");
     return;
   }
   hayActividad();
@@ -364,7 +389,8 @@ async function atenderLlamado(peticion, contexto) {
     "La transcripción es automática y puede tener errores: si algo no cuadra, dilo en vez de darlo por cierto."
   ].join("\n");
 
-  sesion.enviarTexto(mensaje);
+  const enviado = sesion.enviarTexto(mensaje);
+  señalar(enviado ? `Te oí: «${peticion}»` : "No pude enviar tu pregunta", enviado ? "respondiendo" : "problema");
   setStatus("Respondiendo…");
 }
 

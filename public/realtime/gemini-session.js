@@ -241,6 +241,16 @@ export class GeminiSession {
     this.micStream?.getAudioTracks().forEach(pista => { pista.enabled = !this.muted; });
     return this.muted;
   }
+
+  // Corta lo que se envía sin apagar la pista del micrófono.
+  //
+  // En modo reunión el navegador tiene que seguir oyendo para transcribir, y
+  // apagar la pista se lo pone difícil. Aquí no hace falta tocarla: basta con
+  // dejar de mandar, porque el envío ya mira esta bandera en cada bloque.
+  pausarEnvio(pausado) {
+    this.muted = pausado;
+    return this.muted;
+  }
 }
 
 // Interpolación lineal. Basta para voz: el contenido por encima de 8 kHz que se

@@ -186,6 +186,15 @@ export class RealtimeSession {
     this.micStream?.getAudioTracks().forEach(track => { track.enabled = !this.muted; });
     return this.muted;
   }
+
+  // Con WebRTC la única forma de dejar de enviar es apagar la pista: el audio
+  // lo gestiona el navegador y no pasa por aquí. En modo reunión eso puede
+  // estorbar al reconocimiento de voz, así que ahí conviene usar Gemini.
+  pausarEnvio(pausado) {
+    this.muted = pausado;
+    this.micStream?.getAudioTracks().forEach(track => { track.enabled = !pausado; });
+    return this.muted;
+  }
 }
 
 function assertVoiceEnvironment() {

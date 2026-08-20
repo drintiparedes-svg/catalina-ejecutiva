@@ -23,9 +23,10 @@ const normalizar = texto => String(texto ?? "")
 const NOMBRE = /\b(catalina|catalin|catlina|katalina)\b/;
 
 export class EscuchaDeReunion {
-  constructor({ alLlamarla, alTranscribir } = {}) {
+  constructor({ alLlamarla, alTranscribir, alFallar } = {}) {
     this.alLlamarla = alLlamarla;
     this.alTranscribir = alTranscribir;
+    this.alFallar = alFallar;
     this.reconocimiento = null;
     this.activa = false;
     this.transcripcion = [];
@@ -60,10 +61,18 @@ export class EscuchaDeReunion {
     // avisar.
     r.onend = () => { if (this.activa) { try { r.start(); } catch {} } };
     r.onerror = evento => {
-      // «no-speech» y «aborted» son normales; el resto conviene verlo.
-      if (!["no-speech", "aborted"].includes(evento.error)) {
-        console.warn("Escucha de reunión:", evento.error);
-      }
+      // «no-speech» y «aborted» son normales; el resto hay que enseñarlo. Que
+      // fallara en silencio fue justo lo que hizo imposible saber por qué el
+      // modo reunión no reaccionaba.
+      if (["no-speech", "aborted"].includes(evento.error)) return;
+      console.warn("Escucha de reunión:", evento.error);
+      const motivos = {
+        "not-allowed": "El navegador no dio permiso para escuchar",
+        "service-not-allowed": "El navegador bloqueó el reconocimiento de voz",
+        "audio-capture": "No se pudo acceder al micrófono",
+        network: "El reconocimiento de voz se quedó sin red"
+      };
+      this.alFallar?.(motivos[evento.error] || `Fallo de escucha: ${evento.error}`);
     };
 
     this.reconocimiento = r;

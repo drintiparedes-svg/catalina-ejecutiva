@@ -238,3 +238,21 @@ button.primary { border-color: rgba(109,228,255,.45); background: linear-gradien
   .turno[data-vivo="true"] .turno-texto::after { animation: none; }
 }
 .referencia-nota { list-style: none; margin-left: -18px; margin-top: 12px; color: rgba(209,229,239,.5); font-size: 11.5px; line-height: 1.45; }
+
+/* Señal de escucha en modo reunión.
+   Discreta y arriba a la izquierda, para no estorbar en una captura de
+   pantalla, pero visible: sin ella no había forma de saber si el modo estaba
+   oyendo o se había caído en silencio. */
+.oyendo {
+  position: absolute; top: calc(18px + env(safe-area-inset-top));
+  left: calc(20px + env(safe-area-inset-left));
+  display: none; align-items: center; gap: 8px; max-width: min(460px, 60vw);
+  padding: 7px 13px; border: 1px solid rgba(180,225,245,.16); border-radius: 999px;
+  background: rgba(4,12,20,.6); backdrop-filter: blur(16px);
+  color: rgba(233,246,252,.82); font-size: 12px; line-height: 1.3;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.meet .oyendo { display: flex; }
+.oyendo-punto { flex: none; width: 7px; height: 7px; border-radius: 50%; background: #34C759; animation: pulse 1.8s infinite; }
+.oyendo[data-estado="problema"] .oyendo-punto { background: #FF9F0A; animation: none; }
+.oyendo[data-estado="respondiendo"] .oyendo-punto { background: #73f5ff; }
