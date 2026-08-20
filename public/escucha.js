@@ -29,6 +29,7 @@ export class EscuchaDeReunion {
     this.alFallar = alFallar;
     this.reconocimiento = null;
     this.activa = false;
+    this.sorda = false;        // mientras Catalina habla, no se apunta nada
     this.transcripcion = [];
   }
 
@@ -45,6 +46,11 @@ export class EscuchaDeReunion {
       for (let i = evento.resultIndex; i < evento.results.length; i += 1) {
         const resultado = evento.results[i];
         if (!resultado.isFinal) continue;
+        // Mientras ella habla se ignora todo. Su voz sale por los altavoces y
+        // vuelve a entrar por el micrófono: sin esto, su propia respuesta
+        // acabaría en la transcripción de la reunión, y si en ella dijera su
+        // nombre se despertaría a sí misma en bucle.
+        if (this.sorda) continue;
         const texto = resultado[0].transcript.trim();
         if (!texto) continue;
 
@@ -101,6 +107,12 @@ export class EscuchaDeReunion {
     return entero.length <= maxCaracteres
       ? entero
       : "…" + entero.slice(-maxCaracteres);
+  }
+
+  // Se llama mientras Catalina habla y un momento después, para que la cola de
+  // su propia voz no se cuele.
+  ensordecer(valor) {
+    this.sorda = Boolean(valor);
   }
 
   parar() {

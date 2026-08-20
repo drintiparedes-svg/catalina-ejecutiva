@@ -96,6 +96,12 @@ const manejadores = {
   },
   onPhase: phase => {
     hayActividad();
+    // En reunión deja de apuntar en cuanto empieza a hablar: lo que salga por
+    // los altavoces es suyo, no de la reunión.
+    if (enModoMeet && phase === "speaking") {
+      escucha.ensordecer(true);
+      señalar("Respondiendo…", "respondiendo");
+    }
     if (phase !== "speaking") faseDeSesion = phase;
     director.setState(phase);
     // La expresión sigue al turno: se concentra mientras piensa y se recompone
@@ -998,7 +1004,16 @@ function seguirFinDeTurno(lectura, now) {
     respuestaCerrada = false;
     silencioDesde = 0;
     director.setState(faseDeSesion === "idle" ? "listening" : faseDeSesion);
-    setStatus("Te escucho");
+    setStatus(enModoMeet ? "En reunión" : "Te escucho");
+    // Terminó de hablar de verdad —lo decide el silencio real de la pista, no
+    // el fin de la generación—, así que vuelve a escuchar la reunión. El
+    // margen extra deja pasar la cola de su voz en la sala.
+    if (enModoMeet) {
+      setTimeout(() => {
+        escucha.ensordecer(false);
+        señalar("Escuchando · di «Catalina» para hablarme");
+      }, 700);
+    }
   }
 }
 
