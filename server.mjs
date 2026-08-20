@@ -183,9 +183,17 @@ const USO_DE_HERRAMIENTAS = [
   "Nunca describas una imagen que no apareció en pantalla, ni sustituyas la lámina por una descripción como si se estuviera viendo.",
   "Usa buscar_referencias para respaldar en la literatura lo que estés explicando.",
 
-  // Las búsquedas tardan entre uno y ocho segundos, y durante ese rato no sale
-  // audio. Sin avisar antes, el silencio parece que se cortó la llamada.
-  "Antes de usar cualquier herramienta, di en voz alta una frase corta de que vas a buscarlo, y sigue hablando de lo que sepas mientras tanto. No te quedes en silencio esperando el resultado.",
+  // Medido: la lámina tarda 1,9 s y las referencias 1,6 s, que en una
+  // conversación no se notan. Las de mapa son las que pueden llegar al tope de
+  // seis segundos, y ese silencio sí parece una llamada cortada.
+  //
+  // Sólo se avisa en ésas. Anunciar todas la volvía repetitiva, y decir «voy a
+  // buscarlo» para algo que llega en un segundo y medio suena a relleno.
+  //
+  // Tampoco se le pide que siga hablando mientras espera: no puede. Al emitir
+  // la llamada a la herramienta su turno termina, y se queda esperando el
+  // resultado. Lo único que cabe es una frase antes.
+  "Antes de buscar farmacias, hospitales o clínicas, o de calcular cómo llegar a un sitio, di una frase corta —«déjame ver», «un momento»— para que no parezca que se cortó. Sólo en ésas: para las láminas y las referencias no avises, responde y ya.",
 
   // Sin esto el modelo llama a como_llegar a ciegas y la herramienta responde
   // que falta el origen, lo que gasta un turno entero en nada.
@@ -1091,7 +1099,10 @@ async function buscarSalud(req, res) {
       tipo,
       comuna: String(peticion.comuna || "").trim(),
       lat: Number(peticion.lat),
-      lon: Number(peticion.lon)
+      lon: Number(peticion.lon),
+      // Lo pide el navegador al conectar, para dejar la zona en caché antes de
+      // que nadie pregunte. Como no hay nadie esperando, puede tardar.
+      fondo: peticion.fondo === true
     }));
   } catch (error) {
     console.error("salud:", error.message);

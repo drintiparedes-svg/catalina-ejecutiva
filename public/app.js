@@ -69,6 +69,7 @@ const manejadores = {
   onConnected: () => {
     connected = true;
     hayActividad();
+    calentarUbicacion();   // deja lista la zona antes de que nadie pregunte
     mostrarAviso("");   // si el intento anterior falló, su aviso ya no aplica
     ui.signal.classList.add("online");
     ui.connect.textContent = "Finalizar";
@@ -180,6 +181,12 @@ async function conectar() {
 // paga: con OpenAI son unos tres dólares por hora de silencio. Antes no había
 // nada que la cerrara, así que alejarse del equipo costaba dinero sin dar nada
 // a cambio.
+// Tope de espera de una herramienta antes de rendirse. Mientras corre, quien
+// está al otro lado no oye nada: el silencio es parte del costo, así que se
+// paga acotado. El servidor tiene su propio tope, más corto; éste es la red de
+// seguridad por si el que no responde es el servidor.
+const ESPERA_HERRAMIENTA_MS = 9000;
+
 const INACTIVIDAD_MS = 2 * 60 * 1000;
 const AVISO_MS = 15 * 1000;          // se avisa quince segundos antes de colgar
 let relojInactividad = null;
@@ -466,8 +473,39 @@ function ubicacionActual() {
       // Si lo deniegan o tarda, se sigue con la comuna que haya dicho la
       // persona: quedarse sin responder sería peor.
       () => resolver(null),
-      { timeout: 8000, maximumAge: 300000 }
+      // Cuatro segundos, no ocho: esta espera va antes de la búsqueda y se suma
+      // a ella, así que ocho segundos de GPS lento eran ocho segundos callada
+      // antes siquiera de empezar a buscar.
+      { timeout: 4000, maximumAge: 300000 }
     );
+  });
+}
+
+// Se pide la ubicación en cuanto arranca la conversación, no cuando hace falta.
+// Con `maximumAge` la respuesta queda disponible durante cinco minutos, así que
+// la primera búsqueda ya no paga el permiso ni el arranque del GPS.
+//
+// Y con ella se dejan pedidas al servidor las consultas de la zona: la caché de
+// /salud dura un día, y quien paga la primera espera deja de ser la persona que
+// preguntó. Va todo en segundo plano; si falla, no se avisa de nada, porque no
+// se ha pedido nada todavía.
+function calentarUbicacion() {
+  ubicacionActual().then(ubicacion => {
+    if (!ubicacion) return;
+    ubicacionConocida = ubicacion;
+    // De uno en uno, no los tres a la vez: son consultas pesadas contra un
+    // servicio comunitario, y aquí no corre prisa ninguna.
+    (async () => {
+      for (const tipo of ["farmacia", "hospital", "clinica"]) {
+        try {
+          await fetch("/salud", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ tipo, lat: ubicacion.lat, lon: ubicacion.lon, fondo: true })
+          });
+        } catch { /* si no se puede, la consulta en vivo lo intentará */ }
+      }
+    })();
   });
 }
 
@@ -482,6 +520,10 @@ async function buscarSaludCerca(argumentos) {
     const respuesta = await fetch("/salud", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      // Sin tope, esta espera era indefinida: medido en Santiago, una zona sin
+      // consultar antes podía tener a Catalina callada más de cuarenta y cinco
+      // segundos. Vale más contestar que no se pudo.
+      signal: AbortSignal.timeout(ESPERA_HERRAMIENTA_MS),
       body: JSON.stringify({
         tipo,
         comuna: argumentos.comuna || "",
@@ -505,6 +547,12 @@ async function buscarSaludCerca(argumentos) {
   } catch (error) {
     console.error(error);
     setStatus("Te escucho");
+    // Distinguir el corte por tiempo del fallo de red importa: lo que Catalina
+    // diga es distinto. Si se agotó la espera, el mapa puede estar bien y sólo
+    // lento, y volver a intentarlo tiene sentido.
+    if (error?.name === "TimeoutError" || error?.name === "AbortError") {
+      return { ok: false, error: "El mapa está tardando demasiado; se puede reintentar en un momento." };
+    }
     return { ok: false, error: "Falló la conexión al buscar" };
   }
 }
