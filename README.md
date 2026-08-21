@@ -57,21 +57,37 @@ la piel real medida sobre la imagen, nunca superponiendo dibujos.
   cabeceos ligados a la energía de la voz; asentimientos cortos mientras
   escucha. El movimiento base es ruido de valor en varias octavas, no un bucle
   de senos, para que no se repita.
-- **Melena.** Es lo único que mueve el aire, y se mueve *sola*: el busto está
-  clavado. Cada mitad de la cabellera se redibuja en franjas horizontales
-  estiradas alrededor de su línea de anclaje —el contorno del rostro arriba, el
-  borde del hombro abajo—, de modo que la raíz no se desplaza ni un píxel y el
-  recorrido crece hasta la punta, que llega a unos 10 px. El viento no es
-  uniforme: dos ondas que **viajan** hacia las puntas, con fase y ganancia
-  distintas en cada lado, más micro-ráfagas de ataque rápido y caída lenta cada
-  pocos segundos. Y la melena va por detrás de la cabeza: cuando el cráneo
-  arranca, el pelo llega tarde.
+- **Melena.** Es lo único que mueve el aire. Cada mitad se redibuja en franjas
+  horizontales y dentro de cada franja el pelo suelto viaja **en bloque**, unos
+  26 px con la ráfaga a tope: es una masa que se mece, no una goma que se
+  estira. Toda la diferencia con la parte sujeta se resuelve en una franja de
+  transición estrecha pegada al anclaje, que es donde el pelo se apoya.
+
+  El anclaje está medido sobre la fotografía y arriba es el contorno del rostro,
+  pero de los hombros para abajo es la **silueta del busto**, no el borde del
+  pelo: el mechón que cae sobre el hombro tapa cuerpo, y moverlo movería el
+  cuerpo con él. Por eso ese pelo se queda quieto —como se queda en una persona—
+  y sólo se mece lo que cuelga por fuera. Ni un píxel del torso se redibuja.
+
+  El viento no es uniforme: dos ondas que **viajan** hacia las puntas, con fase
+  y ganancia distintas en cada lado, más micro-ráfagas de ataque rápido y caída
+  lenta cada pocos segundos. Y la melena va por detrás de la cabeza: cuando el
+  cráneo arranca, el pelo llega tarde.
 - **Cuello.** El gesto de cabeza movía antes la fotografía entera y con ella se
   balanceaba el busto, que era justo lo que delataba al avatar: un torso no
-  acompaña a la cabeza. Ahora el recorrido se apaga entre el mentón y la
-  clavícula —lo absorbe el cuello— y de ahí para abajo la imagen está inmóvil.
+  acompaña a la cabeza. El gesto es el mismo de siempre, pero ahora se apaga
+  entre el mentón y la base del cuello —lo absorbe el cuello— y de ahí para
+  abajo la imagen no se toca. El corte queda por encima de la clavícula a
+  propósito: bastaba con rozar el pecho para que se moviera.
+
   Ni respira: la respiración escalaba el retrato completo y se leía como un
   latido de la imagen, no como un pecho.
+
+  Todo lo que se mueve se **traslada**, nunca se estira. Medido en Chromium, una
+  franja redibujada y corrida sale idéntica a la fotografía dibujada de una
+  pasada; estirarla, en cambio, recompone la trama de puntos y la deja más
+  blanda. Por eso el estiramiento sólo existe en la franja de transición del
+  pelo, y por eso el retrato se ve tan nítido como la fotografía original.
 
 En reposo el rostro sigue vivo: parpadea, mira alrededor, traga, entreabre los
 labios antes de tomar el turno y la brisa le mueve el pelo.
@@ -167,9 +183,9 @@ de la API. El panel **Calibración de apertura** mueve en vivo los cinco valores
 de `public/animation/tuning.js`; cuando la boca se vea bien, «Copiar valores»
 deja el bloque listo para pegar en ese archivo y que el cambio sea permanente.
 
-El panel **Brisa en el pelo** hace lo mismo con la melena: «Alcance» es el
-recorrido de la punta en píxeles de la fotografía y «Velocidad» el temple de las
-ondas. Ambos escriben sobre `BRISA`, en `public/animation/wind.js`, que es el
+El panel **Brisa en el pelo** hace lo mismo con la melena: «Alcance» es lo que
+se desplaza el pelo suelto, en píxeles de la fotografía, y «Velocidad» el temple
+de las ondas. Ambos escriben sobre `BRISA`, en `public/animation/wind.js`, que es el
 objeto que lee el pelo en cada cuadro; para dejarlo fijo basta con copiar los
 dos números en ese archivo.
 

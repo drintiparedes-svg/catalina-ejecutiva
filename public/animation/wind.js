@@ -28,9 +28,10 @@ const TAU = Math.PI * 2;
 // propósito: el banco de pruebas (/banco.html) los mueve con deslizadores para
 // afinar mirando el pelo en vez de recompilar a ciegas.
 export const BRISA = {
-  // Recorrido lateral de la punta con la ráfaga en su máximo. Ocho píxeles
-  // sobre 1408 son medio dedo de melena: se ve el movimiento, no el truco.
-  alcance: 10,
+  // Recorrido lateral de la melena suelta con la ráfaga en su máximo, medido
+  // en la punta. La melena entera se traslada este recorrido —no se estira—,
+  // así que el número es lo que de verdad se ve moverse.
+  alcance: 26,
   // Multiplicador de la velocidad de las ondas. 1 es el temple natural.
   velocidad: 1
 };
@@ -39,21 +40,22 @@ export const BRISA = {
 // rompe la regularidad. `length` es la longitud de onda a lo largo del mechón,
 // en píxeles: cuanto más corta, más se riza el movimiento.
 const ONDAS = [
-  { period: 5.9, length: 380, weight: .60 },
-  { period: 3.2, length: 215, weight: .26 }
+  { period: 4.8, length: 380, weight: .60 },
+  { period: 2.7, length: 215, weight: .26 }
 ];
 const RUIDO_PESO = .32;
 const PESO_TOTAL = ONDAS.reduce((suma, onda) => suma + onda.weight, RUIDO_PESO);
 
-// Deformación distal: cuero cabelludo quieto, puntas sueltas. El exponente
-// retrasa la subida para que el movimiento no arranque a media cabeza.
+// Deformación distal: cuero cabelludo quieto, puntas sueltas. La curva es casi
+// recta a propósito; con un exponente alto el pelo de los lados de la cara
+// —que es el que se ve en pantalla pequeña— se quedaba muerto.
 const CUERO = 40;
-const PUNTAS = 780;
-const DISTAL_CURVA = 1.35;
+const PUNTAS = 700;
+const DISTAL_CURVA = 1.1;
 
 // Ráfagas. `FONDO` es la brisa permanente entre rachas; sin él el pelo se
-// quedaría completamente muerto en las pausas.
-const FONDO = .34;
+// quedaría completamente muerto en las pausas, que es como se veía antes.
+const FONDO = .46;
 const RAFAGA_CADA = [1.4, 5.2];
 const RAFAGA_DURA = [.9, 2.8];
 const RAFAGA_FUERZA = [.30, 1];

@@ -1,23 +1,20 @@
 // Deformación por franjas.
 //
-// Toda la vida del retrato ocurre sobre una sola fotografía: no hay huesos ni
-// malla, así que el movimiento se consigue volviendo a dibujar franjas
-// horizontales de la imagen, cada una con su propia transformación. Dos reglas
-// evitan las costuras:
+// El retrato es una sola fotografía y no hay malla que deformar, así que el
+// movimiento se consigue volviendo a dibujar franjas horizontales de la imagen,
+// cada una en un sitio ligeramente distinto. Tres reglas evitan que se note:
 //
-//   · Ninguna franja se traslada en bloque: se estira alrededor de un ancla.
-//     El punto anclado cae exactamente donde estaba y el resto se separa de él
-//     de forma proporcional a la distancia. Así la frontera entre lo que se
-//     mueve y lo que no queda inmóvil por construcción, sin máscaras ni
-//     degradados que disimulen el corte.
-//   · La copia estirada tapa siempre a la original. La franja se dibuja un
-//     píxel más alta de lo que mide para que el redondeo a píxeles de pantalla
-//     no deje una línea de fondo entre dos franjas contiguas.
+//   · Traslación, no estiramiento. Una franja movida en bloque conserva la
+//     trama de puntos exactamente como está; una estirada la recompone y se ve
+//     más blanda. Sólo se estira la franja de transición junto al anclaje, que
+//     es estrecha y cae donde el pelo se apoya en la cara o en el hombro.
+//   · Cada franja se dibuja un píxel más alta de lo que mide, para que el
+//     redondeo no deje una línea de fondo entre dos franjas contiguas.
 //
-// La altura de franja es el único compromiso: cuanto más fina, más suave es la
-// onda y más llamadas de dibujo por cuadro. Seis píxeles de imagen dan pasos de
-// menos de un píxel con la brisa a tope y unas trescientas llamadas por cuadro,
-// que un teléfono asume sin despeinarse.
+// Trasladar sí es gratis en definición: medido en Chromium, una franja
+// redibujada —quieta o corrida un número cualquiera de píxeles— sale idéntica a
+// la fotografía dibujada de una pasada. Lo que la ablanda es estirarla, porque
+// entonces cada punto de la trama se recompone entre dos vecinos.
 
 export const STRIP = 6;
 
@@ -41,7 +38,7 @@ export function sampleCurve(points, y) {
 // (shiftX, shiftY). Las coordenadas entran en píxeles de la imagen original y
 // salen en píxeles de pantalla a través de `view`.
 export function drawStrip(ctx, image, view, opciones) {
-  const { y, from, to, anchor, stretch = 1, shiftX = 0, shiftY = 0 } = opciones;
+  const { y, from, to, anchor = 0, stretch = 1, shiftX = 0, shiftY = 0 } = opciones;
   const width = to - from;
   if (width <= 0) return;
 

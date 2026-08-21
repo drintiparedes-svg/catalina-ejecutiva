@@ -378,14 +378,14 @@
     <section class="grupo">
       <p class="etiqueta">Brisa en el pelo</p>
       <div class="control">
-        <div class="control-cabecera"><span>Alcance (px)</span><span id="vAlcance">10.0</span></div>
-        <input type="range" id="sAlcance" min="0" max="240" value="100" aria-label="Alcance de la brisa">
+        <div class="control-cabecera"><span>Alcance (px)</span><span id="vAlcance">26.0</span></div>
+        <input type="range" id="sAlcance" min="0" max="600" value="260" aria-label="Alcance de la brisa">
       </div>
       <div class="control">
         <div class="control-cabecera"><span>Velocidad</span><span id="vVelocidad">1.00</span></div>
         <input type="range" id="sVelocidad" min="20" max="260" value="100" aria-label="Velocidad de la brisa">
       </div>
-      <p class="nota">El alcance es el recorrido de la <b>punta</b> del mechón en píxeles de la fotografía: la raíz no se mueve nunca y el busto tampoco. Los valores viven en <code>BRISA</code>, dentro de <code>public/animation/wind.js</code>.</p>
+      <p class="nota">El alcance es lo que se desplaza la <b>melena suelta</b>, en píxeles de la fotografía. La melena viaja entera: lo que está sujeto —el rostro, el hombro y el pelo que descansa sobre él— no se mueve. Los valores viven en <code>BRISA</code>, dentro de <code>public/animation/wind.js</code>.</p>
     </section>
 
     <p class="nota">La arcada superior tiene <b>altura fija</b>: al abrir más la boca no crecen los dientes, crece la cavidad de debajo. Por eso el porcentaje sube rápido al empezar a abrir y luego se estabiliza.</p>

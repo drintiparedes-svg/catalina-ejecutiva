@@ -70,32 +70,37 @@ export const HEAD_PIVOT = { x: 705, y: 330 };
 // falta saber dos cosas en cada altura, y las dos están medidas sobre la
 // fotografía:
 //
-//   `anchor`  Línea donde el pelo deja de ser libre: el contorno del rostro
-//             arriba, el cuello a la altura del mentón y el borde del busto
-//             abajo. Ahí el desplazamiento vale cero, así que ni la cara ni el
-//             hombro se mueven nunca. Lo que queda por fuera es melena suelta.
+//   `anchor`  Frontera entre el pelo suelto y el pelo sostenido. Arriba es el
+//             contorno del rostro; de los hombros para abajo es la **silueta
+//             del busto**, no el borde del pelo: el mechón que cae sobre el
+//             hombro tapa cuerpo, y moverlo movería el cuerpo con él. Ahí el
+//             desplazamiento vale cero, así que ni la cara ni el torso se
+//             mueven jamás; sólo se mece lo que cuelga por fuera.
 //   `edge`    Borde exterior de la melena, medido con un umbral de luminancia
 //             sobre la imagen (el fondo ronda 10; los puntos del pelo pasan de
-//             60). Es la distancia sobre la que se reparte el recorrido: ahí
-//             llega el desplazamiento completo que pide la brisa.
+//             60).
 //
 // Los puntos son [y, x] y se interpolan linealmente entre sí.
 export const HAIR = {
   // Margen de fondo negro que se redibuja por fuera del pelo. Sin él, la
-  // melena estirada dejaría al descubierto la copia inmóvil de debajo; con él
-  // se arrastra un trozo de fondo, que es negro sobre negro y no se ve. Se
-  // queda corto a propósito para no llegar al destello decorativo de la
-  // esquina inferior derecha, que debe permanecer clavado.
+  // melena desplazada hacia dentro dejaría al descubierto la copia inmóvil de
+  // debajo; con él se arrastra un trozo de fondo, que es negro sobre negro y no
+  // se ve. Se queda corto a propósito para no llegar al destello decorativo de
+  // la esquina inferior derecha, que debe permanecer clavado.
   margin: 64,
 
-  // Reparto mínimo. Junto al cuero cabelludo el ancla y el borde casi se
-  // tocan; sin este suelo, el estiramiento se dispararía.
-  minReach: 45,
+  // Franja de transición junto al ancla. La melena se traslada entera —es una
+  // masa, no una goma— y toda la diferencia con la parte sujeta se resuelve en
+  // esta franja, que es donde el pelo se apoya en la cara o en el hombro. Antes
+  // el reparto ocupaba el ancho completo del mechón y el resultado era un
+  // estiramiento, no un vaivén.
+  blend: 140,
 
   left: {
     anchor: [
       [0, 572], [100, 556], [200, 548], [300, 548], [400, 566], [460, 590],
-      [520, 610], [560, 600], [600, 545], [650, 470], [700, 432], [768, 420]
+      [520, 610], [560, 600], [580, 520], [600, 462], [650, 410], [700, 396],
+      [768, 382]
     ],
     edge: [
       [0, 540], [100, 490], [200, 455], [300, 405], [400, 388], [500, 312],
@@ -106,7 +111,8 @@ export const HAIR = {
   right: {
     anchor: [
       [0, 838], [100, 852], [200, 864], [300, 860], [400, 846], [460, 822],
-      [520, 800], [560, 806], [600, 880], [650, 950], [700, 985], [768, 1000]
+      [520, 800], [560, 890], [600, 1012], [650, 1046], [700, 1040],
+      [768, 1040]
     ],
     edge: [
       [0, 880], [100, 912], [200, 960], [300, 1016], [400, 1040], [500, 1068],
@@ -117,9 +123,11 @@ export const HAIR = {
 
 // Cuello.
 //
-// El giro de la cabeza no puede arrastrar el busto: es justo lo que delataba
-// al avatar, un torso entero balanceándose como un muñeco. El cuello absorbe
-// el movimiento: hasta el mentón la cabeza va entera, entre el mentón y la
-// clavícula el recorrido se apaga, y de ahí para abajo la fotografía está
-// clavada.
-export const NECK = { solid: 520, fade: 630 };
+// El gesto de cabeza no puede arrastrar el busto: un torso no acompaña a la
+// cabeza, y verlo balancearse entero era justo lo que delataba al avatar. El
+// cuello absorbe el movimiento: hasta el mentón la cabeza va entera, entre el
+// mentón y la base del cuello el recorrido se apaga, y de ahí para abajo
+// —clavícula, pecho, hombros— la fotografía no se toca. El corte está medido
+// por encima de la clavícula a propósito: bastaba con rozarla para que el pecho
+// se moviera y se recompusiera, y eso se nota en la trama de puntos.
+export const NECK = { solid: 500, fade: 590 };
