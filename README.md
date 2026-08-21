@@ -57,11 +57,24 @@ la piel real medida sobre la imagen, nunca superponiendo dibujos.
   cabeceos ligados a la energía de la voz; asentimientos cortos mientras
   escucha. El movimiento base es ruido de valor en varias octavas, no un bucle
   de senos, para que no se repita.
-- **Respiración.** Inspiración corta y espiración larga, más rápida al hablar,
-  con una inspiración al empezar cada turno.
+- **Melena.** Es lo único que mueve el aire, y se mueve *sola*: el busto está
+  clavado. Cada mitad de la cabellera se redibuja en franjas horizontales
+  estiradas alrededor de su línea de anclaje —el contorno del rostro arriba, el
+  borde del hombro abajo—, de modo que la raíz no se desplaza ni un píxel y el
+  recorrido crece hasta la punta, que llega a unos 10 px. El viento no es
+  uniforme: dos ondas que **viajan** hacia las puntas, con fase y ganancia
+  distintas en cada lado, más micro-ráfagas de ataque rápido y caída lenta cada
+  pocos segundos. Y la melena va por detrás de la cabeza: cuando el cráneo
+  arranca, el pelo llega tarde.
+- **Cuello.** El gesto de cabeza movía antes la fotografía entera y con ella se
+  balanceaba el busto, que era justo lo que delataba al avatar: un torso no
+  acompaña a la cabeza. Ahora el recorrido se apaga entre el mentón y la
+  clavícula —lo absorbe el cuello— y de ahí para abajo la imagen está inmóvil.
+  Ni respira: la respiración escalaba el retrato completo y se leía como un
+  latido de la imagen, no como un pecho.
 
-En reposo el rostro sigue vivo: respira, parpadea, mira alrededor, traga y
-entreabre los labios antes de tomar el turno.
+En reposo el rostro sigue vivo: parpadea, mira alrededor, traga, entreabre los
+labios antes de tomar el turno y la brisa le mueve el pelo.
 
 ## Expresiones
 
@@ -124,8 +137,12 @@ public/
   animation/director.js  actuación: estados, gestos y sus relojes
   animation/math.js      resortes, amortiguación y ruido
   animation/tuning.js    calibración de la apertura de boca
+  animation/wind.js      brisa: ráfagas, desfase y deformación distal
   banco.html             banco de pruebas, servido en /banco.html
   render/rig.js          puntos anatómicos medidos sobre la fotografía
+  render/warp.js         deformación por franjas, sin costuras ni máscaras
+  render/hair-layer.js   las dos melenas
+  render/head-layer.js   cabeza y cuello, con el busto clavado
   render/mouth-layer.js  mandíbula, labios y cavidad
   render/eyes-layer.js   mirada y parpadeo
   render/brow-layer.js   cejas
@@ -149,6 +166,12 @@ Sirve para ver la boca de cerca y fijar cualquier postura sin gastar una sesión
 de la API. El panel **Calibración de apertura** mueve en vivo los cinco valores
 de `public/animation/tuning.js`; cuando la boca se vea bien, «Copiar valores»
 deja el bloque listo para pegar en ese archivo y que el cambio sea permanente.
+
+El panel **Brisa en el pelo** hace lo mismo con la melena: «Alcance» es el
+recorrido de la punta en píxeles de la fotografía y «Velocidad» el temple de las
+ondas. Ambos escriben sobre `BRISA`, en `public/animation/wind.js`, que es el
+objeto que lee el pelo en cada cuadro; para dejarlo fijo basta con copiar los
+dos números en ese archivo.
 
 Para llevárselo sin servidor ni conexión (doble clic, o por correo):
 

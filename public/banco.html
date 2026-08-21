@@ -375,6 +375,19 @@
       <p class="nota" id="notaTuning">Ajusta con <b>Reproducir frase</b> en marcha y el encuadre en <b>Boca</b>. «Copiar valores» deja el bloque listo para pegar en <code>public/animation/tuning.js</code>.</p>
     </section>
 
+    <section class="grupo">
+      <p class="etiqueta">Brisa en el pelo</p>
+      <div class="control">
+        <div class="control-cabecera"><span>Alcance (px)</span><span id="vAlcance">10.0</span></div>
+        <input type="range" id="sAlcance" min="0" max="240" value="100" aria-label="Alcance de la brisa">
+      </div>
+      <div class="control">
+        <div class="control-cabecera"><span>Velocidad</span><span id="vVelocidad">1.00</span></div>
+        <input type="range" id="sVelocidad" min="20" max="260" value="100" aria-label="Velocidad de la brisa">
+      </div>
+      <p class="nota">El alcance es el recorrido de la <b>punta</b> del mechón en píxeles de la fotografía: la raíz no se mueve nunca y el busto tampoco. Los valores viven en <code>BRISA</code>, dentro de <code>public/animation/wind.js</code>.</p>
+    </section>
+
     <p class="nota">La arcada superior tiene <b>altura fija</b>: al abrir más la boca no crecen los dientes, crece la cavidad de debajo. Por eso el porcentaje sube rápido al empezar a abrir y luego se estabiliza.</p>
   </aside>
 </div>
@@ -383,6 +396,7 @@
 import { PerformanceDirector } from "./animation/director.js";
 import { FaceRenderer } from "./render/face-renderer.js";
 import { TUNING } from "./animation/tuning.js";
+import { BRISA } from "./animation/wind.js";
 
 /* ===== banco de pruebas ===== */
 
@@ -639,6 +653,25 @@ for (const mando of MANDOS) {
       document.querySelector("#sF1Closed").value = String(Math.round(TUNING.f1Closed));
       texto("vF1Closed", TUNING.f1Closed.toFixed(0));
     }
+  });
+}
+
+/* ---------- brisa ---------- */
+
+// Mismo criterio que la calibración de boca: el mando escribe sobre el objeto
+// vivo que lee la melena en cada cuadro, así que el pelo cambia de temple
+// mientras se arrastra el deslizador.
+const MANDOS_BRISA = [
+  { id: "sAlcance",   lectura: "vAlcance",   clave: "alcance",   escala: 10,  decimales: 1 },
+  { id: "sVelocidad", lectura: "vVelocidad", clave: "velocidad", escala: 100, decimales: 2 }
+];
+
+for (const mando of MANDOS_BRISA) {
+  const control = document.querySelector("#" + mando.id);
+  control.addEventListener("input", () => {
+    const valor = control.valueAsNumber / mando.escala;
+    BRISA[mando.clave] = valor;
+    texto(mando.lectura, valor.toFixed(mando.decimales));
   });
 }
 

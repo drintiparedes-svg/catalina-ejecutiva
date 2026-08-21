@@ -1,10 +1,18 @@
 // Composición del cuadro completo.
 //
-// Orden de dibujo: cuerpo (con respiración) → mitad inferior del rostro y boca
-// → mirada y parpadeo → cejas → aura. Todo ocurre dentro de la transformación
-// de la cabeza, para que el gesto acompañe al giro en lugar de flotar sobre él.
+// El retrato se dibuja quieto y encima se mueve sólo lo que en una persona se
+// mueve: la melena con la brisa, la cabeza sobre el cuello, y el gesto dentro
+// de la cara. El busto no se desplaza ni un píxel —antes respiraba y se
+// balanceaba entero, y era justo eso lo que se leía como movimiento falso—.
+//
+// Orden de dibujo: fotografía inmóvil → banda de cabeza y cuello → las dos
+// melenas → mitad inferior del rostro y boca → mirada y parpadeo → cejas →
+// aura. Las tres capas del gesto van dentro de la transformación de cabeza,
+// para que acompañen al giro en lugar de flotar sobre él.
 
 import { IMAGE, HEAD_PIVOT } from "./rig.js";
+import { HeadLayer } from "./head-layer.js";
+import { HairLayer } from "./hair-layer.js";
 import { MouthLayer } from "./mouth-layer.js";
 import { EyesLayer } from "./eyes-layer.js";
 import { BrowLayer } from "./brow-layer.js";
@@ -13,21 +21,21 @@ import { createSurface } from "./surface.js";
 export class FaceRenderer {
   constructor(image, createSurfaceImpl = createSurface) {
     this.image = image;
+    this.head = new HeadLayer();
+    this.hair = new HairLayer();
     this.mouth = new MouthLayer(createSurfaceImpl);
     this.eyes = new EyesLayer();
     this.brows = new BrowLayer(createSurfaceImpl);
   }
 
-  layout(width, height, breathScale) {
+  layout(width, height) {
     const scale = Math.max(width / IMAGE.width, height / IMAGE.height);
     const dw = IMAGE.width * scale;
     const dh = IMAGE.height * scale;
     return {
-      scale: scale * breathScale,
-      width: dw * breathScale,
-      height: dh * breathScale,
-      baseWidth: dw,
-      baseHeight: dh,
+      scale,
+      width: dw,
+      height: dh,
       offsetX: (width - dw) / 2,
       offsetY: (height - dh) / 2
     };
@@ -37,24 +45,23 @@ export class FaceRenderer {
     const { width, height, pixelRatio } = viewport;
     ctx.clearRect(0, 0, width, height);
 
-    const breathScale = 1 + pose.breath.expand;
-    const box = this.layout(width, height, breathScale);
+    const box = this.layout(width, height);
     // Los desplazamientos llegan en píxeles de la imagen original, así que se
     // escalan con la vista: el gesto se ve igual en cualquier resolución.
-    const dx = box.offsetX + pose.body.x * box.scale - (box.width - box.baseWidth) / 2;
-    const dy = box.offsetY + (pose.body.y + pose.breath.lift) * box.scale
-      - (box.height - box.baseHeight) * .28;
-    const view = { dx, dy, scale: box.scale, pixelRatio };
+    const view = { dx: box.offsetX, dy: box.offsetY, scale: box.scale, pixelRatio };
 
-    const pivotX = dx + HEAD_PIVOT.x * box.scale;
-    const pivotY = dy + HEAD_PIVOT.y * box.scale;
+    ctx.drawImage(this.image, view.dx, view.dy, box.width, box.height);
+    this.head.draw(ctx, this.image, view, pose.head);
+    this.hair.draw(ctx, this.image, view, pose.hair, pose.head);
+
+    const pivotX = view.dx + HEAD_PIVOT.x * box.scale;
+    const pivotY = view.dy + HEAD_PIVOT.y * box.scale;
 
     ctx.save();
     ctx.translate(pivotX + pose.head.x * box.scale, pivotY + pose.head.y * box.scale);
     ctx.rotate(pose.head.tilt);
     ctx.translate(-pivotX, -pivotY);
 
-    ctx.drawImage(this.image, dx, dy, box.width, box.height);
     this.mouth.draw(ctx, this.image, view, pose.mouth);
     this.eyes.draw(ctx, this.image, view, pose.eyes);
     this.brows.draw(ctx, this.image, view, pose.brows);

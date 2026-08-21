@@ -1,16 +1,18 @@
 // Dirección de actuación.
 //
 // Convierte el estado de la conversación y la energía de la voz en una pose
-// completa: cabeza, mirada, párpados, cejas, respiración y boca. La idea es que
-// nada dependa de un bucle fijo. Cada gesto tiene su propio reloj, su propia
-// irregularidad y una razón para ocurrir (una sílaba acentuada, un cambio de
-// turno, una pausa larga), que es lo que distingue a una persona de un títere.
+// completa: cabeza, mirada, párpados, cejas, boca y la brisa que despeina la
+// melena. La idea es que nada dependa de un bucle fijo. Cada gesto tiene su
+// propio reloj, su propia irregularidad y una razón para ocurrir (una sílaba
+// acentuada, un cambio de turno, una pausa larga), que es lo que distingue a
+// una persona de un títere.
 //
 // Estados: "idle" (sin conexión), "listening", "thinking" y "speaking".
 
 import {
   clamp, mix, smoothstep, damp, spring, createNoise, range, easeOutQuint
 } from "./math.js";
+import { HairWind } from "./wind.js";
 import { blinkCurve } from "../render/eyes-layer.js";
 
 // `gazeHold` es la duración de una fijación. Una persona en conversación
@@ -48,6 +50,11 @@ const EXPRESSIONS = {
 // Ganancia global. Bajarla mantiene todo el repertorio pero más contenido.
 const EXPRESSION_GAIN = .85;
 
+// Ganancia global del gesto de cabeza. El cuello se traga todo este recorrido
+// (render/head-layer.js), así que el busto sigue clavado por mucho que suba;
+// a cero, el retrato entero queda quieto y sólo queda viva la melena.
+const HEAD_GAIN = 1;
+
 export class PerformanceDirector {
   constructor() {
     this.state = "idle";
@@ -84,8 +91,8 @@ export class PerformanceDirector {
     this.expressionIntensity = 1;
     this.gesto = { brow: 0, browTilt: 0, squint: 0, curl: 0, press: 0 };
 
-    this.breathPhase = .2;
-    this.breathBoost = 0;
+    // El aire mueve la melena; el busto no se mueve en absoluto.
+    this.wind = new HairWind();
 
     this.energyFast = 0;
     this.energySlow = 0;
@@ -102,9 +109,8 @@ export class PerformanceDirector {
     this.velocity = { open: 0, spread: 0, round: 0, press: 0, jaw: 0 };
 
     this.pose = {
-      body: { x: 0, y: 0 },
       head: { x: 0, y: 0, tilt: 0 },
-      breath: { expand: 0, lift: 0 },
+      hair: this.wind,
       eyes: { left: 0, right: 0, gaze: { x: 0, y: 0 } },
       brows: [{ raise: 0, tilt: 0 }, { raise: 0, tilt: 0 }],
       mouth: this.mouth,
@@ -124,8 +130,6 @@ export class PerformanceDirector {
     this.nextSaccadeAt = Math.min(this.nextSaccadeAt, this.time + range(.05, .3));
 
     if (state === "speaking") {
-      this.breathPhase = 0;          // inspiración antes de la frase
-      this.breathBoost = 1;
       this.brow.target = .32;
       this.brow.holdUntil = this.time + .5;
     }
@@ -177,11 +181,13 @@ export class PerformanceDirector {
     this.#trackEnergy(speech, dt);
     this.#updateExpression(dt);
     this.#updateMouth(speech, dt);
-    this.#updateBreath(dt);
     this.#updateBlink(profile);
     this.#updateGaze(profile);
     this.#updateHead(profile, dt);
     this.#updateBrows(profile, dt);
+    // La melena va detrás de la cabeza, así que el viento se resuelve al final,
+    // cuando la posición del cráneo en este cuadro ya es firme.
+    this.wind.update(dt, this.time, this.pose.head.x);
 
     this.pose.mouth = this.mouth;
     this.pose.aura = this.state === "idle" ? 0
@@ -284,23 +290,6 @@ export class PerformanceDirector {
     this.mouth.press = clamp(this.mouth.press);
   }
 
-  #updateBreath(dt) {
-    const rate = this.state === "speaking" ? 1 / 3.4 : 1 / 4.6;
-    this.breathPhase = (this.breathPhase + dt * rate * (1 + this.breathBoost * .8)) % 1;
-    this.breathBoost = damp(this.breathBoost, 0, dt, .5);
-
-    // Inspiración corta, espiración larga.
-    const p = this.breathPhase;
-    const wave = p < .38
-      ? 1 - Math.pow(1 - p / .38, 3)
-      : 1 - smoothstep(0, 1, (p - .38) / .62);
-
-    this.pose.breath.expand = wave * .0019;
-    this.pose.breath.lift = -wave * .55;
-    this.pose.body.x = this.headNoise[2](this.time * .045) * .9;
-    this.pose.body.y = this.headNoise[2](this.time * .031 + 4) * .5;
-  }
-
   #updateBlink(profile) {
     if (this.blinkAt < 0 && this.time >= this.nextBlinkAt) {
       this.blinkAt = this.time;
@@ -370,7 +359,7 @@ export class PerformanceDirector {
   }
 
   #updateHead(profile, dt) {
-    const gain = profile.headGain;
+    const gain = profile.headGain * HEAD_GAIN;
     const baseX = this.headNoise[0](this.time * .13) * 2.4 + this.headNoise[0](this.time * .41 + 2) * .55;
     const baseY = this.headNoise[1](this.time * .11) * 1.15;
     const tilt = this.headNoise[1](this.time * .085 + 7) * .0055;

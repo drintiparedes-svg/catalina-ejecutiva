@@ -63,3 +63,63 @@ export const BROWS = [
 
 // Pivote del giro de cabeza: base del cráneo, no el centro del lienzo.
 export const HEAD_PIVOT = { x: 705, y: 330 };
+
+// Cabellera.
+//
+// Dos masas de puntos que cuelgan a los lados del rostro. Para animarlas hace
+// falta saber dos cosas en cada altura, y las dos están medidas sobre la
+// fotografía:
+//
+//   `anchor`  Línea donde el pelo deja de ser libre: el contorno del rostro
+//             arriba, el cuello a la altura del mentón y el borde del busto
+//             abajo. Ahí el desplazamiento vale cero, así que ni la cara ni el
+//             hombro se mueven nunca. Lo que queda por fuera es melena suelta.
+//   `edge`    Borde exterior de la melena, medido con un umbral de luminancia
+//             sobre la imagen (el fondo ronda 10; los puntos del pelo pasan de
+//             60). Es la distancia sobre la que se reparte el recorrido: ahí
+//             llega el desplazamiento completo que pide la brisa.
+//
+// Los puntos son [y, x] y se interpolan linealmente entre sí.
+export const HAIR = {
+  // Margen de fondo negro que se redibuja por fuera del pelo. Sin él, la
+  // melena estirada dejaría al descubierto la copia inmóvil de debajo; con él
+  // se arrastra un trozo de fondo, que es negro sobre negro y no se ve. Se
+  // queda corto a propósito para no llegar al destello decorativo de la
+  // esquina inferior derecha, que debe permanecer clavado.
+  margin: 64,
+
+  // Reparto mínimo. Junto al cuero cabelludo el ancla y el borde casi se
+  // tocan; sin este suelo, el estiramiento se dispararía.
+  minReach: 45,
+
+  left: {
+    anchor: [
+      [0, 572], [100, 556], [200, 548], [300, 548], [400, 566], [460, 590],
+      [520, 610], [560, 600], [600, 545], [650, 470], [700, 432], [768, 420]
+    ],
+    edge: [
+      [0, 540], [100, 490], [200, 455], [300, 405], [400, 388], [500, 312],
+      [560, 300], [620, 292], [700, 236], [768, 255]
+    ]
+  },
+
+  right: {
+    anchor: [
+      [0, 838], [100, 852], [200, 864], [300, 860], [400, 846], [460, 822],
+      [520, 800], [560, 806], [600, 880], [650, 950], [700, 985], [768, 1000]
+    ],
+    edge: [
+      [0, 880], [100, 912], [200, 960], [300, 1016], [400, 1040], [500, 1068],
+      [560, 1118], [620, 1122], [700, 1148], [768, 1150]
+    ]
+  }
+};
+
+// Cuello.
+//
+// El giro de la cabeza no puede arrastrar el busto: es justo lo que delataba
+// al avatar, un torso entero balanceándose como un muñeco. El cuello absorbe
+// el movimiento: hasta el mentón la cabeza va entera, entre el mentón y la
+// clavícula el recorrido se apaga, y de ahí para abajo la fotografía está
+// clavada.
+export const NECK = { solid: 520, fade: 630 };
