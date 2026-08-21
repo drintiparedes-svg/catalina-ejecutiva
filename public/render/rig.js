@@ -17,22 +17,50 @@ export const MOUTH = {
   seamY: 406,
   halfWidth: 66,
 
-  // Franja del labio superior: arranca en la base de la nariz, donde el
-  // desplazamiento vale cero, y termina en la unión labial.
-  upperBreaks: [356, 376, 392, 400, 407],
+  // Franja del labio superior y la mejilla: arranca en el pómulo, donde el
+  // desplazamiento vale cero, y termina en la unión labial. Los cortes se
+  // agolpan sobre el labio, que es donde el campo cambia deprisa.
+  upperBreaks: [306, 332, 356, 376, 392, 400, 407],
 
   // Franja inferior: labio, mentón, mandíbula y arranque del cuello. Los cortes
   // se agolpan donde el desplazamiento cambia rápido (el labio) y se espacian
   // en el mentón, donde es casi constante. El último tramo vuelve a cero para
   // que el cuello quede inmóvil.
-  lowerBreaks: [394, 407, 417, 429, 443, 470, 540, 584],
+  lowerBreaks: [394, 407, 417, 429, 443, 470, 500, 528, 556, 588],
 
-  // Alcance horizontal del arrastre mandibular sobre las mejillas.
-  jawSpan: 130,
+  // Peso del arrastre mandibular.
+  //
+  // Antes era un recorte lateral —dentro de 130 px del centro la piel se movía,
+  // fuera no—, y el resultado era exactamente eso: un rectángulo de piel
+  // deslizándose sobre una cara quieta, con dos bordes verticales que se veían.
+  //
+  // Ahora el peso decae en todas direcciones desde el mentón siguiendo la forma
+  // de la propia mandíbula. `reach` es el radio en el que ya no queda nada de
+  // arrastre: hacia los lados llega a la oreja, que es donde está el eje de
+  // giro de la mandíbula y por tanto donde el recorrido es cero; hacia arriba,
+  // al pómulo. `solid` es el radio interior donde el arrastre es completo: el
+  // mentón y el labio inferior van con la mandíbula sin rebajar.
+  jaw: {
+    chinX: 705, chinY: 498,
+    reachX: 178, reachY: 196,
+    solid: .42,
 
-  // Caja de trabajo y máscara de fusión de la capa inferior del rostro.
-  patch: { x: 536, y: 324, width: 338, height: 272 },
-  mask: { centerX: 705, centerY: 460, radiusX: 168, radiusY: 134, solid: .80 }
+    // El cuello acompaña al mentón y lo va soltando: completo bajo la barbilla,
+    // nada en la base del cuello. Sin este tramo, la barbilla bajaba sobre una
+    // garganta clavada y el corte se leía como una placa.
+    throatTop: 508,
+    throatEnd: 588
+  },
+
+  // Altura del pómulo. La mejilla acompaña a la comisura y el efecto se
+  // disuelve aquí, en vez de cortarse en la base de la nariz.
+  cheekTop: 306,
+
+  // Caja de trabajo y máscara de fusión de la capa inferior del rostro. Cubren
+  // todo el alcance del campo, de modo que la máscara sólo se difumina donde el
+  // arrastre ya vale cero.
+  patch: { x: 532, y: 298, width: 346, height: 302 },
+  mask: { centerX: 705, centerY: 449, radiusX: 173, radiusY: 151, solid: .80 }
 };
 
 export const EYES = [

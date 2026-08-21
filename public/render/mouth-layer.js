@@ -71,6 +71,21 @@ function envelope(u) {
   return Math.cos(Math.PI / 2 * a) ** 1.25;
 }
 
+// Peso del arrastre mandibular en cada punto del rostro (rig.js: MOUTH.jaw).
+//
+// Es una elipse centrada en el mentón: dentro del radio `solid` la piel va con
+// la mandíbula sin rebajar, y de ahí hacia fuera el recorrido se apaga en todas
+// direcciones hasta anularse en el borde —la oreja a los lados, el pómulo por
+// arriba—. El segundo término suelta el cuello poco a poco: la garganta sigue a
+// la barbilla y deja de seguirla en la base del cuello.
+function jawWeight(x, y) {
+  const { chinX, chinY, reachX, reachY, solid, throatTop, throatEnd } = MOUTH.jaw;
+  const dx = (x - chinX) / reachX;
+  const dy = (y - chinY) / reachY;
+  const radius = Math.hypot(dx, dy);
+  return (1 - smoothstep(solid, 1, radius)) * (1 - smoothstep(throatTop, throatEnd, y));
+}
+
 // El surco entre los labios no es horizontal: en la fotografía baja hasta
 // y≈407 en el centro y sube a y≈402 en las comisuras. Si la cavidad se apoya en
 // una recta, se come el bermellón por fuera y deja asomar el labio inferior por
@@ -86,15 +101,18 @@ export class MouthLayer {
   }
 
   // Columnas más densas sobre la boca que sobre las mejillas: allí es donde la
-  // curvatura del campo de arrastre cambia rápido.
+  // curvatura del campo de arrastre cambia rápido. Fuera de la boca eran de 18
+  // px y se veían: entre dos columnas contiguas había varios píxeles de salto y
+  // la mejilla se leía como una escalera de bloques. A 10 px el salto baja de un
+  // píxel y desaparece.
   #buildColumns() {
     const { patch, centerX, halfWidth } = MOUTH;
-    const mouthLeft = centerX - halfWidth * 1.8;
-    const mouthRight = centerX + halfWidth * 1.8;
+    const mouthLeft = centerX - halfWidth * 1.9;
+    const mouthRight = centerX + halfWidth * 1.9;
     const edges = [];
-    for (let x = patch.x; x < mouthLeft; x += 18) edges.push(x);
+    for (let x = patch.x; x < mouthLeft; x += 10) edges.push(x);
     for (let x = mouthLeft; x < mouthRight; x += 9) edges.push(x);
-    for (let x = mouthRight; x < patch.x + patch.width; x += 18) edges.push(x);
+    for (let x = mouthRight; x < patch.x + patch.width; x += 10) edges.push(x);
     edges.push(patch.x + patch.width);
     return edges;
   }
@@ -146,27 +164,36 @@ export class MouthLayer {
         return (x - cx) * (widthScale - 1) * fade;
       },
 
-      // Campo del maxilar (labio superior y filtrum).
+      // Campo del maxilar: el labio superior y el filtrum por un lado, la
+      // mejilla por otro. Van separados porque no alcanzan lo mismo: el labio
+      // se queda en la base de la nariz —el tabique es cartílago sujeto al
+      // hueso y no acompaña—, mientras que la mejilla sigue a la comisura y se
+      // disuelve arriba, en el pómulo. Antes las dos se cortaban en la base de
+      // la nariz y esa línea recta se veía cruzando la cara.
       upperTravel(x, y) {
         const e = envelope(field.u(x));
-        const outer = 1 - smoothstep(1, 1.75, Math.abs(field.u(x)));
-        const full = (cornerDrop - smile) * (1 - e) * outer - lift * e;
-        return full * smoothstep(356, seamY + 1, y);
+        const lateral = 1 - smoothstep(1.1, 2.5, Math.abs(field.u(x)));
+        const cheek = (cornerDrop - smile) * (1 - e) * lateral;
+        const lip = -lift * e;
+        return cheek * smoothstep(MOUTH.cheekTop, seamY + 1, y)
+          + lip * smoothstep(356, seamY + 1, y);
       },
 
-      // Campo de la mandíbula (labio inferior, mentón, línea mandibular).
+      // Campo de la mandíbula (labio inferior, mentón, línea mandibular y
+      // cuello). El peso sale de `jawWeight`, que tiene la forma de la
+      // mandíbula: completo en el mentón, cada vez menor al subir por la línea
+      // mandibular y nulo junto a la oreja, donde está el eje de giro.
       lowerTravel(x, y) {
         const e = envelope(field.u(x));
-        const side = 1 - smoothstep(60, MOUTH.jawSpan, Math.abs(x - cx));
+        const weight = jawWeight(x, y);
         const atSeam = .34 + .61 * e;
         const vertical = y <= seamY + 1
           ? atSeam * smoothstep(394, seamY + 1, y)
           : mix(atSeam, 1, smoothstep(seamY + 1, 478, y));
-        const tail = 1 - smoothstep(540, 584, y);
         const nearLip = smoothstep(394, seamY + 1, y) * (1 - smoothstep(seamY + 1, 441, y));
         const lip = evert * e * nearLip;
-        const corner = -smile * (1 - e) * side * nearLip;
-        return jawShift * side * vertical * tail + lip + corner;
+        const corner = -smile * (1 - e) * weight * nearLip;
+        return jawShift * weight * vertical + lip + corner;
       },
 
       // La deformación horizontal sólo vive alrededor de los labios.
@@ -255,8 +282,8 @@ export class MouthLayer {
       const x1 = columns[index + 1];
       const xMid = (x0 + x1) / 2;
       const u = Math.abs(field.u(xMid));
-      // Fuera del alcance del labio superior no hay nada que redibujar.
-      if (upper && u > 1.9) continue;
+      // Fuera del alcance de la mejilla no hay nada que redibujar.
+      if (upper && u > 2.6) continue;
 
       // Si la columna no se mueve, los píxeles de la copia intacta ya son los
       // correctos. Saltarla ahorra la mayor parte del trabajo en reposo y en

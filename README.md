@@ -16,9 +16,21 @@ El retrato es una sola fotografía. Toda la gesticulación se consigue deformand
 la piel real medida sobre la imagen, nunca superponiendo dibujos.
 
 - **Mandíbula.** Un campo de arrastre continuo recorre la mitad inferior del
-  rostro: el mentón baja hasta 16 px, la comisura sólo un tercio y la mejilla
+  rostro: el mentón baja hasta 18 px, la comisura sólo un tercio y la mejilla
   prácticamente nada. Es el giro de la articulación, no un bloque que se
   traslada, y por eso la línea mandibular acompaña sin dejar bordes.
+
+  El peso del arrastre tiene **forma de mandíbula**: decae en todas direcciones
+  desde el mentón hasta anularse en la oreja, que es donde está el eje de giro
+  de la articulación. Antes era un recorte lateral —dentro de 130 px del centro
+  la piel se movía, fuera no— y al hablar se veía justo eso: un rectángulo de
+  piel deslizándose sobre una cara quieta, con dos cantos verticales marcados.
+  Por arriba el gesto sube ahora hasta el pómulo en vez de cortarse en la base
+  de la nariz, y por abajo la garganta acompaña al mentón y lo va soltando hasta
+  la base del cuello, donde ya no queda nada. Las columnas con las que se
+  redibuja la piel bajaron de 18 a 10 px fuera de la boca: a 18 el salto entre
+  dos contiguas llegaba a varios píxeles y la mejilla se leía como una escalera
+  de bloques.
 - **Labios.** El labio superior pertenece al maxilar y tiene su propio campo:
   sube menos de un tercio de lo que baja el inferior y se ancla en la base de la
   nariz. La abertura se apoya en la curva real del surco labial —que baja hasta
