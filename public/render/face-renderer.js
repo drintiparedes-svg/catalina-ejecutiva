@@ -6,14 +6,17 @@
 // balanceaba entero, y era justo eso lo que se leía como movimiento falso—.
 //
 // Orden de dibujo: fotografía inmóvil → banda de cabeza y cuello → las dos
-// melenas → mitad inferior del rostro y boca → mirada y parpadeo → cejas →
-// aura. Las tres capas del gesto van dentro de la transformación de cabeza,
-// para que acompañen al giro en lugar de flotar sobre él.
+// melenas → mitad inferior del rostro y boca → nariz → mirada y parpadeo →
+// cejas → aura. Las capas del gesto van dentro de la transformación de cabeza,
+// para que acompañen al giro en lugar de flotar sobre él. La nariz va después
+// de la boca porque el parche de la boca vuelve a estampar la base de la nariz,
+// y dibujarla antes la borraría.
 
 import { IMAGE, HEAD_PIVOT } from "./rig.js";
 import { HeadLayer } from "./head-layer.js";
 import { HairLayer } from "./hair-layer.js";
 import { MouthLayer } from "./mouth-layer.js";
+import { NoseLayer } from "./nose-layer.js";
 import { EyesLayer } from "./eyes-layer.js";
 import { BrowLayer } from "./brow-layer.js";
 import { createSurface } from "./surface.js";
@@ -24,6 +27,7 @@ export class FaceRenderer {
     this.head = new HeadLayer();
     this.hair = new HairLayer();
     this.mouth = new MouthLayer(createSurfaceImpl);
+    this.nose = new NoseLayer(createSurfaceImpl);
     this.eyes = new EyesLayer();
     this.brows = new BrowLayer(createSurfaceImpl);
   }
@@ -63,6 +67,10 @@ export class FaceRenderer {
     ctx.translate(-pivotX, -pivotY);
 
     this.mouth.draw(ctx, this.image, view, pose.mouth);
+    // Después de la boca: el parche de la boca empieza en y=324 y vuelve a
+    // estampar la zona de la base de la nariz, así que dibujarla antes la
+    // borraría.
+    this.nose.draw(ctx, this.image, view, pose.breath.nasal);
     this.eyes.draw(ctx, this.image, view, pose.eyes);
     this.brows.draw(ctx, this.image, view, pose.brows);
     ctx.restore();

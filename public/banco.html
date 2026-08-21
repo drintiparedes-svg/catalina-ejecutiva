@@ -288,7 +288,9 @@
         <button data-zoom="1" aria-pressed="true">Retrato</button>
         <button data-zoom="2.1" aria-pressed="false">Rostro</button>
         <button data-zoom="4.6" aria-pressed="false">Boca</button>
+        <button data-zoom="5.4" aria-pressed="false">Nariz</button>
         <button data-zoom="3.6" aria-pressed="false">Ojos</button>
+        <button data-zoom="1.7" aria-pressed="false">Cabellera</button>
       </div>
     </section>
 
@@ -371,6 +373,26 @@
         <div class="control-cabecera"><span>Labio (px)</span><span id="vLabio">9.5</span></div>
         <input type="range" id="sLabio" min="40" max="180" value="95" aria-label="Eversión del labio inferior">
       </div>
+      <div class="control">
+        <div class="control-cabecera"><span>Respiración nasal</span><span id="vNasal">1.6</span></div>
+        <input type="range" id="sNasal" min="0" max="60" value="16" aria-label="Apertura del ala al inspirar">
+      </div>
+      <div class="control">
+        <div class="control-cabecera"><span>Descenso del ala</span><span id="vNasalY">0.35</span></div>
+        <input type="range" id="sNasalY" min="0" max="100" value="35" aria-label="Componente inferior del ala">
+      </div>
+      <div class="control">
+        <div class="control-cabecera"><span>Relieve</span><span id="vRelieve">0.05</span></div>
+        <input type="range" id="sRelieve" min="0" max="30" value="5" aria-label="Realce de luz del ala">
+      </div>
+
+      <div class="control">
+        <div class="control-cabecera"><span>Fase respiratoria</span><span id="vFase">ciclo</span></div>
+        <input type="range" id="sFase" min="-1" max="100" value="-1" aria-label="Congelar la fase respiratoria">
+      </div>
+      <p class="nota">La fase congela el ciclo para juzgar una postura fija: a la izquierda del todo
+        vuelve a respirar solo. 0 es reposo y 100 la máxima apertura inspiratoria.</p>
+
       <button id="copiarTuning">Copiar valores</button>
       <p class="nota" id="notaTuning">Ajusta con <b>Reproducir frase</b> en marcha y el encuadre en <b>Boca</b>. «Copiar valores» deja el bloque listo para pegar en <code>public/animation/tuning.js</code>.</p>
     </section>
@@ -415,7 +437,11 @@ const FOCOS = {
   "1": { x: 704, y: 384 },
   "2.1": { x: 705, y: 330 },
   "4.6": { x: 705, y: 408 },
-  "3.6": { x: 703, y: 248 }
+  "5.4": { x: 705, y: 330 },
+  "3.6": { x: 703, y: 248 },
+  // La zona baja del pelo, con los dos mechones dentro del cuadro: el
+  // movimiento hay que juzgarlo comparando un lado con el otro.
+  "1.7": { x: 704, y: 640 }
 };
 
 // Secuencia de la frase. Cada entrada es un símbolo y su duración en
@@ -529,6 +555,7 @@ function dibujar(ahora) {
   else if (manual) voz = vozManual();
 
   const pose = director.update(ahora, voz);
+  if (faseFijada !== null) pose.breath.nasal = faseFijada;
   renderizador.draw(ctx, vista, pose);
   actualizarLecturas(pose);
   requestAnimationFrame(dibujar);
@@ -637,8 +664,20 @@ const MANDOS = [
   { id: "sF1Open",   lectura: "vF1Open",   clave: "f1Open",    escala: 1,   decimales: 0 },
   { id: "sF1Closed", lectura: "vF1Closed", clave: "f1Closed",  escala: 1,   decimales: 0 },
   { id: "sMenton",   lectura: "vMenton",   clave: "jawTravel", escala: 10,  decimales: 1 },
-  { id: "sLabio",    lectura: "vLabio",    clave: "lipEvert",  escala: 10,  decimales: 1 }
+  { id: "sLabio",    lectura: "vLabio",    clave: "lipEvert",  escala: 10,  decimales: 1 },
+  { id: "sNasal",    lectura: "vNasal",    clave: "nasalApertura", escala: 10,  decimales: 1 },
+  { id: "sNasalY",   lectura: "vNasalY",   clave: "nasalDescenso", escala: 100, decimales: 2 },
+  { id: "sRelieve",  lectura: "vRelieve",  clave: "nasalRelieve",  escala: 100, decimales: 2 }
 ];
+
+// Congelar la respiración. Con el ciclo corriendo es casi imposible juzgar una
+// apertura de un píxel y medio; parado se ve de inmediato.
+let faseFijada = null;
+document.querySelector("#sFase").addEventListener("input", evento => {
+  const v = evento.target.valueAsNumber;
+  faseFijada = v < 0 ? null : v / 100;
+  texto("vFase", faseFijada === null ? "ciclo" : faseFijada.toFixed(2));
+});
 
 for (const mando of MANDOS) {
   const control = document.querySelector("#" + mando.id);
@@ -681,7 +720,14 @@ document.querySelector("#copiarTuning").addEventListener("click", async () => {
     "  f1Open: " + TUNING.f1Open.toFixed(0) + ",",
     "  openGain: " + TUNING.openGain.toFixed(2) + ",",
     "  jawTravel: " + TUNING.jawTravel.toFixed(1) + ",",
-    "  lipEvert: " + TUNING.lipEvert.toFixed(1)
+    "  lipEvert: " + TUNING.lipEvert.toFixed(1) + ",",
+    "  nasalApertura: " + TUNING.nasalApertura.toFixed(1) + ",",
+    "  nasalDescenso: " + TUNING.nasalDescenso.toFixed(2) + ",",
+    "  nasalRelieve: " + TUNING.nasalRelieve.toFixed(2) + ",",
+    // No tiene deslizador —la asimetría es anatómica, no se afina a ojo— pero
+    // tiene que salir aquí: la capa de la nariz lo lee en cada cuadro, y pegar
+    // un bloque sin él dejaría el valor sin definir.
+    "  nasalAsimetria: " + TUNING.nasalAsimetria.toFixed(2)
   ].join("\n");
   try {
     await navigator.clipboard.writeText(bloque);

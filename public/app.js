@@ -9,6 +9,8 @@ import { PerformanceDirector } from "./animation/director.js";
 import { VoiceTracker } from "./audio/voice-tracker.js";
 import { RealtimeSession } from "./realtime/session.js";
 import { GeminiSession } from "./realtime/gemini-session.js";
+import { dibujarRuta } from "./mapa.js";
+import { EscuchaDeReunion, escuchaDisponible } from "./escucha.js";
 
 const canvas = document.querySelector("#avatar");
 const ctx = canvas.getContext("2d");
@@ -19,6 +21,8 @@ const ui = {
   status: document.querySelector("#status"),
   signal: document.querySelector("#signal"),
   caption: document.querySelector("#caption"),
+  oyendo: document.querySelector("#oyendo"),
+  oyendoTexto: document.querySelector("#oyendoTexto"),
   imagen: document.querySelector("#imagen"),
   imagenFoto: document.querySelector("#imagenFoto"),
   imagenPie: document.querySelector("#imagenPie"),
@@ -26,6 +30,7 @@ const ui = {
   imagenCerrar: document.querySelector("#imagenCerrar"),
   referencias: document.querySelector("#referencias"),
   referenciasLista: document.querySelector("#referenciasLista"),
+  referenciasTitulo: document.querySelector("#referenciasTitulo"),
   referenciasCerrar: document.querySelector("#referenciasCerrar"),
   panel: document.querySelector("#panel"),
   panelBody: document.querySelector("#panelBody"),
@@ -63,6 +68,8 @@ const manejadores = {
   },
   onConnected: () => {
     connected = true;
+    hayActividad();
+    calentarUbicacion();   // deja lista la zona antes de que nadie pregunte
     mostrarAviso("");   // si el intento anterior falló, su aviso ya no aplica
     ui.signal.classList.add("online");
     ui.connect.textContent = "Finalizar";
@@ -71,6 +78,7 @@ const manejadores = {
   },
   onDisconnected: () => {
     connected = false;
+    pararRelojes();
     // El historial se conserva: sirve para releer lo dicho al terminar. Lo que
     // se va es el subtítulo, que sólo tiene sentido mientras Catalina habla.
     cerrarTurno();
@@ -88,6 +96,13 @@ const manejadores = {
     setStatus("Lista para comenzar");
   },
   onPhase: phase => {
+    hayActividad();
+    // En reunión deja de apuntar en cuanto empieza a hablar: lo que salga por
+    // los altavoces es suyo, no de la reunión.
+    if (enModoMeet && phase === "speaking") {
+      escucha.ensordecer(true);
+      señalar("Respondiendo…", "respondiendo");
+    }
     if (phase !== "speaking") faseDeSesion = phase;
     director.setState(phase);
     // La expresión sigue al turno: se concentra mientras piensa y se recompone
@@ -102,6 +117,7 @@ const manejadores = {
   // apagados: son cosas que la persona necesita leer para poder seguir.
   onHelp: mostrarAviso,
   onTranscript: text => {
+    hayActividad();
     anotarTurno(text);
     aplicarExpresionDeFrase(text);
   },
@@ -115,35 +131,104 @@ const manejadores = {
 
 // Relevo de proveedor.
 //
-// Cada intento empieza por OpenAI, incluso después de haber caído a Gemini: si
-// el crédito se repone, Catalina vuelve sola a la voz principal sin tener que
-// tocar nada. El intento fallido no cuesta nada, porque un 429 se rechaza antes
-// de consumir tokens.
+// Gemini va primero por precio: su audio cuesta unas diez veces menos que el de
+// OpenAI ($3 y $12 por millón de tokens frente a $32 y $64), y para lo que hace
+// Catalina la diferencia de calidad no lo justifica. OpenAI queda de respaldo,
+// que es justo el reparto contrario al que había.
+//
+// Cada intento vuelve a empezar por el principal: si falló por un tope de uso,
+// al reponerse se vuelve solo sin tener que tocar nada.
 const sesiones = {
   openai: new RealtimeSession(manejadores),
   gemini: new GeminiSession(manejadores)
 };
 
-// Motivos por los que OpenAI no va a funcionar por mucho que se reintente: sin
-// crédito o sin clave válida. Un fallo de red no entra aquí, porque cambiar de
-// proveedor no lo arreglaría y ocultaría el problema real.
-const MOTIVOS_DE_RELEVO = new Set(["API_RATE_LIMIT", "API_KEY_MISSING", "API_KEY_INVALID"]);
+const ORDEN = ["gemini", "openai"];
 
-let proveedor = "openai";
-let sesion = sesiones.openai;
-let geminiDisponible = false;
+// Motivos por los que ese proveedor no va a funcionar por mucho que se
+// reintente: sin crédito o sin clave válida. Un fallo de red no entra aquí,
+// porque cambiar de proveedor no lo arreglaría y ocultaría el problema real.
+const MOTIVOS_DE_RELEVO = new Set([
+  "API_RATE_LIMIT", "API_KEY_MISSING", "API_KEY_INVALID",
+  "GEMINI_KEY_MISSING", "GEMINI_KEY_INVALID", "GEMINI_SESSION_ERROR"
+]);
+
+const disponible = { openai: false, gemini: false };
+let proveedor = null;
+let sesion = null;
+
+function proveedoresUtiles() {
+  return ORDEN.filter(nombre => disponible[nombre]);
+}
+
+async function conectar() {
+  const cadena = proveedoresUtiles();
+  if (!cadena.length) {
+    setStatus("No hay ninguna voz configurada");
+    mostrarAviso("Falta una clave de OpenAI o de Gemini para poder conversar.");
+    ui.connect.disabled = false;
+    return;
+  }
+  proveedor = cadena[0];
+  sesion = sesiones[proveedor];
+  ui.connect.disabled = true;
+  await sesion.connect();
+}
+
+// Corte por inactividad.
+//
+// Una sesión abierta sigue enviando el micrófono aunque nadie hable, y eso se
+// paga: con OpenAI son unos tres dólares por hora de silencio. Antes no había
+// nada que la cerrara, así que alejarse del equipo costaba dinero sin dar nada
+// a cambio.
+// Tope de espera de una herramienta antes de rendirse. Mientras corre, quien
+// está al otro lado no oye nada: el silencio es parte del costo, así que se
+// paga acotado. El servidor tiene su propio tope, más corto; éste es la red de
+// seguridad por si el que no responde es el servidor.
+const ESPERA_HERRAMIENTA_MS = 9000;
+
+const INACTIVIDAD_MS = 2 * 60 * 1000;
+const AVISO_MS = 15 * 1000;          // se avisa quince segundos antes de colgar
+let relojInactividad = null;
+let relojAviso = null;
+
+function hayActividad() {
+  clearTimeout(relojInactividad);
+  clearTimeout(relojAviso);
+  if (!connected) return;
+
+  relojAviso = setTimeout(() => {
+    if (connected) setStatus("Sin actividad; voy a cerrar la sesión");
+  }, INACTIVIDAD_MS - AVISO_MS);
+
+  relojInactividad = setTimeout(() => {
+    if (!connected) return;
+    sesion?.disconnect();
+    // Se dice por qué se cerró: si no, parece que se cayó.
+    setStatus("Sesión cerrada por inactividad");
+    mostrarAviso("Cerré la sesión porque no hubo actividad. Pulsa «Iniciar conversación» para seguir.");
+  }, INACTIVIDAD_MS);
+}
+
+function pararRelojes() {
+  clearTimeout(relojInactividad);
+  clearTimeout(relojAviso);
+  relojInactividad = relojAviso = null;
+}
 
 async function atenderFallo(error) {
-  const puedeRelevar = proveedor === "openai" && geminiDisponible && MOTIVOS_DE_RELEVO.has(error.code);
-  if (!puedeRelevar) {
+  const cadena = proveedoresUtiles();
+  const siguiente = cadena[cadena.indexOf(proveedor) + 1];
+
+  if (!siguiente || !MOTIVOS_DE_RELEVO.has(error.code)) {
     setStatus(error.mensaje || "No se pudo conectar");
     mostrarAviso(error.ayuda || "");
     return;
   }
 
-  proveedor = "gemini";
-  sesion = sesiones.gemini;
-  setStatus(error.code === "API_RATE_LIMIT" ? "Sin crédito en OpenAI, paso a Gemini…" : "Paso a Gemini…");
+  proveedor = siguiente;
+  sesion = sesiones[siguiente];
+  setStatus(`Paso a ${siguiente === "openai" ? "OpenAI" : "Gemini"}…`);
   mostrarAviso("");
   ui.connect.disabled = true;
   await sesion.connect();
@@ -173,36 +258,41 @@ window.visualViewport?.addEventListener("resize", alCambiarLaVista);
 resize();
 
 ui.connect.addEventListener("click", () => {
-  if (connected) return sesion.disconnect();
-  // Cada intento vuelve a empezar por OpenAI, por si el crédito se repuso.
-  proveedor = "openai";
-  sesion = sesiones.openai;
-  ui.connect.disabled = true;
-  sesion.connect();
+  if (connected) return sesion?.disconnect();
+  conectar();
 });
 ui.mute.addEventListener("click", () => {
-  const muted = sesion.toggleMute();
+  const muted = sesion?.toggleMute();
   ui.mute.textContent = muted ? "Activar micrófono" : "Silenciar micrófono";
   setStatus(muted ? "Micrófono silenciado" : "Te escucho");
 });
-ui.meetMode.addEventListener("click", () => ui.stage.classList.add("meet"));
-ui.exitMeet.addEventListener("click", () => ui.stage.classList.remove("meet"));
+ui.meetMode.addEventListener("click", () => entrarEnModoMeet());
+ui.exitMeet.addEventListener("click", () => salirDeModoMeet());
 ui.toggleCaption.addEventListener("click", () => fijarSubtitulos(!verSubtitulos));
 ui.togglePanel.addEventListener("click", () => fijarPanel(!verPanel));
 ui.panelClose.addEventListener("click", () => fijarPanel(false));
-ui.imagenCerrar.addEventListener("click", () => mostrarLienzoDeImagen("oculto"));
-ui.referenciasCerrar.addEventListener("click", () => { ui.referencias.dataset.estado = "oculto"; });
+ui.imagenCerrar.addEventListener("click", () => {
+  mostrarLienzoDeImagen("oculto");
+  laminaEnPantalla = null;
+});
+ui.referenciasCerrar.addEventListener("click", () => {
+  ui.referencias.dataset.estado = "oculto";
+  referenciasEnPantalla = [];
+});
 document.addEventListener("keydown", event => {
   if (event.target.matches("input, textarea")) return;
   const tecla = event.key.toLowerCase();
-  if (tecla === "h") ui.stage.classList.toggle("meet");
+  if (tecla === "h") {
+    ui.stage.classList.contains("meet") ? salirDeModoMeet() : entrarEnModoMeet();
+  }
   if (tecla === "s") fijarSubtitulos(!verSubtitulos);
   if (event.key === "Escape") {
     if (verPanel) fijarPanel(false);
-    else ui.stage.classList.remove("meet");
+    else salirDeModoMeet();
   }
 });
 document.addEventListener("pointerdown", () => {
+  hayActividad();
   voice.resume();
   if (ui.audio.srcObject && ui.audio.paused) ui.audio.play().catch(() => {});
 }, { passive: true });
@@ -211,18 +301,466 @@ function setStatus(text) {
   ui.status.textContent = text;
 }
 
+// Modo reunión.
+//
+// El micrófono queda abierto pero Catalina no habla salvo que la llamen por su
+// nombre. Para que eso no cueste una fortuna, la reunión no se le manda al
+// modelo: la transcribe el navegador, gratis, y sólo cuando alguien dice
+// «Catalina» se le envía lo hablado como texto y se le pide que conteste.
+//
+// La sesión de voz sigue abierta pero con el micrófono cortado, así que no se
+// envía audio y no se paga por escuchar; a cambio responde al instante y con su
+// voz, sin tener que reconectar.
+const escucha = new EscuchaDeReunion({
+  alTranscribir: texto => {
+    hayActividad();                       // la reunión cuenta como vida
+    señalar("Escuchando · " + texto, "");  // se ve lo último entendido
+  },
+  alLlamarla: (peticion, contexto) => atenderLlamado(peticion, contexto),
+  alFallar: motivo => señalar(motivo, "problema")
+});
+
+// La señal de escucha es lo único visible en modo reunión. Muestra lo último
+// que entendió el navegador, que además sirve para ver si transcribe bien.
+function señalar(texto, estado = "") {
+  ui.oyendoTexto.textContent = texto;
+  ui.oyendo.dataset.estado = estado;
+}
+
+let enModoMeet = false;
+let micCortadoPorMeet = false;
+
+function entrarEnModoMeet() {
+  ui.stage.classList.add("meet");
+  if (enModoMeet) return;
+  enModoMeet = true;
+
+  ui.oyendo.hidden = false;
+
+  if (!escuchaDisponible()) {
+    // Sin reconocimiento de voz el modo sigue sirviendo para capturar la
+    // pantalla, pero no puede escuchar. Mejor decirlo que fingir que escucha.
+    señalar("Este navegador no puede transcribir. Usa Chrome.", "problema");
+    return;
+  }
+  if (!connected) {
+    señalar("Inicia la conversación antes de entrar en reunión", "problema");
+    return;
+  }
+
+  // Se deja de enviar audio al modelo sin apagar la pista: quien escucha ahora
+  // es el navegador, y con la pista apagada no oiría nada.
+  if (sesion && !sesion.muted) {
+    sesion.pausarEnvio(true);
+    micCortadoPorMeet = true;
+    ui.mute.textContent = "Activar micrófono";
+  }
+  escucha.olvidar();
+  if (escucha.empezar()) {
+    señalar("Escuchando · di «Catalina» para hablarme");
+    setStatus("En reunión");
+  } else {
+    señalar("No se pudo iniciar la escucha", "problema");
+  }
+}
+
+function salirDeModoMeet() {
+  ui.stage.classList.remove("meet");
+  if (!enModoMeet) return;
+  enModoMeet = false;
+
+  escucha.parar();
+  ui.oyendo.hidden = true;
+  // Sólo se devuelve el micrófono si fue este modo quien lo quitó.
+  if (micCortadoPorMeet && sesion?.muted) {
+    sesion.pausarEnvio(false);
+    ui.mute.textContent = "Silenciar micrófono";
+  }
+  micCortadoPorMeet = false;
+  setStatus(connected ? "Te escucho" : "Lista para comenzar");
+}
+
+// La llamaron por su nombre en mitad de la reunión.
+async function atenderLlamado(peticion, contexto) {
+  if (!connected || !sesion) {
+    // Sin sesión abierta no puede contestar; se avisa en vez de perder lo dicho.
+    señalar("Me llamaste, pero la sesión está cerrada", "problema");
+    return;
+  }
+  hayActividad();
+
+  // Se le da lo hablado y lo que le piden, separados, para que sepa qué es
+  // contexto y qué es la pregunta.
+  const mensaje = [
+    "Estás escuchando una reunión. Esto es lo que se ha dicho hasta ahora, transcrito automáticamente:",
+    "",
+    contexto || "(todavía no hay nada transcrito)",
+    "",
+    `Acaban de dirigirse a ti y te han pedido: «${peticion}»`,
+    "",
+    "Responde sólo a eso, breve y en voz alta. No resumas la reunión entera salvo que te lo pidan.",
+    "La transcripción es automática y puede tener errores: si algo no cuadra, dilo en vez de darlo por cierto."
+  ].join("\n");
+
+  const enviado = sesion.enviarTexto(mensaje);
+  señalar(enviado ? `Te oí: «${peticion}»` : "No pude enviar tu pregunta", enviado ? "respondiendo" : "problema");
+  setStatus("Respondiendo…");
+}
+
 // Herramientas de docencia.
 //
 // Las pide Catalina, no la interfaz: están declaradas en los dos proveedores y
 // el modelo decide cuándo usarlas. Ninguna inventa nada — una recupera láminas
 // ya publicadas, la otra referencias de PubMed—, y lo que se devuelve al modelo
 // es deliberadamente escueto para que comente lo que se ve sin releerlo.
+// Lo último que se mostró en pantalla. El correo lo adjunta sin que el modelo
+// tenga que repetirlo: ya lo tenemos aquí, y hacérselo dictar de nuevo sería
+// pedirle que reconstruya de memoria algo que puede recordar mal.
+let laminaEnPantalla = null;
+let referenciasEnPantalla = [];
+
 async function atenderHerramienta(nombre, argumentos) {
   if (nombre === "buscar_imagen_medica") return await pedirLamina(argumentos);
   if (nombre === "buscar_referencias") return await pedirReferencias(argumentos);
+  if (nombre === "enviar_resumen") return await enviarResumen(argumentos);
+  if (nombre === "buscar_salud_cerca") return await buscarSaludCerca(argumentos);
+  if (nombre === "llamar_por_telefono") return await llamarPorTelefono(argumentos);
+  if (nombre === "consultar_llamada") return await consultarLlamada(argumentos);
+  if (nombre === "como_llegar") return await comoLlegar(argumentos);
   // Cualquier otro nombre viene de un conector definido en el administrador.
   // Se manda el nombre, no la dirección: el servidor la resuelve.
   return await usarConector(nombre, argumentos);
+}
+
+async function enviarResumen(argumentos) {
+  const titulo = String(argumentos.titulo || "").trim();
+  const resumen = String(argumentos.resumen || "").trim();
+  if (!titulo || !resumen) return { ok: false, error: "Falta el título o el resumen" };
+
+  setStatus("Enviando el resumen…");
+  try {
+    const respuesta = await fetch("/correo", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        titulo, resumen,
+        lamina: laminaEnPantalla,
+        referencias: referenciasEnPantalla
+      })
+    });
+    const datos = await respuesta.json().catch(() => ({}));
+    if (!respuesta.ok || !datos.ok) {
+      setStatus("No se pudo enviar el correo");
+      return { ok: false, error: datos.error || "No se pudo enviar el correo" };
+    }
+    setStatus("Resumen enviado");
+    return { ok: true, enviado: true, destinatario: datos.destinatario };
+  } catch (error) {
+    console.error(error);
+    setStatus("No se pudo enviar el correo");
+    return { ok: false, error: "Falló la conexión al enviar el correo" };
+  }
+}
+
+// Ubicación del dispositivo. Se pide sólo cuando hace falta —al buscar una
+// farmacia de turno—, no al arrancar: un permiso de geolocalización pedido sin
+// motivo se deniega, y luego ya no se puede volver a pedir.
+function ubicacionActual() {
+  if (!navigator.geolocation) return Promise.resolve(null);
+  return new Promise(resolver => {
+    navigator.geolocation.getCurrentPosition(
+      posicion => resolver({ lat: posicion.coords.latitude, lon: posicion.coords.longitude }),
+      // Si lo deniegan o tarda, se sigue con la comuna que haya dicho la
+      // persona: quedarse sin responder sería peor.
+      () => resolver(null),
+      // Cuatro segundos, no ocho: esta espera va antes de la búsqueda y se suma
+      // a ella, así que ocho segundos de GPS lento eran ocho segundos callada
+      // antes siquiera de empezar a buscar.
+      { timeout: 4000, maximumAge: 300000 }
+    );
+  });
+}
+
+// Se pide la ubicación en cuanto arranca la conversación, no cuando hace falta.
+// Con `maximumAge` la respuesta queda disponible durante cinco minutos, así que
+// la primera búsqueda ya no paga el permiso ni el arranque del GPS.
+//
+// Y con ella se dejan pedidas al servidor las consultas de la zona: la caché de
+// /salud dura un día, y quien paga la primera espera deja de ser la persona que
+// preguntó. Va todo en segundo plano; si falla, no se avisa de nada, porque no
+// se ha pedido nada todavía.
+function calentarUbicacion() {
+  ubicacionActual().then(ubicacion => {
+    if (!ubicacion) return;
+    ubicacionConocida = ubicacion;
+    // De uno en uno, no los tres a la vez: son consultas pesadas contra un
+    // servicio comunitario, y aquí no corre prisa ninguna.
+    (async () => {
+      for (const tipo of ["farmacia", "hospital", "clinica"]) {
+        try {
+          await fetch("/salud", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ tipo, lat: ubicacion.lat, lon: ubicacion.lon, fondo: true })
+          });
+        } catch { /* si no se puede, la consulta en vivo lo intentará */ }
+      }
+    })();
+  });
+}
+
+async function buscarSaludCerca(argumentos) {
+  const tipo = String(argumentos.tipo || "").trim();
+  if (!tipo) return { ok: false, error: "Falta qué buscar" };
+
+  setStatus("Buscando cerca…");
+  const ubicacion = await ubicacionActual();
+  if (ubicacion) ubicacionConocida = ubicacion;
+  try {
+    const respuesta = await fetch("/salud", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      // Sin tope, esta espera era indefinida: medido en Santiago, una zona sin
+      // consultar antes podía tener a Catalina callada más de cuarenta y cinco
+      // segundos. Vale más contestar que no se pudo.
+      signal: AbortSignal.timeout(ESPERA_HERRAMIENTA_MS),
+      body: JSON.stringify({
+        tipo,
+        comuna: argumentos.comuna || "",
+        lat: ubicacion?.lat,
+        lon: ubicacion?.lon
+      })
+    });
+    const datos = await respuesta.json().catch(() => ({}));
+    if (!respuesta.ok || !datos.ok) {
+      setStatus("Te escucho");
+      return { ok: false, error: datos.error || "No se pudo buscar" };
+    }
+    if (!datos.resultados?.length) {
+      setStatus("Te escucho");
+      return { ok: true, resultados: [], nota: "No se encontró nada cerca con esos datos." };
+    }
+    lugaresEnPantalla = datos.resultados;
+    mostrarLugares(datos);
+    setStatus("Te escucho");
+    return datos;
+  } catch (error) {
+    console.error(error);
+    setStatus("Te escucho");
+    // Distinguir el corte por tiempo del fallo de red importa: lo que Catalina
+    // diga es distinto. Si se agotó la espera, el mapa puede estar bien y sólo
+    // lento, y volver a intentarlo tiene sentido.
+    if (error?.name === "TimeoutError" || error?.name === "AbortError") {
+      return { ok: false, error: "El mapa está tardando demasiado; se puede reintentar en un momento." };
+    }
+    return { ok: false, error: "Falló la conexión al buscar" };
+  }
+}
+
+// Lo último que se listó y desde dónde se buscó. Sin esto, para trazar la ruta
+// habría que hacerle repetir al modelo unas coordenadas que no vio nunca.
+let lugaresEnPantalla = [];
+let ubicacionConocida = null;
+
+async function comoLlegar(argumentos) {
+  const buscado = String(argumentos.destino || "").trim().toLowerCase();
+  if (!buscado) return { ok: false, error: "Falta el destino" };
+  if (!lugaresEnPantalla.length) {
+    return { ok: false, error: "Primero hay que buscar lugares cerca." };
+  }
+
+  const destino = lugaresEnPantalla.find(l => l.nombre.toLowerCase().includes(buscado))
+    ?? lugaresEnPantalla.find(l => buscado.includes(l.nombre.toLowerCase()));
+  if (!destino) return { ok: false, error: "Ese lugar no está entre los que se mostraron." };
+
+  // Lo que diga la persona manda sobre el GPS: si aclara que sale de otro
+  // sitio, es porque el punto del dispositivo no es el que le interesa.
+  const desde = String(argumentos.desde || "").trim();
+  const origen = desde ? null : (ubicacionConocida ?? await ubicacionActual());
+  if (!origen && !desde) {
+    // Se dice qué falta, para que Catalina lo pregunte en vez de inventarse un
+    // punto de partida.
+    return { ok: false, faltaOrigen: true, error: "No sé desde dónde sale la persona. Pregúntale dónde está." };
+  }
+
+  setStatus("Trazando el camino…");
+  try {
+    const respuesta = await fetch("/ruta", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ origen, desde, destino: { lat: destino.lat, lon: destino.lon } })
+    });
+    const ruta = await respuesta.json().catch(() => ({}));
+    if (!ruta.ok) {
+      setStatus("Te escucho");
+      return { ok: false, error: ruta.error || "No se pudo trazar el camino" };
+    }
+
+    await mostrarMapa(ruta, destino);
+    setStatus("Te escucho");
+    return {
+      ok: true,
+      destino: destino.nombre,
+      distanciaKm: ruta.distanciaKm,
+      minutosEnAuto: ruta.minutosEnAuto,
+      minutosCaminando: ruta.minutosCaminando,
+      pasos: ruta.pasos
+    };
+  } catch (error) {
+    console.error(error);
+    setStatus("Te escucho");
+    return { ok: false, error: "Falló la conexión al trazar el camino" };
+  }
+}
+
+// El mapa entra en la misma tarjeta que las láminas: es una imagen más, y así
+// no aparece otra ventana que tape la cara.
+async function mostrarMapa(ruta, destino) {
+  mostrarLienzoDeImagen("cargando");
+  const imagen = await dibujarRuta(ruta);
+  if (!imagen) { mostrarLienzoDeImagen("oculto"); return; }
+
+  ui.imagenFoto.src = imagen;
+  ui.imagenFoto.alt = `Mapa del trayecto hasta ${destino.nombre}`;
+  ui.imagenPie.textContent = `${destino.nombre} · ${ruta.distanciaKm} km`;
+  ui.imagenCredito.textContent = "Abrir el recorrido en Google Maps";
+  ui.imagenCredito.href = ruta.enlace;
+  // El propio mapa también lleva al recorrido: es lo primero que uno intenta
+  // tocar cuando quiere verlo en grande.
+  ui.imagenFoto.style.cursor = "pointer";
+  ui.imagenFoto.onclick = () => window.open(ruta.enlace, "_blank", "noopener");
+  laminaEnPantalla = null;   // un mapa no es una lámina: no debe viajar en el correo
+  mostrarLienzoDeImagen("visible");
+}
+
+const TITULOS_LUGARES = {
+  farmacia: "Farmacias",
+  hospital: "Hospitales",
+  clinica: "Clínicas"
+};
+
+// Se reutiliza el panel de referencias: es la misma forma —una lista corta con
+// un enlace por elemento— y así no se añade otra tarjeta que tape la cara.
+function mostrarLugares(datos) {
+  ui.referenciasTitulo.textContent = TITULOS_LUGARES[datos.tipo] || "Cerca de ti";
+  ui.referenciasLista.replaceChildren();
+
+  for (const lugar of datos.resultados) {
+    const item = document.createElement("li");
+
+    const enlace = document.createElement("a");
+    enlace.href = lugar.mapa || "#";
+    enlace.target = "_blank";
+    enlace.rel = "noopener noreferrer";
+    enlace.textContent = lugar.nombre;
+
+    const pie = document.createElement("span");
+    pie.className = "referencia-pie";
+    pie.textContent = [
+      [lugar.direccion, lugar.comuna].filter(Boolean).join(", "),
+      lugar.horario,
+      lugar.telefono,
+      lugar.distanciaKm != null ? `a ${lugar.distanciaKm} km` : ""
+    ].filter(Boolean).join(" · ");
+
+    item.append(enlace, pie);
+    ui.referenciasLista.append(item);
+  }
+
+  if (datos.advertencia) {
+    const nota = document.createElement("li");
+    nota.className = "referencia-nota";
+    nota.textContent = datos.advertencia;
+    ui.referenciasLista.append(nota);
+  }
+  ui.referencias.dataset.estado = "visible";
+  referenciasEnPantalla = [];   // esto no son referencias: no debe viajar en el correo
+}
+
+// Llamadas telefónicas. El servidor hace el trabajo; aquí sólo se pide y se
+// consulta, y se refleja en pantalla en qué va.
+async function llamarPorTelefono(argumentos) {
+  setStatus("Llamando…");
+  try {
+    const respuesta = await fetch("/llamada", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        numero: argumentos.numero,
+        objetivo: argumentos.objetivo,
+        confirmado: argumentos.confirmado === true
+      })
+    });
+    const datos = await respuesta.json().catch(() => ({}));
+    if (!datos.ok) {
+      setStatus("Te escucho");
+      return datos;
+    }
+    mostrarLlamada({ estado: "marcando", numero: argumentos.numero, objetivo: argumentos.objetivo });
+    return datos;
+  } catch (error) {
+    console.error(error);
+    setStatus("Te escucho");
+    return { ok: false, error: "No se pudo iniciar la llamada" };
+  }
+}
+
+async function consultarLlamada(argumentos) {
+  const id = String(argumentos.id || "").trim();
+  if (!id) return { ok: false, error: "Falta el identificador de la llamada" };
+  try {
+    const respuesta = await fetch(`/llamada/${encodeURIComponent(id)}`);
+    const datos = await respuesta.json().catch(() => ({}));
+    if (!datos.ok) return datos;
+    mostrarLlamada(datos);
+    // La transcripción completa no se le devuelve al modelo: son minutos de
+    // conversación y lo que necesita para contarlo es el desenlace.
+    return {
+      ok: true,
+      estado: datos.estado,
+      resultado: datos.resultado,
+      enCurso: ["marcando", "sonando", "contestada", "hablando"].includes(datos.estado)
+    };
+  } catch (error) {
+    console.error(error);
+    return { ok: false, error: "No se pudo consultar la llamada" };
+  }
+}
+
+const ESTADOS_LLAMADA = {
+  marcando: "Marcando…", sonando: "Sonando…", contestada: "Contestaron",
+  hablando: "Catalina está hablando", terminada: "Llamada terminada",
+  ocupado: "Comunica", "sin respuesta": "No contestaron",
+  fallida: "La llamada falló", cancelada: "Llamada cancelada"
+};
+
+function mostrarLlamada(datos) {
+  ui.referenciasTitulo.textContent = "Llamada";
+  ui.referenciasLista.replaceChildren();
+
+  const cabecera = document.createElement("li");
+  cabecera.className = "referencia-nota";
+  cabecera.textContent = [ESTADOS_LLAMADA[datos.estado] || datos.estado, datos.numero]
+    .filter(Boolean).join(" · ");
+  ui.referenciasLista.append(cabecera);
+
+  if (datos.objetivo) {
+    const objetivo = document.createElement("li");
+    objetivo.className = "referencia-nota";
+    objetivo.textContent = datos.objetivo;
+    ui.referenciasLista.append(objetivo);
+  }
+
+  if (datos.resultado) {
+    const resultado = document.createElement("li");
+    resultado.className = "referencia-nota";
+    resultado.textContent = (datos.resultado.logrado ? "✓ " : "· ") + datos.resultado.detalle;
+    ui.referenciasLista.append(resultado);
+  }
+
+  ui.referencias.dataset.estado = "visible";
+  referenciasEnPantalla = [];
+  setStatus(ESTADOS_LLAMADA[datos.estado] || "Te escucho");
 }
 
 async function usarConector(nombre, argumentos) {
@@ -260,7 +798,15 @@ async function pedirLamina(argumentos) {
     }
 
     mostrarLamina(datos.lamina);
-    return { ok: true, mostrada: true, titulo: datos.lamina.titulo, fuente: datos.lamina.fuente };
+    return {
+      ok: true,
+      mostrada: true,
+      titulo: datos.lamina.titulo,
+      fuente: datos.lamina.fuente,
+      // Va explícito para que Catalina lo advierta al hablar en vez de
+      // presentar como exacta una lámina que sólo se aproxima.
+      aproximada: datos.lamina.aproximada === true
+    };
   } catch (error) {
     console.error(error);
     mostrarLienzoDeImagen("oculto");
@@ -298,6 +844,9 @@ function mostrarLienzoDeImagen(estado) {
 }
 
 function mostrarLamina(lamina) {
+  laminaEnPantalla = lamina;
+  ui.imagenFoto.onclick = null;
+  ui.imagenFoto.style.cursor = "";
   ui.imagenFoto.src = lamina.imagen;
   ui.imagenFoto.alt = lamina.titulo;
   ui.imagenPie.textContent = lamina.titulo;
@@ -309,6 +858,8 @@ function mostrarLamina(lamina) {
 }
 
 function mostrarReferencias(referencias) {
+  referenciasEnPantalla = referencias;
+  ui.referenciasTitulo.textContent = "Referencias";
   ui.referenciasLista.replaceChildren();
   for (const referencia of referencias) {
     const item = document.createElement("li");
@@ -469,8 +1020,11 @@ fijarPanel(verPanel);
 // que OpenAI fallara para descubrir que tampoco hay respaldo.
 fetch("/health")
   .then(respuesta => respuesta.json())
-  .then(estado => { geminiDisponible = Boolean(estado.proveedores?.gemini); })
-  .catch(() => { geminiDisponible = false; });
+  .then(estado => {
+    disponible.openai = Boolean(estado.proveedores?.openai);
+    disponible.gemini = Boolean(estado.proveedores?.gemini);
+  })
+  .catch(() => {});
 
 // Va después de fijar la vista: el aviso necesita que el estado ya exista, y
 // además debe poder pasar por encima de unos subtítulos apagados.
@@ -498,7 +1052,16 @@ function seguirFinDeTurno(lectura, now) {
     respuestaCerrada = false;
     silencioDesde = 0;
     director.setState(faseDeSesion === "idle" ? "listening" : faseDeSesion);
-    setStatus("Te escucho");
+    setStatus(enModoMeet ? "En reunión" : "Te escucho");
+    // Terminó de hablar de verdad —lo decide el silencio real de la pista, no
+    // el fin de la generación—, así que vuelve a escuchar la reunión. El
+    // margen extra deja pasar la cola de su voz en la sala.
+    if (enModoMeet) {
+      setTimeout(() => {
+        escucha.ensordecer(false);
+        señalar("Escuchando · di «Catalina» para hablarme");
+      }, 700);
+    }
   }
 }
 
@@ -542,6 +1105,7 @@ window.catalina = {
   sesiones,
   manejadores,
   get session() { return sesion; },
+  get disponible() { return disponible; },
   get proveedor() { return proveedor; },
   expresionDeFrase: aplicarExpresionDeFrase,
   get renderer() { return renderer; },

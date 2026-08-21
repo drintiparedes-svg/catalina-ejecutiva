@@ -158,6 +158,18 @@ export class RealtimeSession {
     this.channel.send(JSON.stringify({ type: "response.create" }));
   }
 
+  // Entrada por texto, para el modo Meet: allí no se le manda audio, se le
+  // manda lo que el navegador transcribió y se le pide que conteste.
+  enviarTexto(texto) {
+    if (this.channel?.readyState !== "open") return false;
+    this.channel.send(JSON.stringify({
+      type: "conversation.item.create",
+      item: { type: "message", role: "user", content: [{ type: "input_text", text: texto }] }
+    }));
+    this.channel.send(JSON.stringify({ type: "response.create" }));
+    return true;
+  }
+
   disconnect() {
     this.connected = false;
     this.channel?.close();
@@ -172,6 +184,15 @@ export class RealtimeSession {
   toggleMute() {
     this.muted = !this.muted;
     this.micStream?.getAudioTracks().forEach(track => { track.enabled = !this.muted; });
+    return this.muted;
+  }
+
+  // Con WebRTC la única forma de dejar de enviar es apagar la pista: el audio
+  // lo gestiona el navegador y no pasa por aquí. En modo reunión eso puede
+  // estorbar al reconocimiento de voz, así que ahí conviene usar Gemini.
+  pausarEnvio(pausado) {
+    this.muted = pausado;
+    this.micStream?.getAudioTracks().forEach(track => { track.enabled = !pausado; });
     return this.muted;
   }
 }

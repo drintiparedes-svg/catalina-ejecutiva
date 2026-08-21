@@ -92,8 +92,10 @@ la piel real medida sobre la imagen, nunca superponiendo dibujos.
   abajo la imagen no se toca. El corte queda por encima de la clavícula a
   propósito: bastaba con rozar el pecho para que se moviera.
 
-  Ni respira: la respiración escalaba el retrato completo y se leía como un
-  latido de la imagen, no como un pecho.
+  El tórax tampoco respira: escalaba el retrato completo y se leía como un
+  latido de la imagen, no como un pecho. El **ciclo** respiratorio sigue vivo,
+  eso sí, porque de él cuelga el ala de la nariz, que es un movimiento pequeño
+  y que aguanta que lo miren de cerca.
 
   Todo lo que se mueve se **traslada**, nunca se estira. Medido en Chromium, una
   franja redibujada y corrida sale idéntica a la fotografía dibujada de una
@@ -101,8 +103,8 @@ la piel real medida sobre la imagen, nunca superponiendo dibujos.
   blanda. Por eso el estiramiento sólo existe en la franja de transición del
   pelo, y por eso el retrato se ve tan nítido como la fotografía original.
 
-En reposo el rostro sigue vivo: parpadea, mira alrededor, traga, entreabre los
-labios antes de tomar el turno y la brisa le mueve el pelo.
+En reposo el rostro sigue vivo: respira por la nariz, parpadea, mira alrededor,
+traga, entreabre los labios antes de tomar el turno y la brisa le mueve el pelo.
 
 ## Expresiones
 
@@ -172,6 +174,7 @@ public/
   render/hair-layer.js   las dos melenas
   render/head-layer.js   cabeza y cuello, con el busto clavado
   render/mouth-layer.js  mandíbula, labios y cavidad
+  render/nose-layer.js   respiración nasal basal
   render/eyes-layer.js   mirada y parpadeo
   render/brow-layer.js   cejas
   render/face-renderer.js composición del cuadro
@@ -337,7 +340,23 @@ rotula mal, y en docencia eso se aprende como si fuera cierto. Todo lo que
 aparece en pantalla existía antes de preguntar y se puede comprobar en su
 fuente.
 
-Dos detalles de la búsqueda que cuestan de adivinar:
+La búsqueda insiste antes de rendirse: dos tandas de tres consultas **en
+paralelo**, no una cascada en fila. Encadenadas encontraban imagen casi siempre
+pero sumaban hasta ocho viajes de red y la espera se hacía larga; lanzadas a la
+vez, la primera tanda cuesta lo que la más lenta de sus tres y resuelve la
+mayoría de los casos. Si Commons no da nada, se usa la imagen principal del
+artículo de Wikipedia —primero en español—, que suele ser el esquema que uno
+usaría para explicárselo a alguien.
+
+Cuando lo único encontrado no menciona el término, se devuelve marcado como
+**aproximado** y Catalina lo advierte al hablar, en vez de presentarlo como la
+estructura exacta.
+
+El material se prefiere esquemático y simple, para explicárselo a un paciente:
+puntúan alto el vectorial y los títulos con «diagram» o «esquema», y bajan la
+disección, la microscopía y las imágenes radiológicas.
+
+Tres detalles de la búsqueda que cuestan de adivinar:
 
 - La consulta a Commons va escueta (`estructura + "diagram"`). Con grupos de
   `OR` el buscador reparte el peso entre esas palabras y diluye el término real:
@@ -345,6 +364,9 @@ Dos detalles de la búsqueda que cuestan de adivinar:
 - La ordenación es jerárquica: primero que la lámina trate del tema, después que
   esté dibujada. Al revés —premiando sólo el «parece dibujo»— devolvía un
   esquema de caracol en SVG para una consulta de plexo braquial.
+- Wikimedia estrangula a quien no se identifica con un contacto en el
+  `User-Agent`. En ráfagas se nota mucho: las primeras consultas pasan y las
+  siguientes se rechazan sin más, que desde fuera parece «no hay imagen».
 
 Ni Commons ni PubMed necesitan clave.
 

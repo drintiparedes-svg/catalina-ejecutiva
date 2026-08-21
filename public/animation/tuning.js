@@ -30,5 +30,20 @@ export const TUNING = {
 
   // Geometría, en píxeles de la imagen original (1408×768).
   jawTravel: 18,   // recorrido máximo del mentón
-  lipEvert: 9.5    // apertura extra del labio inferior sobre la mandíbula
+  lipEvert: 9.5,   // apertura extra del labio inferior sobre la mandíbula
+
+  // Respiración nasal basal.
+  //
+  // El recorrido es diminuto a propósito. El ala mide unos 76 px de lado a
+  // lado para una nariz de ~40 mm, así que un píxel son más o menos medio
+  // milímetro. La excursión del ala en respiración tranquila es de décimas de
+  // milímetro: pasado de ahí deja de ser ventilación y parece aleteo nasal,
+  // que es signo de trabajo respiratorio.
+  nasalApertura: 1.6,    // px que se separa el borde alar del eje, en el máximo
+  nasalDescenso: .35,    // parte de ese recorrido que va hacia abajo
+  nasalRelieve: .05,     // realce de luz del ala al abrirse, da sensación de volumen
+  // La anatomía real no es simétrica. Se aplica una diferencia fija entre
+  // lados, nunca una alternancia visible: el ciclo nasal existe, pero verlo
+  // alternar en pantalla parecería un fallo.
+  nasalAsimetria: .94
 };

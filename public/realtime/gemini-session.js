@@ -30,8 +30,7 @@ export class GeminiSession {
     this.connected = false;
     this.muted = false;
     this.transcript = "";
-    this.reproducirEn = 0;    // cuándo debe sonar el próximo trozo
-    this.fuentes = new Set(); // trozos en cola, para poder cortarlos
+    this.reproductor = null;  // AudioWorkletNode que va sacando el audio
   }
 
   #emit(name, ...args) {
@@ -89,50 +88,40 @@ export class GeminiSession {
     });
   }
 
-  // Reproducción. Los trozos llegan sueltos y hay que encadenarlos: cada uno se
-  // agenda justo cuando termina el anterior, porque dejarlos sonar «ahora»
-  // produce solapes y cortes audibles.
+  // Reproducción. El hilo principal sólo entrega muestras; quien las saca al
+  // ritmo exacto de la tarjeta de sonido es el worklet, en el hilo de audio.
   async #prepararSalida() {
     this.salida = new AudioContext({ sampleRate: SALIDA_HZ });
     await this.salida.resume().catch(() => {});
+    await this.salida.audioWorklet.addModule("./audio/reproductor-pcm.js");
+
+    this.reproductor = new AudioWorkletNode(this.salida, "reproductor-pcm", {
+      numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [1]
+    });
     this.destino = this.salida.createMediaStreamDestination();
-    // Se oye por los altavoces y a la vez alimenta el analizador de labios.
+    this.reproductor.connect(this.destino);
+
+    // Este stream hace las dos cosas: lo reproduce el elemento <audio> de la
+    // página y lo analiza el seguidor de labios. Una sola salida de sonido.
     this.#emit("onRemoteStream", this.destino.stream);
   }
 
   #reproducir(base64) {
-    if (!this.salida) return;
+    if (!this.reproductor) return;
     const bytes = decodificar(base64);
-    const muestras = new Int16Array(bytes.buffer, bytes.byteOffset, bytes.byteLength >> 1);
-    if (!muestras.length) return;
+    const enteros = new Int16Array(bytes.buffer, bytes.byteOffset, bytes.byteLength >> 1);
+    if (!enteros.length) return;
 
-    const buffer = this.salida.createBuffer(1, muestras.length, SALIDA_HZ);
-    const canal = buffer.getChannelData(0);
-    for (let i = 0; i < muestras.length; i += 1) canal[i] = muestras[i] / 32768;
-
-    const fuente = this.salida.createBufferSource();
-    fuente.buffer = buffer;
-    fuente.connect(this.destino);
-    fuente.connect(this.salida.destination);
-
-    const ahora = this.salida.currentTime;
-    // Un colchón corto absorbe los saltos de la red sin que se note retraso.
-    if (this.reproducirEn < ahora) this.reproducirEn = ahora + .06;
-    fuente.start(this.reproducirEn);
-    this.reproducirEn += buffer.duration;
-
-    this.fuentes.add(fuente);
-    fuente.onended = () => this.fuentes.delete(fuente);
+    const muestras = new Float32Array(enteros.length);
+    for (let i = 0; i < enteros.length; i += 1) muestras[i] = enteros[i] / 32768;
+    // Se transfiere en vez de copiarse: son bloques de audio y llegan seguidos.
+    this.reproductor.port.postMessage({ tipo: "audio", muestras }, [muestras.buffer]);
   }
 
   // Interrupción: si la persona habla encima, Gemini avisa y hay que callar de
   // inmediato lo que ya estaba en cola, o Catalina seguiría hablando sola.
   #callar() {
-    for (const fuente of this.fuentes) {
-      try { fuente.stop(); } catch {}
-    }
-    this.fuentes.clear();
-    this.reproducirEn = 0;
+    this.reproductor?.port.postMessage({ tipo: "callar" });
   }
 
   // Captura. El micrófono llega a la frecuencia del sistema (normalmente 48 kHz)
@@ -219,6 +208,19 @@ export class GeminiSession {
     }
   }
 
+  // Entrada por texto, igual que en la sesión de OpenAI. `turnComplete` es lo
+  // que le dice a Gemini que ya puede contestar.
+  enviarTexto(texto) {
+    if (this.socket?.readyState !== WebSocket.OPEN) return false;
+    this.socket.send(JSON.stringify({
+      clientContent: {
+        turns: [{ role: "user", parts: [{ text: texto }] }],
+        turnComplete: true
+      }
+    }));
+    return true;
+  }
+
   disconnect() {
     this.connected = false;
     this.#callar();
@@ -227,6 +229,7 @@ export class GeminiSession {
     this.micStream?.getTracks().forEach(pista => pista.stop());
     this.entrada?.close().catch(() => {});
     this.salida?.close().catch(() => {});
+    this.reproductor = null;
     this.socket = this.micStream = this.entrada = this.salida = this.destino = this.nodoEntrada = null;
     this.muted = false;
     this.#emit("onDisconnected");
@@ -236,6 +239,16 @@ export class GeminiSession {
   toggleMute() {
     this.muted = !this.muted;
     this.micStream?.getAudioTracks().forEach(pista => { pista.enabled = !this.muted; });
+    return this.muted;
+  }
+
+  // Corta lo que se envía sin apagar la pista del micrófono.
+  //
+  // En modo reunión el navegador tiene que seguir oyendo para transcribir, y
+  // apagar la pista se lo pone difícil. Aquí no hace falta tocarla: basta con
+  // dejar de mandar, porque el envío ya mira esta bandera en cada bloque.
+  pausarEnvio(pausado) {
+    this.muted = pausado;
     return this.muted;
   }
 }

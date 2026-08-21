@@ -46,7 +46,7 @@
 
     <aside class="referencias" id="referencias" data-estado="oculto" aria-label="Referencias">
       <header class="referencias-cabecera">
-        <span>Referencias</span>
+        <span id="referenciasTitulo">Referencias</span>
         <button class="referencias-cerrar" id="referenciasCerrar" aria-label="Cerrar las referencias">&times;</button>
       </header>
       <ol id="referenciasLista"></ol>
@@ -59,9 +59,16 @@
       <button id="togglePanel" aria-pressed="false" title="Abre el historial de la conversación">Historial</button>
       <button id="meetMode" title="Oculta los controles para capturar la ventana">Modo Meet</button>
     </nav>
+    <!-- Señal de escucha del modo reunión. Es lo único que se ve en ese modo
+         aparte de la cara: sin ella no hay forma de saber si está oyendo. -->
+    <div class="oyendo" id="oyendo" hidden>
+      <span class="oyendo-punto"></span>
+      <span id="oyendoTexto">Escuchando…</span>
+    </div>
+
     <button class="exit-meet" id="exitMeet" aria-label="Salir del modo Meet">Mostrar controles</button>
   </main>
   <audio id="remoteAudio" autoplay></audio>
-  <script type="module" src="app.js?v=23"></script>
+  <script type="module" src="app.js?v=25"></script>
 </body>
 </html>

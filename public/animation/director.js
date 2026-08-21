@@ -94,6 +94,9 @@ export class PerformanceDirector {
     // El aire mueve la melena; el busto no se mueve en absoluto.
     this.wind = new HairWind();
 
+    this.breathPhase = .2;
+    this.breathBoost = 0;
+
     this.energyFast = 0;
     this.energySlow = 0;
     this.lastOnsetAt = -10;
@@ -110,6 +113,9 @@ export class PerformanceDirector {
 
     this.pose = {
       head: { x: 0, y: 0, tilt: 0 },
+      // El tórax ya no se ensancha —eso movía el retrato entero—, pero el
+      // ciclo respiratorio sigue vivo: de él cuelga el ala de la nariz.
+      breath: { nasal: 0 },
       hair: this.wind,
       eyes: { left: 0, right: 0, gaze: { x: 0, y: 0 } },
       brows: [{ raise: 0, tilt: 0 }, { raise: 0, tilt: 0 }],
@@ -130,6 +136,8 @@ export class PerformanceDirector {
     this.nextSaccadeAt = Math.min(this.nextSaccadeAt, this.time + range(.05, .3));
 
     if (state === "speaking") {
+      this.breathPhase = 0;          // inspiración antes de la frase
+      this.breathBoost = 1;
       this.brow.target = .32;
       this.brow.holdUntil = this.time + .5;
     }
@@ -181,6 +189,7 @@ export class PerformanceDirector {
     this.#trackEnergy(speech, dt);
     this.#updateExpression(dt);
     this.#updateMouth(speech, dt);
+    this.#updateBreath(dt);
     this.#updateBlink(profile);
     this.#updateGaze(profile);
     this.#updateHead(profile, dt);
@@ -288,6 +297,24 @@ export class PerformanceDirector {
     this.mouth.spread = clamp(this.mouth.spread, .12, .92);
     this.mouth.round = clamp(this.mouth.round);
     this.mouth.press = clamp(this.mouth.press);
+  }
+
+  // Respiración.
+  //
+  // Queda el ciclo, no el bombeo: el tórax escalaba el retrato completo y se
+  // leía como un latido de la imagen, no como un pecho. Lo que sobrevive es la
+  // onda, porque de ella cuelga el ala de la nariz, que sí es un movimiento
+  // que se puede mirar de cerca.
+  #updateBreath(dt) {
+    const rate = this.state === "speaking" ? 1 / 3.4 : 1 / 4.6;
+    this.breathPhase = (this.breathPhase + dt * rate * (1 + this.breathBoost * .8)) % 1;
+    this.breathBoost = damp(this.breathBoost, 0, dt, .5);
+
+    // Inspiración corta, espiración larga.
+    const p = this.breathPhase;
+    this.pose.breath.nasal = p < .38
+      ? 1 - Math.pow(1 - p / .38, 3)
+      : 1 - smoothstep(0, 1, (p - .38) / .62);
   }
 
   #updateBlink(profile) {
