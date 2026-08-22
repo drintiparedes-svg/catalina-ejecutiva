@@ -1,10 +1,20 @@
-# Catalina — avatar conversacional local
+# Catalina Ejecutiva — jefa de gabinete con avatar
 
-Prototipo local de voz a voz basado en OpenAI Realtime API. La clave permanece en el servidor local y nunca se entrega al navegador.
+Rama aparte de [catalina-avatar](https://github.com/drintiparedes-svg/catalina-avatar):
+la misma cara y el mismo motor de animación, con la voz y el cerebro de un
+**agente de ElevenLabs** en vez de la asistente de salud.
+
+La cara no cambió ni una línea: el avatar analiza el audio que suene, venga del
+proveedor que venga. Lo que sí cambió es la boca — con ElevenLabs ya no se
+adivina del espectro, porque el agente manda qué carácter suena y cuándo.
+
+Quedan tres voces en cadena: ElevenLabs primero, OpenAI y Gemini de respaldo.
+Ninguna clave llega al navegador; el servidor firma cada sesión.
 
 ## Iniciar en macOS
 
-1. Duplica `.env.example` como `.env` y pega tu `OPENAI_API_KEY`.
+1. Duplica `.env.example` como `.env` y pega tu `ELEVENLABS_API_KEY` y el
+   `ELEVENLABS_AGENT_ID` del agente que crees en su panel.
 2. Haz doble clic en `start.command`.
 3. En el navegador, pulsa **Iniciar conversación** y permite el micrófono.
 

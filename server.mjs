@@ -33,7 +33,11 @@ const server = createServer(async (req, res) => {
         // La interfaz consulta esto al arrancar para saber si hay red de
         // respaldo. Las láminas y las referencias no aparecen aquí porque no
         // dependen de ninguna clave: Commons y PubMed son abiertos.
-        proveedores: { openai: hasApiKey(), gemini: hasGeminiKey() }
+        proveedores: {
+          elevenlabs: hasElevenLabsKey() && hasElevenLabsAgent(),
+          openai: hasApiKey(),
+          gemini: hasGeminiKey()
+        }
       });
     }
 
@@ -43,6 +47,10 @@ const server = createServer(async (req, res) => {
 
     if (req.method === "POST" && req.url === "/gemini/token") {
       return await createGeminiToken(res);
+    }
+
+    if (req.method === "POST" && req.url === "/elevenlabs/sesion") {
+      return await createElevenLabsSession(res);
     }
 
     if (req.method === "POST" && req.url === "/imagen-medica") {
@@ -556,6 +564,127 @@ async function createGeminiToken(res) {
       }]
     }
   });
+}
+
+// --- ElevenLabs: agente de voz ---------------------------------------------
+//
+// Con ElevenLabs el modelo, la escucha y la voz viven en su agente, no aquí.
+// Lo único que hace falta del lado del servidor es lo mismo que con OpenAI y
+// Gemini: **firmar la sesión sin que la clave llegue al navegador**.
+//
+// La clave `xi-api-key` da acceso a toda la cuenta —clonar voces, gastar
+// crédito, leer conversaciones pasadas—, así que no puede salir de aquí. Se
+// cambia por una URL firmada de un solo uso y con caducidad corta, que es lo
+// que el navegador abre.
+//
+// Junto a la URL se manda el primer mensaje del protocolo ya montado. Va desde
+// el servidor a propósito: ahí se decide la persona, el idioma y la voz, y son
+// decisiones que no deben poder cambiarse desde la consola del navegador.
+const ELEVENLABS_API = "https://api.elevenlabs.io";
+
+async function createElevenLabsSession(res) {
+  if (!hasElevenLabsKey()) {
+    return json(res, 503, {
+      error: "Falta ELEVENLABS_API_KEY.",
+      code: "ELEVENLABS_KEY_MISSING"
+    });
+  }
+
+  // El identificador del agente va en el entorno y no en `config.json`, como
+  // el resto de identificadores de servicios externos: así `/health` puede
+  // decir si hay proveedor sin leer la configuración, y el panel no puede
+  // apuntar la sesión a un agente que no es el nuestro.
+  const agente = process.env.ELEVENLABS_AGENT_ID?.trim() || "";
+  if (!agente) {
+    return json(res, 503, {
+      error: "Falta ELEVENLABS_AGENT_ID: no se sabe con qué agente hablar.",
+      code: "ELEVENLABS_AGENT_MISSING"
+    });
+  }
+
+  const upstream = await fetch(
+    `${ELEVENLABS_API}/v1/convai/conversation/get-signed-url?agent_id=${encodeURIComponent(agente)}`,
+    { headers: { "xi-api-key": process.env.ELEVENLABS_API_KEY.trim() } }
+  );
+
+  const cuerpo = await upstream.text();
+  if (!upstream.ok) {
+    // El cuerpo del error puede traer el identificador del agente y detalles de
+    // la cuenta; se registra aquí y al navegador va sólo el motivo.
+    console.error("ElevenLabs get-signed-url:", upstream.status, cuerpo);
+    return json(res, upstream.status === 401 || upstream.status === 403 ? 503 : 502, {
+      error: upstream.status === 404
+        ? "ElevenLabs no encuentra ese agente."
+        : "ElevenLabs rechazó la sesión.",
+      code: "ELEVENLABS_SESSION_ERROR"
+    });
+  }
+
+  let url = "";
+  try { url = JSON.parse(cuerpo).signed_url || ""; } catch {}
+  if (!url) {
+    return json(res, 502, {
+      error: "ElevenLabs no devolvió una dirección utilizable.",
+      code: "ELEVENLABS_SESSION_ERROR"
+    });
+  }
+
+  json(res, 200, { url, inicio: await inicioDeElevenLabs(await cargarConfig()) });
+}
+
+// Primer mensaje del protocolo. Todo lo que va aquí pisa lo que esté guardado
+// en el panel de ElevenLabs, así que el proyecto sigue mandando sobre su propia
+// persona aunque el agente se haya tocado desde fuera.
+async function inicioDeElevenLabs(config) {
+  const ajustes = config.modelos?.elevenlabs || {};
+  const voz = (ajustes.voz || process.env.ELEVENLABS_VOICE_ID || "").trim();
+
+  const agent = {
+    prompt: { prompt: await instruccionesDeSesion(config) },
+    // Se declara el idioma de partida, no el único: el agente cambia de idioma
+    // durante la conversación si quien habla lo hace.
+    language: ajustes.idioma || "es"
+  };
+  if (ajustes.saludo) agent.first_message = ajustes.saludo;
+
+  const tts = {};
+  if (voz) tts.voice_id = voz;
+  if (Number.isFinite(ajustes.estabilidad)) tts.stability = ajustes.estabilidad;
+  if (Number.isFinite(ajustes.velocidad)) tts.speed = ajustes.velocidad;
+
+  return {
+    type: "conversation_initiation_client_data",
+    conversation_config_override: {
+      agent,
+      ...(Object.keys(tts).length ? { tts } : {}),
+      // Se piden los avisos que de verdad se usan, y sólo esos. `audio` trae la
+      // alineación con la que se mueve la boca; `agent_chat_response_part`, los
+      // subtítulos según se van diciendo; `interruption`, el corte cuando
+      // alguien habla encima; `conversation_initiation_metadata`, en qué
+      // frecuencia viene el audio, que sin ella habría que adivinarla.
+      conversation: {
+        client_events: [
+          "audio",
+          "agent_response",
+          "agent_response_correction",
+          "agent_chat_response_part",
+          "interruption",
+          "conversation_initiation_metadata",
+          "client_tool_call",
+          "ping"
+        ]
+      }
+    }
+  };
+}
+
+function hasElevenLabsKey() {
+  const key = process.env.ELEVENLABS_API_KEY?.trim() || "";
+  return key.length > 24 && !key.includes("reemplaza-esto");
+}
+
+function hasElevenLabsAgent() {
+  return Boolean(process.env.ELEVENLABS_AGENT_ID?.trim());
 }
 
 // Búsqueda de láminas anatómicas en Wikimedia Commons.

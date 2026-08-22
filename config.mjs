@@ -78,7 +78,18 @@ export const CONFIG_POR_DEFECTO = {
 
   modelos: {
     openai: { modelo: "gpt-realtime-2.1", voz: "marin" },
-    gemini: { modelo: "models/gemini-3.1-flash-live-preview", voz: "Kore", idioma: "es-US" }
+    gemini: { modelo: "models/gemini-3.1-flash-live-preview", voz: "Kore", idioma: "es-US" },
+    // ElevenLabs. El modelo y las herramientas viven en su agente, no aquí; el
+    // identificador de ese agente y la clave, en el entorno. Lo que queda es lo
+    // que sí tiene sentido ajustar sin tocar código: cómo suena y en qué idioma
+    // arranca —que no es el único: cambia sola si le hablas en otro—.
+    elevenlabs: {
+      voz: "",              // vacío = la voz que tenga puesta el agente
+      idioma: "es",
+      saludo: "",           // vacío = el primer mensaje que tenga el agente
+      estabilidad: .45,     // más bajo, más expresiva; más alto, más plana
+      velocidad: 1
+    }
   },
 
   // Conectores: herramientas HTTP propias que Catalina puede llamar. Cada uno

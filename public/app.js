@@ -9,6 +9,7 @@ import { PerformanceDirector } from "./animation/director.js";
 import { VoiceTracker } from "./audio/voice-tracker.js";
 import { RealtimeSession } from "./realtime/session.js";
 import { GeminiSession } from "./realtime/gemini-session.js";
+import { ElevenLabsSession } from "./realtime/elevenlabs-session.js";
 import { dibujarRuta } from "./mapa.js";
 import { EscuchaDeReunion, escuchaDisponible } from "./escucha.js";
 
@@ -139,21 +140,27 @@ const manejadores = {
 // Cada intento vuelve a empezar por el principal: si falló por un tope de uso,
 // al reponerse se vuelve solo sin tener que tocar nada.
 const sesiones = {
+  elevenlabs: new ElevenLabsSession(manejadores),
   openai: new RealtimeSession(manejadores),
   gemini: new GeminiSession(manejadores)
 };
 
-const ORDEN = ["gemini", "openai"];
+// ElevenLabs va primero: es el agente de esta versión —oído, cerebro y voz
+// suyos— y el único que además manda la alineación con la que se mueve la boca.
+// Los otros dos quedan de respaldo para no quedarse sin conversación si su
+// servicio falla, aunque entonces los labios vuelven a deducirse del espectro.
+const ORDEN = ["elevenlabs", "gemini", "openai"];
 
 // Motivos por los que ese proveedor no va a funcionar por mucho que se
 // reintente: sin crédito o sin clave válida. Un fallo de red no entra aquí,
 // porque cambiar de proveedor no lo arreglaría y ocultaría el problema real.
 const MOTIVOS_DE_RELEVO = new Set([
   "API_RATE_LIMIT", "API_KEY_MISSING", "API_KEY_INVALID",
-  "GEMINI_KEY_MISSING", "GEMINI_KEY_INVALID", "GEMINI_SESSION_ERROR"
+  "GEMINI_KEY_MISSING", "GEMINI_KEY_INVALID", "GEMINI_SESSION_ERROR",
+  "ELEVENLABS_KEY_MISSING", "ELEVENLABS_AGENT_MISSING", "ELEVENLABS_SESSION_ERROR"
 ]);
 
-const disponible = { openai: false, gemini: false };
+const disponible = { elevenlabs: false, openai: false, gemini: false };
 let proveedor = null;
 let sesion = null;
 
@@ -165,7 +172,7 @@ async function conectar() {
   const cadena = proveedoresUtiles();
   if (!cadena.length) {
     setStatus("No hay ninguna voz configurada");
-    mostrarAviso("Falta una clave de OpenAI o de Gemini para poder conversar.");
+    mostrarAviso("Falta la clave de ElevenLabs, de OpenAI o de Gemini para poder conversar.");
     ui.connect.disabled = false;
     return;
   }
@@ -1021,6 +1028,7 @@ fijarPanel(verPanel);
 fetch("/health")
   .then(respuesta => respuesta.json())
   .then(estado => {
+    disponible.elevenlabs = Boolean(estado.proveedores?.elevenlabs);
     disponible.openai = Boolean(estado.proveedores?.openai);
     disponible.gemini = Boolean(estado.proveedores?.gemini);
   })
@@ -1089,9 +1097,33 @@ function resize() {
   viewport = { width: innerWidth, height: innerHeight, pixelRatio };
 }
 
+// Boca guiada por la alineación del agente, cuando el proveedor la manda.
+//
+// El analizador sigue mandando en una cosa —cuánta voz hay ahora mismo— y la
+// alineación en la otra —qué sonido es—. Se mezclan así porque cada uno acierta
+// en lo suyo: la energía sabe de silencios y de acentos, y la alineación sabe
+// que una /u/ redondea aunque suene flojito.
+//
+// Si no hay alineación (los otros proveedores, o un trozo sin ella) no se toca
+// nada y la boca se deduce del espectro, como siempre.
+function aplicarBocaAlineada(reading) {
+  const postura = sesion?.posturaDeBoca?.();
+  if (!postura) return;
+
+  // Con la voz apagada la boca se cierra aunque la alineación diga otra cosa:
+  // el final de una palabra no es el final del sonido.
+  const fuerza = Math.min(1, reading.energy * 3.2);
+  reading.open = postura.open * fuerza;
+  reading.spread = postura.spread;
+  reading.round = postura.round;
+  reading.press = Math.max(reading.press, postura.press * fuerza);
+  reading.alineada = true;
+}
+
 function render(now) {
   const reading = connected ? voice.read(now) : null;
   if (reading) seguirFinDeTurno(reading, now);
+  if (reading) aplicarBocaAlineada(reading);
   const pose = director.update(now, reading);
   renderer.draw(ctx, viewport, pose);
   requestAnimationFrame(render);
