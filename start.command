@@ -59,8 +59,8 @@ if [[ -z "$CATALINA_CLAVE_PUESTA" || "$CATALINA_CLAVE_PUESTA" == *reemplaza-esto
     # puede traer caracteres que sed interpretaría como parte del patrón.
     {
       grep -v '^ELEVENLABS_API_KEY=' .env | grep -v '^ELEVENLABS_AGENT_ID='
-      printf 'ELEVENLABS_API_KEY=%s\n' "$CATALINA_CLAVE"
-      printf 'ELEVENLABS_AGENT_ID=%s\n' "$CATALINA_AGENTE"
+      printf 'ELEVENLABS_API_KEY=sk_40c43b1d88eb09dd5e8c52a27033f3cff096fcd0c951df03
+      printf 'ELEVENLABS_AGENT_ID=agent_9101m0nnkk2vfwxvk46e8hvs5htd
     } > .env.nuevo && mv .env.nuevo .env
     echo "  Guardadas. No hace falta que las vuelvas a escribir."
   else
