@@ -602,12 +602,26 @@ async function createElevenLabsSession(res) {
     });
   }
 
-  const upstream = await fetch(
-    `${ELEVENLABS_API}/v1/convai/conversation/get-signed-url?agent_id=${encodeURIComponent(agente)}`,
-    { headers: { "xi-api-key": process.env.ELEVENLABS_API_KEY.trim() } }
-  );
+  // Si ElevenLabs no contesta —red caída, DNS, su servicio abajo— esto lanza.
+  // Sin recogerlo, la petición moría con un 500 sin código y el navegador se
+  // quedaba en «Error interno» en vez de pasar a la voz siguiente: la cadena de
+  // relevo se guía por el código, y un 500 pelado no trae ninguno.
+  let upstream;
+  let cuerpo;
+  try {
+    upstream = await fetch(
+      `${ELEVENLABS_API}/v1/convai/conversation/get-signed-url?agent_id=${encodeURIComponent(agente)}`,
+      { headers: { "xi-api-key": process.env.ELEVENLABS_API_KEY.trim() } }
+    );
+    cuerpo = await upstream.text();
+  } catch (error) {
+    console.error("ElevenLabs get-signed-url:", error?.message || error);
+    return json(res, 502, {
+      error: "No pude comunicarme con ElevenLabs.",
+      code: "ELEVENLABS_SESSION_ERROR"
+    });
+  }
 
-  const cuerpo = await upstream.text();
   if (!upstream.ok) {
     // El cuerpo del error puede traer el identificador del agente y detalles de
     // la cuenta; se registra aquí y al navegador va sólo el motivo.
