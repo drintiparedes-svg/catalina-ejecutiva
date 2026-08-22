@@ -13,9 +13,10 @@ Ninguna clave llega al navegador; el servidor firma cada sesión.
 
 ## Iniciar en macOS
 
-1. Duplica `.env.example` como `.env` y pega tu `ELEVENLABS_API_KEY` y el
-   `ELEVENLABS_AGENT_ID` del agente que crees en su panel.
-2. Haz doble clic en `start.command`.
+1. Haz doble clic en `start.command`.
+2. La primera vez te pide dos datos de tu cuenta de ElevenLabs y los guarda él
+   solo: la clave (Settings → API Keys) y el identificador del agente que
+   crees en Agents, el que empieza por `agent_`.
 3. En el navegador, pulsa **Iniciar conversación** y permite el micrófono.
 
 También puedes ejecutar `npm start` si ya tienes Node.js instalado.
