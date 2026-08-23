@@ -12,6 +12,9 @@ import {
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 
+// Se sube a mano con cada arreglo que el usuario tiene que descargar.
+const VERSION = "2026-08-23.4";
+
 const root = fileURLToPath(new URL("./public", import.meta.url));
 await loadEnv(fileURLToPath(new URL("./.env", import.meta.url)));
 const port = Number(process.env.PORT || 4173);
@@ -29,6 +32,10 @@ const server = createServer(async (req, res) => {
     if (req.method === "GET" && req.url === "/health") {
       return json(res, 200, {
         ok: true,
+        // Para saber qué copia está corriendo. Sin esto, cuando algo falla no
+        // hay forma de distinguir un fallo del código de una copia vieja
+        // descargada antes del arreglo, y se pierde el tiempo en la equivocada.
+        version: VERSION,
         apiKeyConfigured: hasApiKey(),
         // La interfaz consulta esto al arrancar para saber si hay red de
         // respaldo. Las láminas y las referencias no aparecen aquí porque no
@@ -1493,5 +1500,5 @@ async function loadEnv(path) {
 }
 
 server.listen(port, "127.0.0.1", () => {
-  console.log(`Catalina está disponible en http://127.0.0.1:${port}`);
+  console.log(`Catalina ${VERSION} está disponible en http://127.0.0.1:${port}`);
 });
