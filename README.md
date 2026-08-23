@@ -308,6 +308,33 @@ porque puede llevar credenciales de conectores. **En Vercel no se puede guardar*
 el disco es de sólo lectura y el panel lo dirá con un error claro en vez de fingir
 que guardó. Para editar en producción haría falta un almacén externo.
 
+## Desplegar en Vercel
+
+En Vercel no hace falta descargar nada ni pegar claves en ningún archivo: se
+conecta el repositorio una vez y cada cambio queda publicado solo.
+
+1. En [vercel.com](https://vercel.com) → **Add New… → Project** → importa
+   `catalina-ejecutiva`.
+2. En **Settings → Git**, pon la rama de producción en `elevenlabs-ejecutiva`.
+3. En **Settings → Environment Variables**, añade `ELEVENLABS_API_KEY` (la que
+   empieza por `sk_`) y `ELEVENLABS_AGENT_ID`.
+4. **Deploy**.
+
+Cómo está montado: `app.mjs` tiene el manejador de peticiones y no escucha en
+ningún puerto. Lo usan dos envolturas —`server.mjs` en local, `api/index.mjs`
+en Vercel— para que las rutas y las herramientas sean literalmente el mismo
+código en los dos sitios. `vercel.json` sirve `public/` como estático y manda
+sólo las rutas de la API a la función.
+
+El micrófono funciona porque Vercel sirve por HTTPS, que es lo que exige el
+navegador. La conversación no pasa por el servidor: el navegador abre el
+WebSocket contra ElevenLabs con una dirección que el servidor firmó, así que la
+clave no viaja al navegador y no hace falta que Vercel sostenga la conexión.
+
+Lo que **no** funciona en un despliegue: guardar la configuración desde el panel
+—el disco es de sólo lectura— y las llamadas telefónicas, que necesitan una
+conexión sostenida.
+
 ## Continuar en otro equipo
 
 ```bash

@@ -1,4 +1,25 @@
 {
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+
+  "outputDirectory": "public",
+
+  "rewrites": [
+    { "source": "/health", "destination": "/api" },
+    { "source": "/session", "destination": "/api" },
+    { "source": "/gemini/token", "destination": "/api" },
+    { "source": "/elevenlabs/sesion", "destination": "/api" },
+    { "source": "/imagen-medica", "destination": "/api" },
+    { "source": "/referencias", "destination": "/api" },
+    { "source": "/salud", "destination": "/api" },
+    { "source": "/ruta", "destination": "/api" },
+    { "source": "/correo", "destination": "/api" },
+    { "source": "/conector", "destination": "/api" },
+    { "source": "/llamada", "destination": "/api" },
+    { "source": "/llamada/:resto*", "destination": "/api" },
+    { "source": "/admin/:resto*", "destination": "/api" },
+    { "source": "/telefonia/:resto*", "destination": "/api" }
+  ],
+
   "headers": [
     {
       "source": "/(.*)",
