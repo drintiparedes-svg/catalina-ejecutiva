@@ -117,6 +117,7 @@ const manejadores = {
   // Los avisos del sistema se muestran siempre, aunque los subtítulos estén
   // apagados: son cosas que la persona necesita leer para poder seguir.
   onHelp: mostrarAviso,
+  onNota: anotarNota,
   onTranscript: text => {
     hayActividad();
     anotarTurno(text);
@@ -982,7 +983,7 @@ function anotarTurno(texto) {
   if (alFondo) ui.panelBody.scrollTop = ui.panelBody.scrollHeight;
 }
 
-function crearTurno() {
+function crearTurno(deQuien = "Catalina") {
   ui.panelBody.querySelector(".panel-empty")?.remove();
 
   const nodo = document.createElement("article");
@@ -994,7 +995,7 @@ function crearTurno() {
 
   const quien = document.createElement("span");
   quien.className = "turno-quien";
-  quien.textContent = "Catalina";
+  quien.textContent = deQuien;
 
   const hora = document.createElement("time");
   hora.className = "turno-hora";
@@ -1009,6 +1010,19 @@ function crearTurno() {
   nodo.append(cabecera, texto);
   ui.panelBody.append(nodo);
   return { nodo, texto };
+}
+
+// Un aviso que hay que leer con calma —qué activar en un panel, por ejemplo—
+// no puede vivir en el subtítulo: el primer turno de la conversación lo borra.
+// Va al historial, junto a lo dicho, y ahí se queda.
+function anotarNota(texto) {
+  if (!texto) return;
+  cerrarTurno();
+  const nota = crearTurno("Aviso");
+  nota.nodo.dataset.nota = "true";
+  nota.nodo.dataset.vivo = "false";
+  nota.texto.textContent = texto;
+  ui.panelBody.scrollTop = ui.panelBody.scrollHeight;
 }
 
 function cerrarTurno() {

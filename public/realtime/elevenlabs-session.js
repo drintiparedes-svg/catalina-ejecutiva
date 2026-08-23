@@ -48,6 +48,14 @@ export class ElevenLabsSession {
 
     this.entradaHz = ENTRADA_HZ;
     this.recibidoHz = SALIDA_HZ;
+
+    // Para saber si la sesión llegó a arrancar de verdad. ElevenLabs confirma
+    // con `conversation_initiation_metadata`; si cierra antes de eso, es que
+    // rechazó algo de lo que le mandamos, no que la conversación terminara.
+    this.url = null;
+    this.inicio = null;
+    this.arranco = false;
+    this.reintentoSinAjustes = false;
   }
 
   #emit(name, ...args) {
@@ -74,6 +82,7 @@ export class ElevenLabsSession {
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
       });
 
+      this.url = url;
       await this.#prepararSalida();
       await this.#abrirSocket(url, inicio);
       await this.#prepararEntrada();
@@ -87,6 +96,7 @@ export class ElevenLabsSession {
   }
 
   #abrirSocket(url, inicio) {
+    this.inicio = inicio;
     return new Promise((resolve, reject) => {
       this.socket = new WebSocket(url);
 
@@ -102,8 +112,47 @@ export class ElevenLabsSession {
       });
       this.socket.addEventListener("message", evento => this.#onMensaje(evento));
       this.socket.addEventListener("error", () => reject(new Error("No se pudo abrir la sesión con ElevenLabs")));
-      this.socket.addEventListener("close", () => { if (this.connected) this.disconnect(); });
+      this.socket.addEventListener("close", evento => this.#alCerrar(evento));
     });
+  }
+
+  // Un cierre puede ser el final normal de una conversación o un rechazo. Se
+  // distinguen por si ElevenLabs llegó a confirmar la sesión.
+  //
+  // El rechazo más habitual: en su panel, cada sobrescritura —persona, idioma,
+  // voz— viene desactivada, y hay que permitirla agente por agente. Si no está
+  // permitida, ElevenLabs no contesta «no puedes»: cierra el socket. Desde
+  // fuera se ve como un micrófono que se conecta y se desconecta solo.
+  //
+  // Así que se reintenta una vez sin sobrescribir nada. La conversación
+  // funciona —con la persona que tenga el agente en su panel, no la de aquí— y
+  // se avisa de qué hay que activar para recuperarla.
+  #alCerrar(evento) {
+    const codigo = evento?.code;
+    const motivo = evento?.reason || "";
+
+    if (!this.arranco && !this.reintentoSinAjustes && this.inicio?.conversation_config_override) {
+      this.reintentoSinAjustes = true;
+      console.warn("ElevenLabs cerró la sesión antes de empezar:", codigo, motivo);
+      this.#emit("onStatus", "Reintentando…");
+      this.#abrirSocket(this.url, { type: "conversation_initiation_client_data" })
+        .catch(() => this.disconnect());
+      return;
+    }
+
+    if (!this.arranco) {
+      console.warn("ElevenLabs cerró la sesión:", codigo, motivo);
+      this.#emit("onFailure", Object.assign(
+        new Error(motivo || "ElevenLabs cerró la sesión nada más abrirla"),
+        {
+          code: "ELEVENLABS_SESSION_ERROR",
+          mensaje: "ElevenLabs cerró la sesión nada más abrirla.",
+          ayuda: motivo || "Revisa en su panel que el agente esté publicado y que la cuenta tenga crédito."
+        }
+      ));
+    }
+
+    if (this.connected) this.disconnect();
   }
 
   async #prepararSalida() {
@@ -196,6 +245,12 @@ export class ElevenLabsSession {
         const meta = mensaje.conversation_initiation_metadata_event ?? {};
         this.recibidoHz = frecuenciaDe(meta.agent_output_audio_format, SALIDA_HZ);
         this.entradaHz = frecuenciaDe(meta.user_input_audio_format, ENTRADA_HZ);
+        this.arranco = true;
+        if (this.reintentoSinAjustes) {
+          this.#emit("onNota",
+            "Tu agente no permite sobrescribir su configuración, así que Catalina habla con la persona y la voz que tenga puestas en ElevenLabs. " +
+            "Para usar las de este proyecto, entra a tu agente → Security → y activa los overrides de prompt, idioma y voz.");
+        }
         break;
       }
 
@@ -315,6 +370,8 @@ export class ElevenLabsSession {
     this.reproductor = null;
     this.socket = this.micStream = this.entrada = this.salida = this.destino = this.nodoEntrada = null;
     this.muted = false;
+    this.arranco = false;
+    this.reintentoSinAjustes = false;
     this.#emit("onDisconnected");
     this.#emit("onPhase", "idle");
   }
