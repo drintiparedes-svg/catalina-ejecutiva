@@ -606,12 +606,23 @@ async function createElevenLabsSession(res) {
   // Sin recogerlo, la petición moría con un 500 sin código y el navegador se
   // quedaba en «Error interno» en vez de pasar a la voz siguiente: la cadena de
   // relevo se guía por el código, y un 500 pelado no trae ninguno.
+  // Se comprueba antes de salir a la red. Su panel muestra el identificador de
+  // la clave en la lista y la clave sólo al crearla, así que copiar el primero
+  // es el error natural — y su respuesta a eso es un 400 que no lo explica.
+  const clave = process.env.ELEVENLABS_API_KEY.trim();
+  if (!clave.startsWith("sk_")) {
+    return json(res, 503, {
+      error: "Eso es el identificador de la clave, no la clave. La clave empieza por sk_ y sólo se ve al crearla en ElevenLabs.",
+      code: "ELEVENLABS_KEY_MISSING"
+    });
+  }
+
   let upstream;
   let cuerpo;
   try {
     upstream = await fetch(
       `${ELEVENLABS_API}/v1/convai/conversation/get-signed-url?agent_id=${encodeURIComponent(agente)}`,
-      { headers: { "xi-api-key": process.env.ELEVENLABS_API_KEY.trim() } }
+      { headers: { "xi-api-key": clave } }
     );
     cuerpo = await upstream.text();
   } catch (error) {
@@ -698,6 +709,7 @@ async function inicioDeElevenLabs(config) {
 // Qué salió mal, dicho para quien lo va a arreglar. Cada caso tiene un arreglo
 // distinto, así que decir «error» a secas no sirve de nada.
 function motivoDeElevenLabs(estado) {
+  if (estado === 400) return "ElevenLabs no aceptó la clave. Créala de nuevo y copia lo que te muestre al crearla, no lo que aparece en la lista.";
   if (estado === 401) return "ElevenLabs no aceptó la clave: está mal copiada o fue anulada.";
   if (estado === 403) return "La clave es válida pero no tiene permiso sobre agentes. Revisa sus permisos en ElevenLabs.";
   if (estado === 404) return "ElevenLabs no encuentra ese agente. Revisa el identificador que empieza por agent_.";

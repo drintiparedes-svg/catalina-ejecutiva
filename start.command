@@ -54,6 +54,32 @@ if [[ -z "$CATALINA_CLAVE_PUESTA" || "$CATALINA_CLAVE_PUESTA" == *reemplaza-esto
   CATALINA_CLAVE="${CATALINA_CLAVE//[[:space:]]/}"
   CATALINA_AGENTE="${CATALINA_AGENTE//[[:space:]]/}"
 
+  # Su panel muestra dos cosas parecidas: el identificador de la clave, que sale
+  # en la lista, y la clave, que sólo se ve al crearla. Copiar el identificador
+  # es el error natural, y sin esta comprobación se descubría al final, con un
+  # «ElevenLabs rechazó la sesión» que no dice nada.
+  if [[ -n "$CATALINA_CLAVE" && "$CATALINA_CLAVE" != sk_* ]]; then
+    echo ""
+    echo "  Eso no es la clave: es su identificador."
+    echo "  La clave empieza por sk_ y sólo se ve UNA VEZ, en el momento de"
+    echo "  crearla. En la lista de API Keys ya no aparece."
+    echo ""
+    echo "  Crea una nueva en elevenlabs.io → Settings → API Keys →"
+    echo "  Create API Key, y copia lo que te muestre ahí mismo."
+    echo ""
+    read -rs "?  Pega la clave (empieza por sk_): " CATALINA_CLAVE
+    CATALINA_CLAVE="${CATALINA_CLAVE//[[:space:]]/}"
+    echo ""
+  fi
+
+  if [[ -n "$CATALINA_AGENTE" && "$CATALINA_AGENTE" != agent_* ]]; then
+    echo ""
+    echo "  Eso no parece un agente: el identificador empieza por agent_."
+    read -r "?  Pégalo de nuevo: " CATALINA_AGENTE
+    CATALINA_AGENTE="${CATALINA_AGENTE//[[:space:]]/}"
+    echo ""
+  fi
+
   if [[ -n "$CATALINA_CLAVE" ]]; then
     # Se reescribe el archivo entero en vez de editarlo con sed: una clave
     # puede traer caracteres que sed interpretaría como parte del patrón.
