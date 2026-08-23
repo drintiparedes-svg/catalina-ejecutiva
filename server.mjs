@@ -626,10 +626,13 @@ async function createElevenLabsSession(res) {
     // El cuerpo del error puede traer el identificador del agente y detalles de
     // la cuenta; se registra aquí y al navegador va sólo el motivo.
     console.error("ElevenLabs get-signed-url:", upstream.status, cuerpo);
+    // El motivo va también a la pantalla, no sólo al registro. Antes decía sólo
+    // «rechazó la sesión» y había que ir a leer la ventana del servidor para
+    // saber si era la clave, el agente o el crédito: tres arreglos distintos.
+    // Lo que no sale nunca es el cuerpo de su respuesta, que puede traer datos
+    // de la cuenta.
     return json(res, upstream.status === 401 || upstream.status === 403 ? 503 : 502, {
-      error: upstream.status === 404
-        ? "ElevenLabs no encuentra ese agente."
-        : "ElevenLabs rechazó la sesión.",
+      error: motivoDeElevenLabs(upstream.status),
       code: "ELEVENLABS_SESSION_ERROR"
     });
   }
@@ -690,6 +693,18 @@ async function inicioDeElevenLabs(config) {
       }
     }
   };
+}
+
+// Qué salió mal, dicho para quien lo va a arreglar. Cada caso tiene un arreglo
+// distinto, así que decir «error» a secas no sirve de nada.
+function motivoDeElevenLabs(estado) {
+  if (estado === 401) return "ElevenLabs no aceptó la clave: está mal copiada o fue anulada.";
+  if (estado === 403) return "La clave es válida pero no tiene permiso sobre agentes. Revisa sus permisos en ElevenLabs.";
+  if (estado === 404) return "ElevenLabs no encuentra ese agente. Revisa el identificador que empieza por agent_.";
+  if (estado === 422) return "ElevenLabs no entendió el identificador del agente. ¿Está completo?";
+  if (estado === 429) return "ElevenLabs está limitando las peticiones. Espera un momento y vuelve a intentar.";
+  if (estado >= 500) return "ElevenLabs tiene un problema en su servicio. No es cosa tuya.";
+  return `ElevenLabs rechazó la sesión (${estado}).`;
 }
 
 function hasElevenLabsKey() {
