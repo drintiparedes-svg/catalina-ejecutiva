@@ -85,35 +85,51 @@ function saltar(desde) {
 }
 
 // 1 y 2 — el servidor y las claves.
-let salud;
+//
+// La petición se envuelve, pero el análisis de la respuesta no: un `throw`
+// dentro del mismo try lo atrapaba el catch de la red y lo pisaba con «el
+// servidor no responde», tapando justo el rastro que hace falta.
+let respuesta;
+let crudo;
 try {
-  const r = await fetch("/health");
-  const crudo = await r.text();
-  // Cuando la función se cae, Vercel devuelve su propia página de error en vez
-  // de JSON. Decirlo así evita que el fallo aparezca como «token inesperado»,
-  // que no le dice nada a nadie.
-  try {
-    salud = JSON.parse(crudo);
-  } catch {
-    marcar(1, "mal",
-      `El servidor contestó ${r.status}, pero no con datos: devolvió una página de error.`,
-      `<code>${crudo.slice(0, 120).replace(/</g, "&lt;")}</code>`);
-    saltar(2);
-    veredicto(false, "La función del servidor se está cayendo",
-      "La página se sirve bien, pero la parte que atiende peticiones muere al arrancar.",
-      "En Vercel el detalle está en el despliegue → pestaña <b>Logs</b> (o <b>Runtime Logs</b>): ahí sale el error real.");
-    throw new Error("respuesta no JSON");
-  }
-  marcar(1, "bien",
-    `Responde. Versión del código: <code>${salud.version ?? "(sin versión — es una copia anterior al 2026-08-23.4)"}</code>`);
+  respuesta = await fetch("/health");
+  crudo = await respuesta.text();
 } catch (error) {
-  marcar(1, "mal", "El servidor no responde.", `<code>${error.message}</code>`);
+  marcar(1, "mal", "No se pudo llegar al servidor.", `<code>${error.message}</code>`);
   saltar(2);
   veredicto(false, "No hay servidor",
-    "La página se ve pero la parte que atiende peticiones no está corriendo.",
-    "En Vercel esto pasa cuando la función no se desplegó. En local, cuando cerraste la ventana del Terminal.");
+    "La página se ve pero la parte que atiende peticiones no contesta.",
+    "En Vercel esto pasa cuando la función no llegó a desplegarse. En local, cuando cerraste la ventana del Terminal.");
   throw error;
 }
+
+let salud = null;
+try { salud = JSON.parse(crudo); } catch {}
+
+// El caso más útil: la función arrancó mal y lo cuenta ella misma.
+if (salud?.code === "ARRANQUE_FALLIDO") {
+  marcar(1, "mal", "El servidor arrancó mal, y dijo por qué:",
+    `<code style="white-space:pre-wrap;display:block;padding:.7rem .8rem;line-height:1.55">${(salud.detalle ?? "").replace(/</g, "&lt;")}</code>`);
+  saltar(2);
+  veredicto(false, "El servidor no pudo arrancar",
+    "El rastro de arriba dice qué falló y en qué archivo. Mándamelo tal cual: con eso se arregla.");
+  throw new Error("arranque fallido");
+}
+
+// Ni JSON ni nada reconocible: la página de error de la plataforma.
+if (!salud) {
+  marcar(1, "mal",
+    `El servidor contestó ${respuesta.status}, pero no con datos: devolvió una página de error.`,
+    `<code>${crudo.slice(0, 160).replace(/</g, "&lt;")}</code>`);
+  saltar(2);
+  veredicto(false, "La función del servidor se está cayendo",
+    "La página se sirve bien, pero la parte que atiende peticiones muere al arrancar.",
+    "En Vercel el detalle está en el despliegue → pestaña <b>Logs</b> (o <b>Runtime Logs</b>).");
+  throw new Error("respuesta no reconocible");
+}
+
+marcar(1, "bien",
+  `Responde. Versión del código: <code>${salud.version ?? "(sin versión — es una copia anterior al 2026-08-23.4)"}</code>`);
 
 if (salud.proveedores?.elevenlabs) {
   marcar(2, "bien", "La clave y el identificador del agente están puestos en el servidor.");
