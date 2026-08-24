@@ -12,7 +12,7 @@ import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // Se sube a mano con cada arreglo que el usuario tiene que descargar.
-export const VERSION = "2026-08-23.4";
+export const VERSION = "2026-08-23.5";
 
 const root = fileURLToPath(new URL("./public", import.meta.url));
 // En Vercel no hay .env: las variables vienen del entorno del despliegue y

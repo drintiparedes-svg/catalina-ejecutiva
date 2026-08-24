@@ -308,6 +308,17 @@ porque puede llevar credenciales de conectores. **En Vercel no se puede guardar*
 el disco es de sólo lectura y el panel lo dirá con un error claro en vez de fingir
 que guardó. Para editar en producción haría falta un almacén externo.
 
+## Cuando algo no funciona
+
+Abre **`/diagnostico.html`**, en local o en el despliegue. Recorre el camino
+entero hasta ElevenLabs —servidor, claves, firma de la sesión y apertura de la
+conversación— y se para en el primer punto que falla, diciendo qué arreglar.
+
+El paso que más cuesta ver sin esta página es el cuarto: cuando ElevenLabs
+acepta firmar la sesión pero cierra la conversación al abrirla. Ahí aparece su
+código y su motivo textual, que es lo que distingue una cuenta sin crédito de un
+agente que no permite sobrescribir su configuración.
+
 ## Desplegar en Vercel
 
 En Vercel no hace falta descargar nada ni pegar claves en ningún archivo: se
