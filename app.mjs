@@ -12,11 +12,14 @@ import {
   telefoniaLista, originarLlamada, estadoLlamada, twimlPuente,
   firmaValida, atenderLlamadaEntrante, anotarEstadoTwilio
 } from "./telefonia.mjs";
+import {
+  telefoniaElevenLabsLista, originarLlamadaElevenLabs, estadoLlamadaElevenLabs
+} from "./llamadas.mjs";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // Se sube a mano con cada arreglo que el usuario tiene que descargar.
-export const VERSION = "2026-08-24.15";
+export const VERSION = "2026-08-24.16";
 
 const root = fileURLToPath(new URL("./public", import.meta.url));
 // El .env se lee de forma síncrona a propósito. Con `await` aquí arriba, en el
@@ -71,7 +74,9 @@ export async function atender(req, res) {
         videos: hayVideos(),
         // La búsqueda de imágenes en la web usa fuentes abiertas: siempre lista,
         // no depende de ninguna clave.
-        imagenesWeb: hayImagenesWeb()
+        imagenesWeb: hayImagenesWeb(),
+        // Llamadas salientes: por ElevenLabs (preferido) o por el puente Twilio.
+        telefonia: telefoniaElevenLabsLista() ? "elevenlabs" : telefoniaLista() ? "twilio" : false
       });
     }
 
@@ -181,7 +186,12 @@ export async function atender(req, res) {
     }
 
     if (req.method === "GET" && req.url.startsWith("/llamada/")) {
-      const estado = estadoLlamada(decodeURIComponent(req.url.slice("/llamada/".length)));
+      const id = decodeURIComponent(req.url.slice("/llamada/".length));
+      // Si la telefonía es de ElevenLabs, el estado se consulta en vivo allí.
+      if (telefoniaElevenLabsLista()) {
+        return json(res, 200, await estadoLlamadaElevenLabs(id));
+      }
+      const estado = estadoLlamada(id);
       return estado
         ? json(res, 200, { ok: true, ...estado })
         : json(res, 404, { ok: false, error: "No hay ninguna llamada con ese identificador." });
@@ -322,7 +332,7 @@ const USO_DEL_TELEFONO = [
 // panel, lo de arriba es fijo. Los dos proveedores reciben exactamente lo mismo,
 // para que Catalina no cambie de carácter al pasar de uno a otro.
 async function instruccionesDeSesion(config) {
-  const puedeLlamar = telefoniaLista() && config.telefono?.activo !== false;
+  const puedeLlamar = (telefoniaElevenLabsLista() || telefoniaLista()) && config.telefono?.activo !== false;
   return [
     componerInstrucciones(config),
     USO_DE_HERRAMIENTAS,
@@ -606,7 +616,7 @@ const HERRAMIENTAS_TELEFONO = [
 function todasLasHerramientas(config) {
   return [
     ...HERRAMIENTAS,
-    ...(telefoniaLista() && config.telefono?.activo !== false ? HERRAMIENTAS_TELEFONO : []),
+    ...((telefoniaElevenLabsLista() || telefoniaLista()) && config.telefono?.activo !== false ? HERRAMIENTAS_TELEFONO : []),
     ...herramientasDeConectores(config)
   ];
 }
@@ -1539,10 +1549,13 @@ async function buscarSalud(req, res) {
 // irreversible, así que Catalina tiene que haber repetido número y objetivo y
 // haber recibido un sí antes de que esto haga nada.
 async function pedirLlamada(req, res) {
-  if (!telefoniaLista()) {
+  // Dos caminos posibles: el nativo de ElevenLabs (preferido, funciona en Vercel)
+  // y el puente Twilio+OpenAI. Basta con que uno esté configurado.
+  const porElevenLabs = telefoniaElevenLabsLista();
+  if (!porElevenLabs && !telefoniaLista()) {
     return json(res, 503, {
       ok: false,
-      error: "Falta configurar la telefonía (Twilio y el proyecto de OpenAI).",
+      error: "Falta configurar la telefonía: importa un número en ElevenLabs y pon ELEVENLABS_PHONE_NUMBER_ID, o configura el puente de Twilio.",
       code: "TELEFONIA_SIN_CONFIGURAR"
     });
   }
@@ -1563,6 +1576,14 @@ async function pedirLlamada(req, res) {
   const telefono = config.telefono ?? {};
   if (telefono.activo === false) {
     return json(res, 403, { ok: false, error: "Las llamadas están desactivadas.", code: "TELEFONIA_APAGADA" });
+  }
+
+  // Preferimos ElevenLabs: no necesita puente ni URL pública, y va en Vercel.
+  if (porElevenLabs) {
+    return json(res, 200, await originarLlamadaElevenLabs({
+      numero: peticion.numero,
+      objetivo: peticion.objetivo
+    }));
   }
 
   // La URL pública desde la que Twilio y OpenAI vendrán a buscarnos.
