@@ -1310,16 +1310,31 @@ function anotarTurno(texto) {
   }
 
   if (avisoActivo) avisoActivo = false;
-  ui.caption.textContent = texto;
+  // Catalina antepone a veces una etiqueta de tono —[Con calidez], [Con
+  // confianza]— que es una indicación interna, no algo para leer. Se quita del
+  // subtítulo y del historial; lo que se guarda es sólo lo que dijo.
+  const limpio = sinEtiquetas(texto);
+  ui.caption.textContent = limpio;
   ui.caption.dataset.visible = String(verSubtitulos);
 
   if (!turnoVivo) turnoVivo = crearTurno();
-  turnoVivo.texto.textContent = texto;
+  turnoVivo.texto.textContent = limpio;
 
   // Sólo se sigue el fondo si ya estábamos abajo: si la persona subió a releer
   // algo, el texto nuevo no le arrebata la posición.
   const alFondo = ui.panelBody.scrollHeight - ui.panelBody.scrollTop - ui.panelBody.clientHeight < 60;
   if (alFondo) ui.panelBody.scrollTop = ui.panelBody.scrollHeight;
+}
+
+// Quita las etiquetas de tono entre corchetes —[Con calidez]— y cualquier
+// corchete de indicación, incluido uno a medio llegar al final del stream, para
+// que no parpadee mientras se escribe. Deja sólo el texto hablado.
+function sinEtiquetas(texto) {
+  return String(texto)
+    .replace(/\[[^\]\n]{1,40}\]/g, "")   // etiquetas completas: [Con confianza]
+    .replace(/\[[^\]\n]{0,40}$/, "")     // una etiqueta aún sin cerrar al final
+    .replace(/\s{2,}/g, " ")
+    .replace(/^\s+/, "");
 }
 
 function crearTurno(deQuien = "Catalina") {
@@ -1351,17 +1366,14 @@ function crearTurno(deQuien = "Catalina") {
   return { nodo, texto };
 }
 
-// Un aviso que hay que leer con calma —qué activar en un panel, por ejemplo—
-// no puede vivir en el subtítulo: el primer turno de la conversación lo borra.
-// Va al historial, junto a lo dicho, y ahí se queda.
+// Estas notas —por qué se cerró la sesión, qué activar en el panel del agente—
+// son de uso interno: sirven para diagnosticar, no para el usuario final, así
+// que NO se escriben en el historial de la conversación. Quedan en la consola
+// para quien esté depurando; la orientación que sí debe ver el usuario llega por
+// otro lado (onHelp/onFailure, que la muestran de forma transitoria).
 function anotarNota(texto) {
   if (!texto) return;
-  cerrarTurno();
-  const nota = crearTurno("Aviso");
-  nota.nodo.dataset.nota = "true";
-  nota.nodo.dataset.vivo = "false";
-  nota.texto.textContent = texto;
-  ui.panelBody.scrollTop = ui.panelBody.scrollHeight;
+  console.info("[nota interna]", texto);
 }
 
 function cerrarTurno() {
