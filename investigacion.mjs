@@ -122,9 +122,23 @@ function leerRespuesta(datos) {
 
 // ── Generar una imagen ───────────────────────────────────────────────────────
 
-// Modelo de imagen de Gemini. Devuelve la imagen incrustada en la respuesta
-// (inlineData), no un enlace. Los nombres cambian; se puede ajustar desde config.
-const MODELO_IMAGEN = "gemini-2.5-flash-image";
+// Modelos de imagen de Gemini. Devuelven la imagen incrustada en la respuesta
+// (inlineData), no un enlace. Los nombres cambian cada pocos meses y no todos
+// existen en todos los planes, así que se prueban en orden y se usa el primero
+// que responda: si el primero ya no existe (404) o no acepta la petición (400),
+// se pasa al siguiente en vez de rendirse. Se puede forzar uno desde opciones.
+const MODELOS_IMAGEN = [
+  "gemini-2.5-flash-image",
+  "gemini-2.5-flash-image-preview",
+  "gemini-2.0-flash-preview-image-generation"
+];
+
+// Saca el mensaje que Google pone dentro del error, para poder decir por qué
+// falló en vez de un número a secas. Es lo que convierte «no se pudo» en algo
+// accionable: «modelo no encontrado», «API no habilitada», «cuota agotada».
+function detalleDeGoogle(crudo) {
+  try { return String(JSON.parse(crudo)?.error?.message || "").slice(0, 200); } catch { return ""; }
+}
 
 // Genera una imagen a partir de una descripción. Se usa sólo a petición
 // explícita: una imagen generada ilustra, no prueba. Quien la muestra debe
@@ -135,10 +149,28 @@ export async function generarImagen(descripcion, opciones = {}) {
   const texto = String(descripcion || "").trim();
   if (!texto) return { ok: false, error: "Falta la descripción de la imagen." };
 
-  const modelo = (opciones.modelo || MODELO_IMAGEN).replace(/^models\//, "");
-  let datos;
+  const modelos = opciones.modelo ? [opciones.modelo.replace(/^models\//, "")] : MODELOS_IMAGEN;
+  let ultimoDetalle = "";
+  for (const modelo of modelos) {
+    const r = await intentarImagen(clave, modelo, texto);
+    if (r.ok) return r;
+    if (r.detalle) ultimoDetalle = r.detalle;
+    // Sólo tiene sentido probar otro modelo si el fallo era del modelo (no
+    // existe, no lo acepta). Un problema de clave o de cuota se repetiría igual.
+    if (!r.reintentable) break;
+  }
+  return {
+    ok: false,
+    error: ultimoDetalle
+      ? `No se pudo generar la imagen: ${ultimoDetalle}`
+      : "No se pudo generar la imagen con ningún modelo de Gemini disponible."
+  };
+}
+
+async function intentarImagen(clave, modelo, texto) {
+  let crudo, upstream;
   try {
-    const upstream = await fetch(
+    upstream = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelo)}:generateContent`,
       {
         method: "POST",
@@ -151,30 +183,32 @@ export async function generarImagen(descripcion, opciones = {}) {
         signal: AbortSignal.timeout(TIEMPO_BUSQUEDA)
       }
     );
-    const crudo = await upstream.text();
-    if (!upstream.ok) {
-      console.error("Gemini imagen:", upstream.status, crudo.slice(0, 400));
-      // 404 o 400 suelen ser un nombre de modelo que ya no existe, o el plan
-      // sin acceso a imágenes.
-      return {
-        ok: false,
-        error: upstream.status === 404 || upstream.status === 400
-          ? "El modelo de imagen no está disponible en tu plan de Gemini."
-          : `La generación falló (${upstream.status}).`
-      };
-    }
-    datos = JSON.parse(crudo);
+    crudo = await upstream.text();
   } catch (error) {
-    return {
-      ok: false,
-      error: error.name === "TimeoutError" ? "La imagen tardó demasiado." : "No se pudo generar la imagen."
-    };
+    const timeout = error.name === "TimeoutError";
+    // El timeout no es del modelo: no vale la pena recorrer la lista entera.
+    return { ok: false, reintentable: !timeout, detalle: timeout ? "la imagen tardó demasiado" : "" };
   }
+
+  if (!upstream.ok) {
+    const detalle = detalleDeGoogle(crudo);
+    console.error("Gemini imagen:", modelo, upstream.status, crudo.slice(0, 300));
+    // 404/400: el modelo no existe o no aceptó la petición → se prueba el
+    // siguiente. Otros códigos (401/403 clave, 429 cuota, 5xx) se repetirían.
+    return { ok: false, reintentable: upstream.status === 404 || upstream.status === 400, detalle };
+  }
+
+  let datos;
+  try { datos = JSON.parse(crudo); } catch { return { ok: false, reintentable: false, detalle: "respuesta ilegible" }; }
 
   // La imagen viene incrustada en una de las partes.
   const partes = datos?.candidates?.[0]?.content?.parts ?? [];
   const conImagen = partes.find(p => p?.inlineData?.data);
-  if (!conImagen) return { ok: false, error: "Gemini no devolvió ninguna imagen." };
+  if (!conImagen) {
+    // Respondió sin imagen: a veces el filtro de seguridad la bloqueó.
+    const motivo = datos?.candidates?.[0]?.finishReason;
+    return { ok: false, reintentable: false, detalle: motivo ? `sin imagen (${motivo})` : "no devolvió ninguna imagen" };
+  }
   const mime = conImagen.inlineData.mimeType || "image/png";
 
   return {
@@ -185,6 +219,96 @@ export async function generarImagen(descripcion, opciones = {}) {
     // El texto que el modelo pudo devolver junto a la imagen.
     nota: partes.map(p => p?.text).filter(Boolean).join(" ").trim() || ""
   };
+}
+
+// ── Buscar videos en YouTube ─────────────────────────────────────────────────
+
+// La búsqueda de video usa la API de datos de YouTube (v3), que es una API de
+// Google como la de Gemini: la misma clave sirve si el proyecto tiene activada
+// «YouTube Data API v3». Se admite una clave propia (YOUTUBE_API_KEY) por si se
+// quiere separar la cuota, y si no, se cae a la de Gemini.
+const YT_BUSQUEDA = "https://www.googleapis.com/youtube/v3/search";
+const YT_VIDEOS = "https://www.googleapis.com/youtube/v3/videos";
+
+export const hayVideos = () => Boolean((process.env.YOUTUBE_API_KEY || process.env.GEMINI_API_KEY)?.trim());
+
+// Convierte la duración ISO 8601 de YouTube (PT1H2M3S) a algo legible (1:02:03).
+function duracionISO(iso) {
+  if (!iso) return "";
+  const m = /PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/.exec(iso);
+  if (!m) return "";
+  const [h, min, s] = [Number(m[1] || 0), Number(m[2] || 0), Number(m[3] || 0)];
+  const dd = n => String(n).padStart(2, "0");
+  return h ? `${h}:${dd(min)}:${dd(s)}` : `${min}:${dd(s)}`;
+}
+
+// Busca videos que podrían ser útiles sobre un tema. Devuelve título, canal,
+// enlace, duración y número de vistas —una señal, no una prueba— manteniendo el
+// orden de relevancia que da YouTube. No reproduce nada: entrega enlaces.
+export async function buscarVideos(consulta, opciones = {}) {
+  const clave = (process.env.YOUTUBE_API_KEY || process.env.GEMINI_API_KEY)?.trim();
+  if (!clave) return { ok: false, error: "Falta YOUTUBE_API_KEY (o GEMINI_API_KEY con «YouTube Data API v3» activada)." };
+  const q = String(consulta || "").trim();
+  if (!q) return { ok: false, error: "Falta el tema del video." };
+  const cuantos = Math.min(Math.max(Number(opciones.cuantos) || 8, 1), 12);
+
+  // 1. La búsqueda: devuelve los videos, pero no sus estadísticas.
+  let busqueda;
+  try {
+    const url = new URL(YT_BUSQUEDA);
+    url.search = new URLSearchParams({
+      key: clave, part: "snippet", type: "video", maxResults: String(cuantos),
+      q, safeSearch: "moderate", relevanceLanguage: "es"
+    }).toString();
+    const up = await fetch(url, { signal: AbortSignal.timeout(TIEMPO_BUSQUEDA) });
+    const crudo = await up.text();
+    if (!up.ok) {
+      const detalle = detalleDeGoogle(crudo);
+      console.error("YouTube buscar:", up.status, crudo.slice(0, 300));
+      return {
+        ok: false,
+        error: up.status === 403
+          ? `YouTube rechazó la clave${detalle ? ": " + detalle : ""}. Activa «YouTube Data API v3» en el proyecto de la clave.`
+          : `La búsqueda de video falló (${up.status})${detalle ? ": " + detalle : ""}.`
+      };
+    }
+    busqueda = JSON.parse(crudo);
+  } catch (error) {
+    return { ok: false, error: error.name === "TimeoutError" ? "La búsqueda de video tardó demasiado." : "No se pudo buscar en YouTube." };
+  }
+
+  const items = (busqueda.items || []).filter(i => i?.id?.videoId);
+  if (!items.length) return { ok: true, videos: [] };
+  const ids = items.map(i => i.id.videoId);
+
+  // 2. Estadísticas y duración de cada video, en una sola llamada. Si falla, se
+  // muestran igual los videos, sólo que sin vistas ni duración.
+  const detalle = {};
+  try {
+    const url = new URL(YT_VIDEOS);
+    url.search = new URLSearchParams({ key: clave, part: "statistics,contentDetails", id: ids.join(",") }).toString();
+    const up = await fetch(url, { signal: AbortSignal.timeout(TIEMPO_BUSQUEDA) });
+    if (up.ok) { const d = await up.json(); for (const v of d.items || []) detalle[v.id] = v; }
+  } catch { /* opcional */ }
+
+  const videos = items.map(i => {
+    const id = i.id.videoId, sn = i.snippet || {}, d = detalle[id];
+    const vistas = d?.statistics?.viewCount ? Number(d.statistics.viewCount) : null;
+    return {
+      titulo: sn.title || "(sin título)",
+      canal: sn.channelTitle || "",
+      videoId: id,
+      enlace: `https://www.youtube.com/watch?v=${id}`,
+      publicado: (sn.publishedAt || "").slice(0, 10),
+      anio: Number((sn.publishedAt || "").slice(0, 4)) || undefined,
+      vistas,
+      duracion: duracionISO(d?.contentDetails?.duration),
+      miniatura: sn.thumbnails?.medium?.url || sn.thumbnails?.default?.url || "",
+      descripcion: (sn.description || "").slice(0, 200)
+    };
+  });
+
+  return { ok: true, videos };
 }
 
 // ── Leer una página ─────────────────────────────────────────────────────────

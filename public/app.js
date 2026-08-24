@@ -481,6 +481,7 @@ async function despacharHerramienta(nombre, argumentos) {
   if (nombre === "buscar_en_la_web") return await buscarWeb(argumentos);
   if (nombre === "leer_pagina_web") return await leerPaginaWeb(argumentos);
   if (nombre === "generar_imagen") return await generarImagen(argumentos);
+  if (nombre === "buscar_videos") return await buscarVideos(argumentos);
   // Cualquier otro nombre viene de un conector definido en el administrador.
   // Se manda el nombre, no la dirección: el servidor la resuelve.
   return await usarConector(nombre, argumentos);
@@ -948,6 +949,52 @@ async function generarImagen(argumentos) {
     console.error(error);
     mostrarLienzoDeImagen("oculto");
     return { ok: false, mostrada: false, error: "Falló la generación de la imagen" };
+  }
+}
+
+// Vistas en forma corta: 1200000 → «1,2 M». Es una señal de popularidad, no de
+// rigor, y así se dice al recomendarlo.
+function formatoVistas(n) {
+  if (!Number.isFinite(n)) return "";
+  if (n >= 1e6) return `${(n / 1e6).toFixed(1).replace(".", ",")} M vistas`;
+  if (n >= 1e3) return `${Math.round(n / 1e3)} mil vistas`;
+  return `${n} vistas`;
+}
+
+// Buscar videos en YouTube. Los enlaces van al panel de referencias —la misma
+// lista, reutilizada— con el canal, la duración y las vistas en el pie. Al modelo
+// van los títulos y canales para que los nombre y advierta que vistas ≠ rigor.
+async function buscarVideos(argumentos) {
+  const consulta = String(argumentos.consulta || argumentos.tema || "").trim();
+  if (!consulta) return { ok: false, error: "Falta la consulta" };
+  try {
+    const respuesta = await fetch("/videos/buscar", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ consulta })
+    });
+    const datos = await respuesta.json().catch(() => ({}));
+    if (!datos.ok) return { ok: false, error: datos.error || "No se pudo buscar en YouTube" };
+    if (!datos.videos?.length) return { ok: true, videos: [], aviso: "No encontré videos para eso." };
+
+    // Cada video se pinta como una referencia: título con enlace, y en el pie el
+    // canal, la plataforma con la duración, el año y las vistas.
+    const comoReferencias = datos.videos.map(v => ({
+      titulo: v.titulo, enlace: v.enlace, autores: v.canal, anio: v.anio,
+      revista: ["YouTube", v.duracion, formatoVistas(v.vistas)].filter(Boolean).join(" · ")
+    }));
+    mostrarReferencias(comoReferencias, "Videos de YouTube");
+
+    return {
+      ok: true,
+      mostrados: datos.videos.length,
+      // Va al modelo para que los nombre y los sitúe; el aviso, para que no los
+      // presente como evidencia validada.
+      videos: datos.videos.map(v => ({ titulo: v.titulo, canal: v.canal, vistas: v.vistas, duracion: v.duracion })),
+      aviso: "Son videos de YouTube: las vistas miden popularidad, no rigor. No los presentes como fuente validada."
+    };
+  } catch (error) {
+    console.error(error);
+    return { ok: false, error: "Falló la búsqueda de videos" };
   }
 }
 

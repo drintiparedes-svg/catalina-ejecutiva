@@ -19,7 +19,7 @@
       "continue": true
     },
     {
-      "src": "/(health|session|gemini/token|elevenlabs/sesion|elevenlabs/registrar-herramientas|imagen-medica|referencias|web/buscar|web/leer|imagen/generar|salud|ruta|correo|conector|llamada|llamada/.*|admin/.*|telefonia/.*)",
+      "src": "/(health|session|gemini/token|elevenlabs/sesion|elevenlabs/registrar-herramientas|imagen-medica|referencias|web/buscar|web/leer|imagen/generar|videos/buscar|salud|ruta|correo|conector|llamada|llamada/.*|admin/.*|telefonia/.*)",
       "dest": "/api/index.mjs"
     },
     {

@@ -5,7 +5,7 @@ import {
 } from "./config.mjs";
 import { plantillaMediSmart, versionTexto, enviarPorResend } from "./correo.mjs";
 import { buscarCentros, calcularRuta, ubicarLugar } from "./salud.mjs";
-import { buscarEnLaWeb, leerPagina, generarImagen, hayWeb } from "./investigacion.mjs";
+import { buscarEnLaWeb, leerPagina, generarImagen, buscarVideos, hayWeb, hayVideos } from "./investigacion.mjs";
 import { buscarLiteratura } from "./literatura.mjs";
 import {
   telefoniaLista, originarLlamada, estadoLlamada, twimlPuente,
@@ -15,7 +15,7 @@ import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // Se sube a mano con cada arreglo que el usuario tiene que descargar.
-export const VERSION = "2026-08-24.9";
+export const VERSION = "2026-08-24.10";
 
 const root = fileURLToPath(new URL("./public", import.meta.url));
 // El .env se lee de forma síncrona a propósito. Con `await` aquí arriba, en el
@@ -64,7 +64,10 @@ export async function atender(req, res) {
         },
         // La web abierta usa Gemini para buscar; sin esa clave, las láminas y la
         // bibliografía siguen (Commons y PubMed son abiertos) pero no la web.
-        web: hayWeb()
+        web: hayWeb(),
+        // Los videos usan la API de datos de YouTube, que acepta la clave de
+        // Gemini si el proyecto tiene activada «YouTube Data API v3».
+        videos: hayVideos()
       });
     }
 
@@ -114,6 +117,14 @@ export async function atender(req, res) {
       const descripcion = String(p.descripcion || "").trim();
       if (!descripcion) return json(res, 400, { error: "Falta la descripción.", code: "SIN_DESCRIPCION" });
       return json(res, 200, await generarImagen(descripcion));
+    }
+
+    if (req.method === "POST" && req.url === "/videos/buscar") {
+      let p = {};
+      try { p = JSON.parse(await readBody(req)); } catch {}
+      const consulta = String(p.consulta || p.tema || "").trim();
+      if (!consulta) return json(res, 400, { error: "Falta la consulta.", code: "SIN_CONSULTA" });
+      return json(res, 200, await buscarVideos(consulta));
     }
 
     if (req.method === "POST" && req.url === "/salud") {
@@ -382,6 +393,24 @@ const DESCRIPCION_IMAGEN_GEN = "Genera una imagen nueva con IA a partir de una d
   + "Nunca la presentes como evidencia ni como una foto real: es una ilustración generada. "
   + "Para mostrar algo que de verdad existe, usa buscar_imagen_medica, que trae imágenes reales con su fuente.";
 
+// Buscar videos en YouTube. Otra vía de material, con criterio: se muestran los
+// enlaces, el canal y las vistas, y quien los recomiende debe decir que un video
+// muy visto no es lo mismo que uno riguroso.
+const PARAMETROS_VIDEOS = {
+  type: "object",
+  properties: {
+    consulta: {
+      type: "string",
+      description: "Qué videos buscar, en pocas palabras: «charla TED salud digital», «tutorial regresión logística en R»."
+    }
+  },
+  required: ["consulta"]
+};
+const DESCRIPCION_VIDEOS = "Busca en YouTube videos que puedan ser útiles sobre un tema y los muestra en pantalla con su canal, "
+  + "duración y número de vistas. Úsala cuando pidan un video, una charla, un tutorial o material audiovisual. "
+  + "Al recomendarlos, di de qué canal son y advierte que las vistas miden popularidad, no rigor: "
+  + "un video muy visto no es una fuente validada. Para evidencia científica usa buscar_referencias.";
+
 // Envío del resumen. El modelo aporta el asunto y el texto; nunca el
 // destinatario, que vive en la configuración del servidor.
 const PARAMETROS_CORREO = {
@@ -492,6 +521,7 @@ const HERRAMIENTAS = [
   { nombre: "buscar_en_la_web", descripcion: DESCRIPCION_WEB, parametros: PARAMETROS_WEB },
   { nombre: "leer_pagina_web", descripcion: DESCRIPCION_LEER, parametros: PARAMETROS_LEER },
   { nombre: "generar_imagen", descripcion: DESCRIPCION_IMAGEN_GEN, parametros: PARAMETROS_IMAGEN_GEN },
+  { nombre: "buscar_videos", descripcion: DESCRIPCION_VIDEOS, parametros: PARAMETROS_VIDEOS },
   { nombre: "enviar_resumen", descripcion: DESCRIPCION_CORREO, parametros: PARAMETROS_CORREO }
 ];
 
