@@ -448,6 +448,7 @@ async function atenderHerramienta(nombre, argumentos) {
   if (nombre === "como_llegar") return await comoLlegar(argumentos);
   if (nombre === "buscar_en_la_web") return await buscarWeb(argumentos);
   if (nombre === "leer_pagina_web") return await leerPaginaWeb(argumentos);
+  if (nombre === "generar_imagen") return await generarImagen(argumentos);
   // Cualquier otro nombre viene de un conector definido en el administrador.
   // Se manda el nombre, no la dirección: el servidor la resuelve.
   return await usarConector(nombre, argumentos);
@@ -886,6 +887,38 @@ async function leerPaginaWeb(argumentos) {
   }
 }
 
+// Generar una imagen. Sólo a petición explícita. Se muestra marcada como
+// generada: no es evidencia, y el crédito lo dice en vez de enlazar a una fuente.
+async function generarImagen(argumentos) {
+  const descripcion = String(argumentos.descripcion || "").trim();
+  if (!descripcion) return { ok: false, error: "Falta la descripción" };
+  setStatus("Generando la imagen…");
+  mostrarLienzoDeImagen("cargando");
+  try {
+    const respuesta = await fetch("/imagen/generar", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ descripcion })
+    });
+    const datos = await respuesta.json().catch(() => ({}));
+    if (!datos.ok || !datos.imagen) {
+      mostrarLienzoDeImagen("oculto");
+      return { ok: false, mostrada: false, error: datos.error || "No se pudo generar" };
+    }
+    mostrarImagenGenerada(datos.imagen, descripcion);
+    return {
+      ok: true,
+      mostrada: true,
+      // Explícito para que Catalina lo diga: es una ilustración, no una prueba.
+      generada: true,
+      aviso: "Es una imagen generada; preséntala como ilustración, nunca como evidencia."
+    };
+  } catch (error) {
+    console.error(error);
+    mostrarLienzoDeImagen("oculto");
+    return { ok: false, mostrada: false, error: "Falló la generación de la imagen" };
+  }
+}
+
 async function pedirReferencias(argumentos) {
   const tema = String(argumentos.tema || "").trim();
   if (!tema) return { ok: false, error: "Falta el tema" };
@@ -926,6 +959,21 @@ function mostrarLamina(lamina) {
   // que permite comprobar que la lámina existe y de dónde sale.
   ui.imagenCredito.textContent = `${lamina.autor} · ${lamina.licencia}`;
   ui.imagenCredito.href = lamina.fuente;
+  mostrarLienzoDeImagen("visible");
+}
+
+// Imagen generada. Mismo panel que las láminas, pero el crédito avisa —sin
+// enlace— de que es generada: una lámina de Commons tiene fuente que comprobar;
+// ésta no, y decirlo es parte de mostrarla con criterio.
+function mostrarImagenGenerada(dataUrl, descripcion) {
+  laminaEnPantalla = null;
+  ui.imagenFoto.onclick = null;
+  ui.imagenFoto.style.cursor = "";
+  ui.imagenFoto.src = dataUrl;
+  ui.imagenFoto.alt = descripcion;
+  ui.imagenPie.textContent = descripcion.slice(0, 120);
+  ui.imagenCredito.textContent = "Imagen generada con IA · no es evidencia";
+  ui.imagenCredito.removeAttribute("href");
   mostrarLienzoDeImagen("visible");
 }
 

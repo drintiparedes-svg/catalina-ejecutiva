@@ -120,6 +120,73 @@ function leerRespuesta(datos) {
   };
 }
 
+// ── Generar una imagen ───────────────────────────────────────────────────────
+
+// Modelo de imagen de Gemini. Devuelve la imagen incrustada en la respuesta
+// (inlineData), no un enlace. Los nombres cambian; se puede ajustar desde config.
+const MODELO_IMAGEN = "gemini-2.5-flash-image";
+
+// Genera una imagen a partir de una descripción. Se usa sólo a petición
+// explícita: una imagen generada ilustra, no prueba. Quien la muestra debe
+// marcarla como generada —lo hace el cliente— y nunca presentarla como evidencia.
+export async function generarImagen(descripcion, opciones = {}) {
+  const clave = process.env.GEMINI_API_KEY?.trim();
+  if (!clave) return { ok: false, error: "Falta GEMINI_API_KEY: generar imágenes usa Gemini." };
+  const texto = String(descripcion || "").trim();
+  if (!texto) return { ok: false, error: "Falta la descripción de la imagen." };
+
+  const modelo = (opciones.modelo || MODELO_IMAGEN).replace(/^models\//, "");
+  let datos;
+  try {
+    const upstream = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelo)}:generateContent`,
+      {
+        method: "POST",
+        headers: { "x-goog-api-key": clave, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ role: "user", parts: [{ text: texto }] }],
+          // Se pide imagen (y texto, que algunos modelos exigen declarar).
+          generationConfig: { responseModalities: ["IMAGE", "TEXT"] }
+        }),
+        signal: AbortSignal.timeout(TIEMPO_BUSQUEDA)
+      }
+    );
+    const crudo = await upstream.text();
+    if (!upstream.ok) {
+      console.error("Gemini imagen:", upstream.status, crudo.slice(0, 400));
+      // 404 o 400 suelen ser un nombre de modelo que ya no existe, o el plan
+      // sin acceso a imágenes.
+      return {
+        ok: false,
+        error: upstream.status === 404 || upstream.status === 400
+          ? "El modelo de imagen no está disponible en tu plan de Gemini."
+          : `La generación falló (${upstream.status}).`
+      };
+    }
+    datos = JSON.parse(crudo);
+  } catch (error) {
+    return {
+      ok: false,
+      error: error.name === "TimeoutError" ? "La imagen tardó demasiado." : "No se pudo generar la imagen."
+    };
+  }
+
+  // La imagen viene incrustada en una de las partes.
+  const partes = datos?.candidates?.[0]?.content?.parts ?? [];
+  const conImagen = partes.find(p => p?.inlineData?.data);
+  if (!conImagen) return { ok: false, error: "Gemini no devolvió ninguna imagen." };
+  const mime = conImagen.inlineData.mimeType || "image/png";
+
+  return {
+    ok: true,
+    // Data URL: se muestra sin guardar nada. En Vercel el disco es de sólo
+    // lectura, así que guardar un archivo no es opción, y tampoco hace falta.
+    imagen: `data:${mime};base64,${conImagen.inlineData.data}`,
+    // El texto que el modelo pudo devolver junto a la imagen.
+    nota: partes.map(p => p?.text).filter(Boolean).join(" ").trim() || ""
+  };
+}
+
 // ── Leer una página ─────────────────────────────────────────────────────────
 
 // Rangos que no se visitan nunca. El de 169.254 no es teórico: es donde viven
