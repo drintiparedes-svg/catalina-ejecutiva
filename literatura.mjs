@@ -3,14 +3,21 @@
 // Antes se buscaba sólo en PubMed. PubMed es excelente en medicina y salud
 // pública, pero no ve finanzas, innovación ni buena parte de la salud digital,
 // que viven en revistas de economía, ingeniería o informática. Este módulo
-// consulta cuatro fuentes abiertas en paralelo y funde los resultados:
+// consulta nueve fuentes abiertas en paralelo y funde los resultados:
 //
 //   · OpenAlex  — todo campo del conocimiento, con conteo de citas y si es de
 //                 acceso abierto. Es la de mejor cobertura para finanzas e
-//                 innovación.
+//                 innovación, y de ella sale el factor de impacto de la revista.
 //   · Crossref  — el registro universal de DOIs; complementa a las demás.
 //   · Europe PMC— biomédico y preprints; refuerza salud digital y salud pública.
 //   · PubMed    — la de siempre, con su filtro de estudios en humanos.
+//   · Semantic Scholar — ciencia de la computación e IA; cobertura de preprints.
+//   · arXiv     — preprints de informática, física y estadística.
+//   · ClinicalTrials.gov — registros de ensayos clínicos, con su estado.
+//   · LILACS/SciELO — literatura de América Latina, vía BVS.
+//   · Epistemonikos — revisiones sistemáticas (requiere clave).
+//
+// Unpaywall no es una fuente más: resuelve el PDF de acceso abierto de un DOI.
 //
 // «Validada» no quiere decir «verdadera»: quiere decir que se muestra lo que
 // permite juzgarla —dónde se publicó, cuántas veces la han citado, si es una
@@ -20,7 +27,7 @@
 
 const TIEMPO = 9_000;
 const POR_FUENTE = 8;
-const DEVUELVE = 8;
+const DEVUELVE = 20;
 const CORREO = "catalina@local";   // OpenAlex y Crossref piden un contacto
 
 // ── Cada fuente, normalizada a la misma forma ────────────────────────────────
@@ -62,6 +69,7 @@ async function deOpenAlex(consulta) {
       citas: o.cited_by_count ?? null,
       accesoAbierto: o.open_access?.is_oa ?? null,
       preprint: tipo === "preprint" || esPreprint(tipo, revista),
+      sourceId: o.primary_location?.source?.id || null,   // para pedir su impacto
       fuente: "OpenAlex"
     };
   });
@@ -329,6 +337,7 @@ function fundir(listas) {
     if (!previo.registro && item.registro) { previo.registro = true; previo.estado = item.estado; }
     if (!previo.enlace && item.enlace) previo.enlace = item.enlace;
     if (!previo.revista && item.revista) previo.revista = item.revista;
+    if (!previo.sourceId && item.sourceId) previo.sourceId = item.sourceId;
   }
   return [...por.values()];
 }
@@ -347,7 +356,28 @@ function puntaje(r) {
   if (r.fuentes.length > 1) p += 50;                            // aparece en varias
   p += Math.min(r.citas ?? 0, 2000) / 10;                       // citas, con techo
   if (r.anio) p += Math.max(0, 20 - (ESTE_ANIO - r.anio));      // recencia suave
+  if (Number.isFinite(r.impacto)) p += Math.min(r.impacto, 50) * 2;  // impacto de la revista
   return p;
+}
+
+// Impacto de la revista. El «factor de impacto» de Clarivate es propietario y
+// sin API legal; OpenAlex publica el mismo cálculo —citas promedio por trabajo
+// en los dos años previos— sobre datos abiertos. Es eso lo que se muestra, y se
+// etiqueta como aproximado para no hacerlo pasar por el JIF oficial.
+async function ponerImpacto(refs) {
+  const ids = [...new Set(refs.map(r => r.sourceId).filter(Boolean))]
+    .map(u => u.replace(/^https?:\/\/openalex\.org\//, ""));
+  if (!ids.length) return;
+  try {
+    const datos = await json(`https://api.openalex.org/sources?filter=ids.openalex:${ids.join("|")}`
+      + `&per-page=${ids.length}&mailto=${encodeURIComponent(CORREO)}&select=id,summary_stats`);
+    const por = new Map();
+    for (const src of datos.results ?? []) por.set(src.id, src.summary_stats?.["2yr_mean_citedness"]);
+    for (const r of refs) {
+      const v = r.sourceId && por.get(r.sourceId);
+      if (Number.isFinite(v)) r.impacto = Math.round(v * 10) / 10;
+    }
+  } catch (e) { console.error("impacto:", e.message); }
 }
 
 export const hayLiteratura = () => true;   // todas las fuentes son abiertas
@@ -375,17 +405,22 @@ export async function buscarLiteratura(consulta, opciones = {}) {
     return { ok: false, error: "Ninguna fuente devolvió resultados." };
   }
 
-  const top = fundir(listas)
-    .sort((a, b) => puntaje(b) - puntaje(a))
-    .slice(0, DEVUELVE);
+  const fundidas = fundir(listas).sort((a, b) => puntaje(b) - puntaje(a));
+  const total = fundidas.length;              // cuántas distintas se encontraron
+  const top = fundidas.slice(0, DEVUELVE);
 
-  // Unpaywall resuelve el PDF legal de las que tengan DOI y aún no lo traigan.
-  // Todas a la vez, y un fallo no estorba: es un extra, no un requisito.
-  await Promise.allSettled(top.map(async r => {
-    if (r.pdf || !r.doi) return;
-    const pdf = await pdfAbierto(r.doi);
-    if (pdf) { r.pdf = pdf; if (r.accesoAbierto == null) r.accesoAbierto = true; }
-  }));
+  // Impacto de la revista (OpenAlex) y PDF legal (Unpaywall), en paralelo. Con
+  // el impacto ya puesto se reordena: a igualdad de evidencia, primero la
+  // revista de mayor impacto, que es justo lo que se pide al ampliar.
+  await Promise.allSettled([
+    ponerImpacto(top),
+    ...top.map(async r => {
+      if (r.pdf || !r.doi) return;
+      const pdf = await pdfAbierto(r.doi);
+      if (pdf) { r.pdf = pdf; if (r.accesoAbierto == null) r.accesoAbierto = true; }
+    })
+  ]);
+  top.sort((a, b) => puntaje(b) - puntaje(a));
 
   const referencias = top
     .map(r => ({
@@ -395,6 +430,7 @@ export async function buscarLiteratura(consulta, opciones = {}) {
       revista: r.revista,
       enlace: r.enlace,
       citas: r.citas,
+      impacto: Number.isFinite(r.impacto) ? r.impacto : null,
       preprint: r.preprint,
       registro: r.registro || false,
       estado: r.estado || null,
@@ -406,6 +442,7 @@ export async function buscarLiteratura(consulta, opciones = {}) {
 
   return {
     ok: true,
+    total,
     referencias,
     consultadas: nombres.filter(n => !fallaron.includes(n)),
     fallaron

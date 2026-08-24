@@ -33,6 +33,7 @@ const ui = {
   referenciasLista: document.querySelector("#referenciasLista"),
   referenciasTitulo: document.querySelector("#referenciasTitulo"),
   referenciasCerrar: document.querySelector("#referenciasCerrar"),
+  referenciasAmpliar: document.querySelector("#referenciasAmpliar"),
   panel: document.querySelector("#panel"),
   panelBody: document.querySelector("#panelBody"),
   panelClose: document.querySelector("#panelClose"),
@@ -298,6 +299,10 @@ ui.referenciasCerrar.addEventListener("click", () => {
   ui.referencias.dataset.estado = "oculto";
   referenciasEnPantalla = [];
 });
+ui.referenciasAmpliar.addEventListener("click", () => {
+  referenciasExpandido = !referenciasExpandido;
+  pintarReferencias();
+});
 document.addEventListener("keydown", event => {
   if (event.target.matches("input, textarea")) return;
   const tecla = event.key.toLowerCase();
@@ -437,6 +442,13 @@ async function atenderLlamado(peticion, contexto) {
 // pedirle que reconstruya de memoria algo que puede recordar mal.
 let laminaEnPantalla = null;
 let referenciasEnPantalla = [];
+// El panel llega colapsado: se muestran las más relevantes y se guarda la lista
+// entera para poder ampliarla, reordenándola entonces por factor de impacto.
+let referenciasTotal = 0;
+let referenciasTitulo = "Referencias";
+let referenciasAmpliable = false;
+let referenciasExpandido = false;
+const REFERENCIAS_COLAPSADAS = 8;
 
 async function atenderHerramienta(nombre, argumentos) {
   // Gesto de espera: mientras la herramienta corre —una búsqueda tarda unos
@@ -954,11 +966,17 @@ async function pedirReferencias(argumentos) {
       return { ok: false, error: datos.error || "Sin referencias" };
     }
 
-    mostrarReferencias(datos.referencias);
+    // total = cuántas encontró en total; en pantalla van las mejores, ampliables
+    // a las 20 más relevantes reordenadas por factor de impacto de la revista.
+    mostrarReferencias(datos.referencias, "Referencias", {
+      total: datos.total ?? datos.referencias.length,
+      ampliable: true
+    });
     // Van los títulos y las señales de evidencia —citas, si es preprint— para
     // que Catalina pueda ordenarlas al hablar; los enlaces ya están en pantalla.
     return {
       ok: true,
+      encontradas: datos.total ?? datos.referencias.length,
       mostradas: datos.referencias.length,
       consultadas: datos.consultadas,
       // Las que fallaron o no se consultaron: Catalina debe nombrarlas como
@@ -966,7 +984,7 @@ async function pedirReferencias(argumentos) {
       noConsultadas: datos.fallaron,
       referencias: datos.referencias.map(r => ({
         titulo: r.titulo, anio: r.anio, revista: r.revista,
-        citas: r.citas, preprint: r.preprint, registro: r.registro
+        citas: r.citas, impacto: r.impacto, preprint: r.preprint, registro: r.registro
       }))
     };
   } catch (error) {
@@ -1008,11 +1026,47 @@ function mostrarImagenGenerada(dataUrl, descripcion) {
   mostrarLienzoDeImagen("visible");
 }
 
-function mostrarReferencias(referencias, titulo = "Referencias") {
+function mostrarReferencias(referencias, titulo = "Referencias", meta = {}) {
   referenciasEnPantalla = referencias;
-  ui.referenciasTitulo.textContent = titulo;
+  referenciasTitulo = titulo;
+  referenciasTotal = Number.isFinite(meta.total) ? meta.total : referencias.length;
+  // Sólo el panel de literatura se amplía y sólo si hay más de lo que cabe.
+  referenciasAmpliable = Boolean(meta.ampliable) && referencias.length > REFERENCIAS_COLAPSADAS;
+  referenciasExpandido = false;
+  pintarReferencias();
+  ui.referencias.dataset.estado = "visible";
+}
+
+// Pinta la lista según esté colapsada o ampliada. Colapsada muestra las mejores
+// en el orden de relevancia que trajo el servidor; ampliada muestra las 20 y las
+// reordena por factor de impacto de la revista, que es lo que se pidió al ampliar.
+function pintarReferencias() {
+  let lista = referenciasEnPantalla;
+  if (referenciasExpandido) {
+    lista = referenciasEnPantalla.slice().sort((a, b) => {
+      const ia = Number.isFinite(a.impacto) ? a.impacto : -1;
+      const ib = Number.isFinite(b.impacto) ? b.impacto : -1;
+      return ib - ia;   // mayor impacto primero; las sin dato, al final
+    });
+  } else if (referenciasAmpliable) {
+    lista = referenciasEnPantalla.slice(0, REFERENCIAS_COLAPSADAS);
+  }
+
+  // El título lleva el número encontrado, que puede ser mayor que lo mostrado.
+  ui.referenciasTitulo.textContent =
+    referenciasTotal > lista.length ? `${referenciasTitulo} · ${referenciasTotal}` : referenciasTitulo;
+
+  ui.referencias.dataset.expandido = referenciasExpandido ? "si" : "no";
+  ui.referenciasAmpliar.hidden = !referenciasAmpliable;
+  if (referenciasAmpliable) {
+    ui.referenciasAmpliar.setAttribute("aria-expanded", referenciasExpandido ? "true" : "false");
+    ui.referenciasAmpliar.textContent = referenciasExpandido
+      ? "Ver menos"
+      : `Ver las ${referenciasEnPantalla.length} por impacto`;
+  }
+
   ui.referenciasLista.replaceChildren();
-  for (const referencia of referencias) {
+  for (const referencia of lista) {
     const item = document.createElement("li");
     const enlace = document.createElement("a");
     enlace.href = referencia.enlace;
@@ -1030,9 +1084,17 @@ function mostrarReferencias(referencias, titulo = "Referencias") {
     pie.textContent = partes.join(" · ");
 
     item.append(enlace, pie);
+    // El factor de impacto va aparte y con color: es la señal por la que se
+    // reordena al ampliar, así que se ve de un vistazo.
+    if (Number.isFinite(referencia.impacto) && referencia.impacto > 0) {
+      const impacto = document.createElement("span");
+      impacto.className = "referencia-impacto";
+      impacto.textContent = ` · IF≈${referencia.impacto.toFixed(1)}`;
+      pie.append(impacto);
+    }
+
     ui.referenciasLista.append(item);
   }
-  ui.referencias.dataset.estado = "visible";
 }
 
 // Subtítulos e historial.

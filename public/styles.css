@@ -256,3 +256,9 @@ button.primary { border-color: rgba(109,228,255,.45); background: linear-gradien
 .oyendo-punto { flex: none; width: 7px; height: 7px; border-radius: 50%; background: #34C759; animation: pulse 1.8s infinite; }
 .oyendo[data-estado="problema"] .oyendo-punto { background: #FF9F0A; animation: none; }
 .oyendo[data-estado="respondiendo"] .oyendo-punto { background: #73f5ff; }
+
+.referencias-controles { display: flex; align-items: center; gap: 6px; }
+.referencias-ampliar { min-height: 24px; padding: 2px 9px; border-radius: 8px; border: 1px solid rgba(169,216,236,.35); background: transparent; color: #a9d8ec; font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; cursor: pointer; }
+.referencias-ampliar:hover { background: rgba(169,216,236,.12); }
+.referencias[data-expandido="si"] { max-height: 72dvh; }
+.referencia-impacto { color: #8fd0b0; }
