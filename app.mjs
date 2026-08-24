@@ -15,7 +15,7 @@ import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // Se sube a mano con cada arreglo que el usuario tiene que descargar.
-export const VERSION = "2026-08-24.10";
+export const VERSION = "2026-08-24.11";
 
 const root = fileURLToPath(new URL("./public", import.meta.url));
 // El .env se lee de forma síncrona a propósito. Con `await` aquí arriba, en el
@@ -406,10 +406,11 @@ const PARAMETROS_VIDEOS = {
   },
   required: ["consulta"]
 };
-const DESCRIPCION_VIDEOS = "Busca en YouTube videos que puedan ser útiles sobre un tema y los muestra en pantalla con su canal, "
-  + "duración y número de vistas. Úsala cuando pidan un video, una charla, un tutorial o material audiovisual. "
-  + "Al recomendarlos, di de qué canal son y advierte que las vistas miden popularidad, no rigor: "
-  + "un video muy visto no es una fuente validada. Para evidencia científica usa buscar_referencias.";
+const DESCRIPCION_VIDEOS = "Busca en YouTube videos útiles, con foco en salud —salud digital, medicina, salud pública, divulgación clínica—, "
+  + "y los muestra en pantalla con su canal, duración y número de vistas. Úsala cuando pidan un video, una charla, un tutorial "
+  + "o material audiovisual. A diferencia de las publicaciones, aquí NO se aplica el filtro de evidencia científica: son videos para "
+  + "aprender u orientar, no fuentes validadas, así que muestra lo que encuentres sin descartarlo por rigor. Al recomendarlos di de qué "
+  + "canal son. Si lo que se necesita es evidencia, ésa se busca con buscar_referencias.";
 
 // Envío del resumen. El modelo aporta el asunto y el texto; nunca el
 // destinatario, que vive en la configuración del servidor.

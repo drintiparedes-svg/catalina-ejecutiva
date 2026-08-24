@@ -987,10 +987,10 @@ async function buscarVideos(argumentos) {
     return {
       ok: true,
       mostrados: datos.videos.length,
-      // Va al modelo para que los nombre y los sitúe; el aviso, para que no los
-      // presente como evidencia validada.
+      // Va al modelo para que los nombre y los sitúe. Sin filtro de evidencia:
+      // son material para orientar, no fuentes validadas, y así se ofrecen.
       videos: datos.videos.map(v => ({ titulo: v.titulo, canal: v.canal, vistas: v.vistas, duracion: v.duracion })),
-      aviso: "Son videos de YouTube: las vistas miden popularidad, no rigor. No los presentes como fuente validada."
+      aviso: "Son videos de YouTube para orientar, no evidencia validada; ofrécelos como material útil, sin descartarlos por rigor."
     };
   } catch (error) {
     console.error(error);

@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Catalina — medios</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    margin: 0; padding: 2rem 1.25rem 4rem;
+    font: 16px/1.6 ui-sans-serif, system-ui, -apple-system, sans-serif;
+    background: #0F1116; color: #E4E7ED;
+  }
+  main { max-width: 46rem; margin: 0 auto; }
+  h1 { font-size: 1.5rem; margin: 0 0 .3rem; }
+  .sub { color: #8B93A3; margin: 0 0 2rem; }
+  .paso {
+    border: 1px solid #262A33; border-radius: 10px;
+    padding: 1rem 1.15rem; margin-bottom: .85rem; background: #171A21;
+  }
+  .paso h2 { font-size: 1rem; margin: 0 0 .5rem; display: flex; gap: .55rem; align-items: baseline; }
+  .marca { font-size: 1.05rem; }
+  .bien { color: #6FD08C; } .mal { color: #FF7A6B; } .espera { color: #F5BD4F; }
+  .detalle { margin: .35rem 0 0; color: #A8B0BE; font-size: .93rem; }
+  code {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: .84em;
+    background: #22262F; padding: .12em .4em; border-radius: 4px; color: #D6DBE4;
+    white-space: pre-wrap; word-break: break-word;
+  }
+  img.muestra { margin-top: .7rem; max-width: 220px; max-height: 160px; border-radius: 8px; border: 1px solid #2B303A; }
+  ul.lista { margin: .5rem 0 0; padding-left: 1.1rem; font-size: .9rem; color: #C2C9D6; }
+  ul.lista li { margin: .2rem 0; }
+  button {
+    font: inherit; font-weight: 600; margin-top: 2rem;
+    background: #2C6E72; color: #fff; border: 0; border-radius: 8px;
+    padding: .6rem 1.1rem; cursor: pointer;
+  }
+  a { color: #7FC8CC; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Medios de Catalina</h1>
+  <p class="sub">Prueba <b>directamente</b> generar imagen, buscar imagen y buscar video —sin pasar por la voz—.
+    Así se ve si el problema es el servidor/las claves o si es que el agente no llama a la herramienta.
+    Hazle una captura y mándala.</p>
+  <p class="sub" style="font-size:.85rem;opacity:.7">Página del <b>2026-08-24.11</b>. El paso 0 debe decir esta misma versión; si no, el despliegue no tomó.</p>
+
+  <section class="paso" id="p0"><h2><span class="marca espera">•</span> 0. Servidor y claves</h2><p class="detalle">Comprobando…</p></section>
+  <section class="paso" id="p1"><h2><span class="marca espera">•</span> 1. Generar imagen con IA <code>/imagen/generar</code></h2><p class="detalle">Esperando…</p></section>
+  <section class="paso" id="p2"><h2><span class="marca espera">•</span> 2. Buscar imagen real <code>/imagen-medica</code></h2><p class="detalle">Esperando…</p></section>
+  <section class="paso" id="p3"><h2><span class="marca espera">•</span> 3. Buscar video <code>/videos/buscar</code></h2><p class="detalle">Esperando…</p></section>
+
+  <button onclick="location.reload()">Volver a probar</button>
+  <p class="sub" style="margin-top:1.5rem;font-size:.9rem">¿El camino de la voz? Está en <a href="/diagnostico.html">/diagnostico.html</a>.</p>
+</main>
+
+<script type="module">
+const pasos = { 0: "#p0", 1: "#p1", 2: "#p2", 3: "#p3" };
+function marcar(n, estado, ...nodos) {
+  const caja = document.querySelector(pasos[n]);
+  const marca = caja.querySelector(".marca");
+  marca.className = "marca " + (estado === "bien" ? "bien" : estado === "mal" ? "mal" : "espera");
+  marca.textContent = estado === "bien" ? "✓" : estado === "mal" ? "✕" : "•";
+  caja.querySelectorAll(".detalle, .muestra, .lista").forEach(x => x.remove());
+  for (const nodo of nodos) {
+    if (typeof nodo === "string") {
+      const p = document.createElement("p"); p.className = "detalle"; p.innerHTML = nodo; caja.append(p);
+    } else caja.append(nodo);
+  }
+}
+const esc = s => String(s ?? "").replace(/</g, "&lt;");
+
+async function postJSON(ruta, cuerpo) {
+  const r = await fetch(ruta, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(cuerpo) });
+  let datos = {}; try { datos = await r.json(); } catch {}
+  return { status: r.status, ok: r.ok, datos };
+}
+
+// 0. Salud.
+let salud = null;
+try {
+  const r = await fetch("/health"); salud = await r.json();
+  const g = salud.proveedores?.gemini, v = salud.videos;
+  marcar(0, g ? "bien" : "mal",
+    `Versión <code>${esc(salud.version)}</code>.`,
+    `Gemini (imágenes y web): <b class="${g ? "bien" : "mal"}">${g ? "clave puesta" : "sin clave"}</b>.`,
+    `Video (YouTube): <b class="${v ? "bien" : "mal"}">${v ? "clave puesta" : "sin clave"}</b> — recuerda que además la API «YouTube Data API v3» debe estar activada en Google Cloud.`);
+} catch (e) {
+  marcar(0, "mal", "No se pudo leer <code>/health</code>.", `<code>${esc(e.message)}</code>`);
+}
+
+// 1. Generar imagen.
+try {
+  const { status, datos } = await postJSON("/imagen/generar", { descripcion: "ilustración médica sencilla de un riñón sano, estilo diagrama" });
+  if (datos.ok && datos.imagen) {
+    const img = document.createElement("img"); img.className = "muestra"; img.src = datos.imagen;
+    marcar(1, "bien", "Gemini devolvió una imagen:", img);
+  } else {
+    marcar(1, "mal", `No generó (${status}). El motivo exacto de Google:`, `<code>${esc(datos.error)}</code>`,
+      "Si dice «modelo no encontrado» o «no habilitado», el plan de esa clave no da acceso a generación de imágenes. Si es de cuota, hay que esperar o subir el plan.");
+  }
+} catch (e) { marcar(1, "mal", "Falló la petición.", `<code>${esc(e.message)}</code>`); }
+
+// 2. Buscar imagen real (Commons, sin clave).
+try {
+  const { status, datos } = await postJSON("/imagen-medica", { estructura: "corazón humano" });
+  if (datos.ok && datos.lamina?.imagen) {
+    const img = document.createElement("img"); img.className = "muestra"; img.src = datos.lamina.imagen;
+    marcar(2, "bien", `Encontró una imagen real: <b>${esc(datos.lamina.titulo)}</b> (${esc(datos.lamina.licencia || "Commons")}).`, img);
+  } else {
+    marcar(2, "mal", `No encontró imagen (${status}).`, `<code>${esc(datos.error || "sin detalle")}</code>`,
+      "Esta búsqueda usa Wikimedia Commons y no necesita clave: si falla aquí es red del despliegue, no una clave.");
+  }
+} catch (e) { marcar(2, "mal", "Falló la petición.", `<code>${esc(e.message)}</code>`); }
+
+// 3. Buscar video.
+try {
+  const { status, datos } = await postJSON("/videos/buscar", { consulta: "salud digital telemedicina" });
+  if (datos.ok && datos.videos?.length) {
+    const ul = document.createElement("ul"); ul.className = "lista";
+    for (const v of datos.videos.slice(0, 5)) {
+      const li = document.createElement("li");
+      li.innerHTML = `<a href="${esc(v.enlace)}" target="_blank" rel="noopener">${esc(v.titulo)}</a> — ${esc(v.canal)}`;
+      ul.append(li);
+    }
+    marcar(3, "bien", `YouTube devolvió ${datos.videos.length} videos:`, ul);
+  } else if (datos.ok) {
+    marcar(3, "espera", "YouTube respondió, pero sin resultados para esa búsqueda.");
+  } else {
+    marcar(3, "mal", `No buscó (${status}). El motivo exacto:`, `<code>${esc(datos.error)}</code>`,
+      "Si dice que rechazó la clave, entra a Google Cloud → APIs y servicios → Biblioteca, y activa <b>YouTube Data API v3</b> en el proyecto de esa clave.");
+  }
+} catch (e) { marcar(3, "mal", "Falló la petición.", `<code>${esc(e.message)}</code>`); }
+</script>
+</body>
+</html>
