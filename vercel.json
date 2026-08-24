@@ -1,29 +1,15 @@
 {
-  "$schema": "https://openapi.vercel.sh/vercel.json",
-
-  "rewrites": [
-    { "source": "/health", "destination": "/api" },
-    { "source": "/session", "destination": "/api" },
-    { "source": "/gemini/token", "destination": "/api" },
-    { "source": "/elevenlabs/sesion", "destination": "/api" },
-    { "source": "/imagen-medica", "destination": "/api" },
-    { "source": "/referencias", "destination": "/api" },
-    { "source": "/salud", "destination": "/api" },
-    { "source": "/ruta", "destination": "/api" },
-    { "source": "/correo", "destination": "/api" },
-    { "source": "/conector", "destination": "/api" },
-    { "source": "/llamada", "destination": "/api" },
-    { "source": "/llamada/:resto*", "destination": "/api" },
-    { "source": "/admin/:resto*", "destination": "/api" },
-    { "source": "/telefonia/:resto*", "destination": "/api" }
+  "version": 2,
+  "builds": [
+    { "src": "api/index.mjs", "use": "@vercel/node" },
+    { "src": "public/**", "use": "@vercel/static" }
   ],
+  "routes": [
+    { "src": "/(.*)", "headers": { "X-Content-Type-Options": "nosniff" }, "continue": true },
 
-  "headers": [
-    {
-      "source": "/(.*)",
-      "headers": [
-        { "key": "X-Content-Type-Options", "value": "nosniff" }
-      ]
-    }
+    { "src": "/(health|session|gemini/token|elevenlabs/sesion|imagen-medica|referencias|salud|ruta|correo|conector|llamada|llamada/.*|admin/.*|telefonia/.*)", "dest": "/api/index.mjs" },
+
+    { "src": "/", "dest": "/public/index.html" },
+    { "src": "/(.*)", "dest": "/public/$1" }
   ]
 }
