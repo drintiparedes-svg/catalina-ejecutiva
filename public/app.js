@@ -69,6 +69,7 @@ const manejadores = {
   },
   onConnected: () => {
     connected = true;
+    ultimoFallo = null;
     hayActividad();
     calentarUbicacion();   // deja lista la zona antes de que nadie pregunte
     mostrarAviso("");   // si el intento anterior falló, su aviso ya no aplica
@@ -94,7 +95,9 @@ const manejadores = {
     ui.connect.disabled = false;
     ui.mute.disabled = true;
     ui.mute.textContent = "Silenciar micrófono";
-    setStatus("Lista para comenzar");
+    // Si la sesión cayó por un fallo, se conserva su mensaje: decir «Lista para
+    // comenzar» encima lo borraría justo cuando hace falta leerlo.
+    setStatus(ultimoFallo?.mensaje || "Lista para comenzar");
   },
   onPhase: phase => {
     hayActividad();
@@ -164,6 +167,7 @@ const MOTIVOS_DE_RELEVO = new Set([
 const disponible = { elevenlabs: false, openai: false, gemini: false };
 let proveedor = null;
 let sesion = null;
+let ultimoFallo = null;   // el motivo del último corte, para no perderlo al desconectar
 
 function proveedoresUtiles() {
   return ORDEN.filter(nombre => disponible[nombre]);
@@ -229,8 +233,15 @@ async function atenderFallo(error) {
   const siguiente = cadena[cadena.indexOf(proveedor) + 1];
 
   if (!siguiente || !MOTIVOS_DE_RELEVO.has(error.code)) {
-    setStatus(error.mensaje || "No se pudo conectar");
+    ultimoFallo = { mensaje: error.mensaje || "No se pudo conectar" };
+    setStatus(ultimoFallo.mensaje);
     mostrarAviso(error.ayuda || "");
+    // El botón vuelve a estar listo para reintentar aunque la sesión no llegue
+    // a llamar a onDisconnected (p. ej. si falló antes de conectar del todo).
+    connected = false;
+    ui.connect.textContent = "Iniciar conversación";
+    ui.connect.disabled = false;
+    ui.mute.disabled = true;
     return;
   }
 

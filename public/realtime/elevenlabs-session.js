@@ -56,6 +56,7 @@ export class ElevenLabsSession {
     this.inicio = null;
     this.arranco = false;
     this.reintentoSinAjustes = false;
+    this.cierreLimpio = false;   // true cuando el cierre lo pedimos nosotros
   }
 
   #emit(name, ...args) {
@@ -130,26 +131,36 @@ export class ElevenLabsSession {
   #alCerrar(evento) {
     const codigo = evento?.code;
     const motivo = evento?.reason || "";
+    // Un cierre limpio es el que pedimos nosotros (colgar) o el 1000 de fin de
+    // turno. Cualquier otro lo impone ElevenLabs, y hay que contarlo.
+    const limpio = this.cierreLimpio || codigo === 1000;
 
+    // Un único reintento sin sobrescrituras: la causa más común es que el
+    // agente no las tiene permitidas en su panel. Si funciona, la conversación
+    // sigue con la persona que el agente tenga puesta.
     if (!this.arranco && !this.reintentoSinAjustes && this.inicio?.conversation_config_override) {
       this.reintentoSinAjustes = true;
-      console.warn("ElevenLabs cerró la sesión antes de empezar:", codigo, motivo);
+      console.warn("ElevenLabs cerró antes de empezar:", codigo, motivo);
       this.#emit("onStatus", "Reintentando…");
       this.#abrirSocket(this.url, { type: "conversation_initiation_client_data" })
         .catch(() => this.disconnect());
       return;
     }
 
-    if (!this.arranco) {
+    if (!limpio) {
+      const parte = explicarCierre(codigo, motivo, this.arranco, this.reintentoSinAjustes);
       console.warn("ElevenLabs cerró la sesión:", codigo, motivo);
-      this.#emit("onFailure", Object.assign(
-        new Error(motivo || "ElevenLabs cerró la sesión nada más abrirla"),
-        {
+      // La nota queda en el historial: es lo que hay que releer para arreglarlo.
+      this.#emit("onNota", parte.nota);
+      if (!this.arranco) {
+        this.#emit("onFailure", Object.assign(new Error(parte.corto), {
           code: "ELEVENLABS_SESSION_ERROR",
-          mensaje: "ElevenLabs cerró la sesión nada más abrirla.",
-          ayuda: motivo || "Revisa en su panel que el agente esté publicado y que la cuenta tenga crédito."
-        }
-      ));
+          mensaje: parte.corto,
+          ayuda: parte.ayuda
+        }));
+      } else {
+        this.#emit("onHelp", parte.ayuda);
+      }
     }
 
     if (this.connected) this.disconnect();
@@ -360,6 +371,7 @@ export class ElevenLabsSession {
   }
 
   disconnect() {
+    this.cierreLimpio = true;
     this.connected = false;
     this.#callar();
     try { this.socket?.close(); } catch {}
@@ -372,6 +384,7 @@ export class ElevenLabsSession {
     this.muted = false;
     this.arranco = false;
     this.reintentoSinAjustes = false;
+    this.cierreLimpio = false;
     this.#emit("onDisconnected");
     this.#emit("onPhase", "idle");
   }
@@ -440,6 +453,45 @@ function assertVoiceEnvironment() {
     error.code = "NO_WEBSOCKET";
     throw error;
   }
+}
+
+// Traduce el cierre de un WebSocket a algo accionable. El texto que manda
+// ElevenLabs (`motivo`) es casi siempre lo más útil, así que se muestra tal
+// cual; el código sólo afina la pista de qué tocar.
+function explicarCierre(codigo, motivo, arranco, reintentado) {
+  const suyo = motivo ? `ElevenLabs dijo: «${motivo}».` : "";
+  const cod = codigo ? `(código ${codigo})` : "";
+
+  // 1008 es «violación de política»: overrides no permitidos o clave sin
+  // permiso. Si ya reintentamos sin overrides y volvió a pasar, no eran los
+  // overrides: apunta a la clave o a que el agente no está publicado.
+  if (codigo === 1008) {
+    const ayuda = reintentado
+      ? "El agente cortó incluso sin pedirle nada especial. Suele ser la cuenta sin crédito, o el agente sin publicar. Revísalo en su panel."
+      : "Activa las sobrescrituras del agente: en ElevenLabs, tu agente → Security → habilita System prompt, Language y Voice. O revisa que la cuenta tenga crédito.";
+    return {
+      corto: "ElevenLabs cortó la conversación.",
+      ayuda: `${suyo} ${ayuda}`.trim(),
+      nota: `ElevenLabs cerró la conversación ${cod}. ${suyo} ${ayuda}`.trim()
+    };
+  }
+  if (codigo === 1011 || (codigo >= 1012 && codigo <= 1014)) {
+    return {
+      corto: "ElevenLabs tuvo un problema en su servicio.",
+      ayuda: `${suyo} No es cosa tuya; vuelve a intentar en un momento.`.trim(),
+      nota: `ElevenLabs falló de su lado ${cod}. ${suyo}`.trim()
+    };
+  }
+  // Cualquier otro cierre inesperado: se muestra el motivo verbatim, que es lo
+  // que de verdad dice qué pasó.
+  const base = arranco
+    ? "La conversación se cortó."
+    : "ElevenLabs cerró la sesión nada más abrirla.";
+  return {
+    corto: base,
+    ayuda: suyo || `Se cerró sin dar motivo ${cod}. Revisa en su panel que el agente esté publicado y que la cuenta tenga crédito.`,
+    nota: `${base} ${cod} ${suyo}`.trim()
+  };
 }
 
 function mensajeDeError(error) {
