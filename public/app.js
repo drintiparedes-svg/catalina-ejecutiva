@@ -935,9 +935,17 @@ async function pedirReferencias(argumentos) {
     }
 
     mostrarReferencias(datos.referencias);
-    // Van los títulos para que pueda mencionarlas de palabra; los enlaces ya
-    // están en pantalla y leerlos en voz alta no aportaría nada.
-    return { ok: true, mostradas: datos.referencias.length, titulos: datos.referencias.map(r => r.titulo) };
+    // Van los títulos y las señales de evidencia —citas, si es preprint— para
+    // que Catalina pueda ordenarlas al hablar; los enlaces ya están en pantalla.
+    return {
+      ok: true,
+      mostradas: datos.referencias.length,
+      consultadas: datos.consultadas,
+      referencias: datos.referencias.map(r => ({
+        titulo: r.titulo, anio: r.anio, revista: r.revista,
+        citas: r.citas, preprint: r.preprint
+      }))
+    };
   } catch (error) {
     console.error(error);
     return { ok: false, error: "Falló la conexión con PubMed" };
@@ -991,8 +999,11 @@ function mostrarReferencias(referencias, titulo = "Referencias") {
 
     const pie = document.createElement("span");
     pie.className = "referencia-pie";
-    pie.textContent = [referencia.autores, referencia.revista, referencia.anio]
-      .filter(Boolean).join(" · ");
+    const partes = [referencia.autores, referencia.revista, referencia.anio].filter(Boolean);
+    if (Number.isFinite(referencia.citas)) partes.push(`${referencia.citas} ${referencia.citas === 1 ? "cita" : "citas"}`);
+    if (referencia.preprint) partes.push("preprint sin revisar");
+    else if (referencia.accesoAbierto) partes.push("acceso abierto");
+    pie.textContent = partes.join(" · ");
 
     item.append(enlace, pie);
     ui.referenciasLista.append(item);

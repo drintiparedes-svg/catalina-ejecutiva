@@ -6,6 +6,7 @@ import {
 import { plantillaMediSmart, versionTexto, enviarPorResend } from "./correo.mjs";
 import { buscarCentros, calcularRuta, ubicarLugar } from "./salud.mjs";
 import { buscarEnLaWeb, leerPagina, generarImagen, hayWeb } from "./investigacion.mjs";
+import { buscarLiteratura } from "./literatura.mjs";
 import {
   telefoniaLista, originarLlamada, estadoLlamada, twimlPuente,
   firmaValida, atenderLlamadaEntrante, anotarEstadoTwilio
@@ -14,7 +15,7 @@ import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // Se sube a mano con cada arreglo que el usuario tiene que descargar.
-export const VERSION = "2026-08-24.5";
+export const VERSION = "2026-08-24.6";
 
 const root = fileURLToPath(new URL("./public", import.meta.url));
 // El .env se lee de forma síncrona a propósito. Con `await` aquí arriba, en el
@@ -331,8 +332,10 @@ const PARAMETROS_REFERENCIAS = {
   required: ["tema"]
 };
 
-const DESCRIPCION_REFERENCIAS = "Busca en PubMed referencias que respalden lo que estás explicando y las muestra en pantalla. "
-  + "Úsala cuando expliques un concepto médico, para que quien escucha pueda comprobarlo en la literatura.";
+const DESCRIPCION_REFERENCIAS = "Busca literatura científica en varias bases a la vez —OpenAlex, Crossref, Europe PMC y PubMed— y la muestra con sus fuentes. "
+  + "Cubre salud digital, ciencias médicas, salud pública, innovación y finanzas, no sólo medicina. "
+  + "Cada referencia trae de dónde salió, el año, la revista y cuántas veces la han citado; algunas son revisiones y otras preprints sin revisar. "
+  + "Al citarlas, distingue una revisión muy citada de un preprint reciente: es la jerarquía de evidencia, y debes decirla.";
 
 // Búsqueda en la web abierta. La consulta la redacta el modelo; el resultado
 // vuelve con fuentes, y se muestran siempre.
@@ -1362,48 +1365,14 @@ async function buscarReferencias(req, res) {
   const tema = String(peticion.tema || "").trim();
   if (!tema) return json(res, 400, { error: "Falta el tema a respaldar.", code: "SIN_TEMA" });
 
-  const base = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils";
-  const comunes = { db: "pubmed", retmode: "json", tool: "catalina", email: "catalina@local" };
-
-  // El filtro de humanos no es un adorno. Sin él, «urinary tract anatomy»
-  // devolvía citología renal en una revista veterinaria y anatomía comparada de
-  // la cobaya: correctas como ciencia, inútiles para explicarle algo a un
-  // paciente. Si no hubiera nada con el filtro, se reintenta sin él.
-  const conFiltro = await fetch(`${base}/esearch.fcgi?` + new URLSearchParams({
-    ...comunes, term: `${tema} AND humans[MeSH Terms]`, retmax: "4", sort: "relevance"
-  }));
-  let busqueda = conFiltro;
-  if (conFiltro.ok) {
-    const previo = (await conFiltro.clone().json())?.esearchresult?.idlist ?? [];
-    if (!previo.length) {
-      busqueda = await fetch(`${base}/esearch.fcgi?` + new URLSearchParams({
-        ...comunes, term: tema, retmax: "4", sort: "relevance"
-      }));
-    }
+  const salida = await buscarLiteratura(tema);
+  if (!salida.ok) {
+    return json(res, 502, { error: salida.error || "No se pudo consultar la literatura.", code: "LITERATURA_NO_DISPONIBLE" });
   }
-  if (!busqueda.ok) {
-    return json(res, 502, { error: "No se pudo consultar PubMed.", code: "PUBMED_NO_DISPONIBLE" });
+  if (!salida.referencias.length) {
+    return json(res, 404, { error: "Sin referencias para ese tema.", code: "SIN_REFERENCIAS" });
   }
-  const ids = (await busqueda.json())?.esearchresult?.idlist ?? [];
-  if (!ids.length) return json(res, 404, { error: "Sin referencias para ese tema.", code: "SIN_REFERENCIAS" });
-
-  const resumen = await fetch(`${base}/esummary.fcgi?` + new URLSearchParams({ ...comunes, id: ids.join(",") }));
-  if (!resumen.ok) {
-    return json(res, 502, { error: "No se pudo consultar PubMed.", code: "PUBMED_NO_DISPONIBLE" });
-  }
-  const resultado = (await resumen.json())?.result ?? {};
-
-  const referencias = ids.map(id => resultado[id]).filter(Boolean).map(item => ({
-    titulo: item.title || "",
-    autores: (item.authors ?? []).slice(0, 3).map(a => a.name).join(", ")
-      + ((item.authors?.length ?? 0) > 3 ? " et al." : ""),
-    revista: item.source || "",
-    anio: (item.pubdate || "").slice(0, 4),
-    pmid: item.uid,
-    enlace: `https://pubmed.ncbi.nlm.nih.gov/${item.uid}/`
-  }));
-
-  json(res, 200, { referencias });
+  json(res, 200, salida);
 }
 
 // Puerta del administrador.
