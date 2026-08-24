@@ -44,19 +44,20 @@
   <p class="sub">Prueba <b>directamente</b> generar imagen, buscar imagen y buscar video —sin pasar por la voz—.
     Así se ve si el problema es el servidor/las claves o si es que el agente no llama a la herramienta.
     Hazle una captura y mándala.</p>
-  <p class="sub" style="font-size:.85rem;opacity:.7">Página del <b>2026-08-24.11</b>. El paso 0 debe decir esta misma versión; si no, el despliegue no tomó.</p>
+  <p class="sub" style="font-size:.85rem;opacity:.7">Página del <b>2026-08-24.12</b>. El paso 0 debe decir esta misma versión; si no, el despliegue no tomó.</p>
 
   <section class="paso" id="p0"><h2><span class="marca espera">•</span> 0. Servidor y claves</h2><p class="detalle">Comprobando…</p></section>
   <section class="paso" id="p1"><h2><span class="marca espera">•</span> 1. Generar imagen con IA <code>/imagen/generar</code></h2><p class="detalle">Esperando…</p></section>
-  <section class="paso" id="p2"><h2><span class="marca espera">•</span> 2. Buscar imagen real <code>/imagen-medica</code></h2><p class="detalle">Esperando…</p></section>
-  <section class="paso" id="p3"><h2><span class="marca espera">•</span> 3. Buscar video <code>/videos/buscar</code></h2><p class="detalle">Esperando…</p></section>
+  <section class="paso" id="p2"><h2><span class="marca espera">•</span> 2. Buscar imagen real (anatomía) <code>/imagen-medica</code></h2><p class="detalle">Esperando…</p></section>
+  <section class="paso" id="p4"><h2><span class="marca espera">•</span> 3. Buscar imágenes en la web <code>/imagenes/buscar</code></h2><p class="detalle">Esperando…</p></section>
+  <section class="paso" id="p3"><h2><span class="marca espera">•</span> 4. Buscar video <code>/videos/buscar</code></h2><p class="detalle">Esperando…</p></section>
 
   <button onclick="location.reload()">Volver a probar</button>
   <p class="sub" style="margin-top:1.5rem;font-size:.9rem">¿El camino de la voz? Está en <a href="/diagnostico.html">/diagnostico.html</a>.</p>
 </main>
 
 <script type="module">
-const pasos = { 0: "#p0", 1: "#p1", 2: "#p2", 3: "#p3" };
+const pasos = { 0: "#p0", 1: "#p1", 2: "#p2", 3: "#p3", 4: "#p4" };
 function marcar(n, estado, ...nodos) {
   const caja = document.querySelector(pasos[n]);
   const marca = caja.querySelector(".marca");
@@ -114,7 +115,26 @@ try {
   }
 } catch (e) { marcar(2, "mal", "Falló la petición.", `<code>${esc(e.message)}</code>`); }
 
-// 3. Buscar video.
+// 3. Buscar imágenes en la web (Openverse + Commons + Open-i, sin clave).
+try {
+  const { status, datos } = await postJSON("/imagenes/buscar", { consulta: "telemedicina consulta médica" });
+  if (datos.ok && datos.imagenes?.length) {
+    const cont = document.createElement("p"); cont.className = "detalle";
+    for (const im of datos.imagenes.slice(0, 6)) {
+      const img = document.createElement("img"); img.className = "muestra"; img.src = im.thumb || im.imagen;
+      img.style.maxWidth = "96px"; img.style.maxHeight = "96px"; img.style.marginRight = ".4rem";
+      cont.append(img);
+    }
+    marcar(4, "bien", `Encontró ${datos.total} imágenes en: ${esc((datos.consultadas || []).join(", "))}.`, cont);
+  } else if (datos.ok) {
+    marcar(4, "espera", "Las fuentes respondieron pero sin resultados para esa búsqueda.");
+  } else {
+    marcar(4, "mal", `No buscó (${status}).`, `<code>${esc(datos.error)}</code>`,
+      "Estas fuentes son abiertas y no necesitan clave: un fallo aquí es de red del despliegue.");
+  }
+} catch (e) { marcar(4, "mal", "Falló la petición.", `<code>${esc(e.message)}</code>`); }
+
+// 4. Buscar video.
 try {
   const { status, datos } = await postJSON("/videos/buscar", { consulta: "salud digital telemedicina" });
   if (datos.ok && datos.videos?.length) {

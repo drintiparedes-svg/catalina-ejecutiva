@@ -28,6 +28,7 @@ const ui = {
   imagenFoto: document.querySelector("#imagenFoto"),
   imagenPie: document.querySelector("#imagenPie"),
   imagenCredito: document.querySelector("#imagenCredito"),
+  imagenGaleria: document.querySelector("#imagenGaleria"),
   imagenCerrar: document.querySelector("#imagenCerrar"),
   referencias: document.querySelector("#referencias"),
   referenciasLista: document.querySelector("#referenciasLista"),
@@ -294,6 +295,7 @@ ui.panelClose.addEventListener("click", () => fijarPanel(false));
 ui.imagenCerrar.addEventListener("click", () => {
   mostrarLienzoDeImagen("oculto");
   laminaEnPantalla = null;
+  ocultarGaleria();
 });
 ui.referenciasCerrar.addEventListener("click", () => {
   ui.referencias.dataset.estado = "oculto";
@@ -481,6 +483,7 @@ async function despacharHerramienta(nombre, argumentos) {
   if (nombre === "buscar_en_la_web") return await buscarWeb(argumentos);
   if (nombre === "leer_pagina_web") return await leerPaginaWeb(argumentos);
   if (nombre === "generar_imagen") return await generarImagen(argumentos);
+  if (nombre === "buscar_imagenes") return await buscarImagenes(argumentos);
   if (nombre === "buscar_videos") return await buscarVideos(argumentos);
   // Cualquier otro nombre viene de un conector definido en el administrador.
   // Se manda el nombre, no la dirección: el servidor la resuelve.
@@ -952,6 +955,41 @@ async function generarImagen(argumentos) {
   }
 }
 
+// Buscar imágenes reales en la web abierta. Devuelve una rejilla; la mejor va
+// grande y las demás como miniaturas. Al modelo le llegan los títulos y fuentes
+// para que las nombre y las sitúe. Si no encuentra, lo dice —no inventa.
+async function buscarImagenes(argumentos) {
+  const consulta = String(argumentos.consulta || argumentos.tema || "").trim();
+  if (!consulta) return { ok: false, error: "Falta la consulta" };
+  setStatus("Buscando imágenes…");
+  mostrarLienzoDeImagen("cargando");
+  try {
+    const respuesta = await fetch("/imagenes/buscar", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ consulta })
+    });
+    const datos = await respuesta.json().catch(() => ({}));
+    if (!datos.ok || !datos.imagenes?.length) {
+      mostrarLienzoDeImagen("oculto");
+      return { ok: false, mostrada: false, error: datos.error || "No encontré imágenes para eso." };
+    }
+    mostrarGaleria(datos.imagenes);
+    return {
+      ok: true,
+      mostradas: datos.imagenes.length,
+      total: datos.total,
+      consultadas: datos.consultadas,
+      // Títulos y fuentes al modelo, para que describa lo que hay en pantalla y
+      // diga de dónde sale; las imágenes reales llevan su origen, no se inventan.
+      imagenes: datos.imagenes.slice(0, 6).map(i => ({ titulo: i.titulo, fuente: i.origen, licencia: i.licencia }))
+    };
+  } catch (error) {
+    console.error(error);
+    mostrarLienzoDeImagen("oculto");
+    return { ok: false, mostrada: false, error: "Falló la búsqueda de imágenes" };
+  }
+}
+
 // Vistas en forma corta: 1200000 → «1,2 M». Es una señal de popularidad, no de
 // rigor, y así se dice al recomendarlo.
 function formatoVistas(n) {
@@ -1046,6 +1084,7 @@ function mostrarLienzoDeImagen(estado) {
 
 function mostrarLamina(lamina) {
   laminaEnPantalla = lamina;
+  ocultarGaleria();
   ui.imagenFoto.onclick = null;
   ui.imagenFoto.style.cursor = "";
   ui.imagenFoto.src = lamina.imagen;
@@ -1063,6 +1102,7 @@ function mostrarLamina(lamina) {
 // ésta no, y decirlo es parte de mostrarla con criterio.
 function mostrarImagenGenerada(dataUrl, descripcion) {
   laminaEnPantalla = null;
+  ocultarGaleria();
   ui.imagenFoto.onclick = null;
   ui.imagenFoto.style.cursor = "";
   ui.imagenFoto.src = dataUrl;
@@ -1070,6 +1110,49 @@ function mostrarImagenGenerada(dataUrl, descripcion) {
   ui.imagenPie.textContent = descripcion.slice(0, 120);
   ui.imagenCredito.textContent = "Imagen generada con IA · no es evidencia";
   ui.imagenCredito.removeAttribute("href");
+  mostrarLienzoDeImagen("visible");
+}
+
+function ocultarGaleria() {
+  ui.imagenGaleria.hidden = true;
+  ui.imagenGaleria.replaceChildren();
+}
+
+// Galería de la búsqueda de imágenes. La primera —la mejor puntuada— se pone
+// grande; las demás, como miniaturas debajo, y al tocar una pasa a ser la grande.
+// Nada de esto descarga bytes en el servidor: cada <img> carga de su fuente.
+function mostrarGaleria(imagenes) {
+  laminaEnPantalla = null;
+  const elegir = imagen => {
+    ui.imagenFoto.onclick = null;
+    ui.imagenFoto.style.cursor = "";
+    ui.imagenFoto.src = imagen.imagen || imagen.thumb;
+    ui.imagenFoto.alt = imagen.titulo || "";
+    ui.imagenPie.textContent = (imagen.titulo || "").slice(0, 120);
+    // La fuente y la licencia son la prueba de que la imagen existe y de dónde
+    // viene; van con enlace para poder comprobarlas.
+    ui.imagenCredito.textContent = [imagen.autor, imagen.licencia, imagen.origen].filter(Boolean).join(" · ") || imagen.origen || "";
+    if (imagen.fuente) ui.imagenCredito.href = imagen.fuente; else ui.imagenCredito.removeAttribute("href");
+    for (const t of ui.imagenGaleria.children) t.setAttribute("aria-current", t.dataset.url === (imagen.imagen || imagen.thumb) ? "true" : "false");
+  };
+
+  ui.imagenGaleria.replaceChildren();
+  if (imagenes.length > 1) {
+    for (const imagen of imagenes) {
+      const t = document.createElement("img");
+      t.src = imagen.thumb || imagen.imagen;
+      t.alt = imagen.titulo || "";
+      t.loading = "lazy";
+      t.dataset.url = imagen.imagen || imagen.thumb;
+      t.addEventListener("click", () => elegir(imagen));
+      ui.imagenGaleria.append(t);
+    }
+    ui.imagenGaleria.hidden = false;
+  } else {
+    ui.imagenGaleria.hidden = true;
+  }
+
+  elegir(imagenes[0]);
   mostrarLienzoDeImagen("visible");
 }
 

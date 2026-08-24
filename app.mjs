@@ -6,6 +6,7 @@ import {
 import { plantillaMediSmart, versionTexto, enviarPorResend } from "./correo.mjs";
 import { buscarCentros, calcularRuta, ubicarLugar } from "./salud.mjs";
 import { buscarEnLaWeb, leerPagina, generarImagen, buscarVideos, hayWeb, hayVideos } from "./investigacion.mjs";
+import { buscarImagenes, hayImagenesWeb } from "./medios.mjs";
 import { buscarLiteratura } from "./literatura.mjs";
 import {
   telefoniaLista, originarLlamada, estadoLlamada, twimlPuente,
@@ -15,7 +16,7 @@ import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // Se sube a mano con cada arreglo que el usuario tiene que descargar.
-export const VERSION = "2026-08-24.11";
+export const VERSION = "2026-08-24.12";
 
 const root = fileURLToPath(new URL("./public", import.meta.url));
 // El .env se lee de forma síncrona a propósito. Con `await` aquí arriba, en el
@@ -67,7 +68,10 @@ export async function atender(req, res) {
         web: hayWeb(),
         // Los videos usan la API de datos de YouTube, que acepta la clave de
         // Gemini si el proyecto tiene activada «YouTube Data API v3».
-        videos: hayVideos()
+        videos: hayVideos(),
+        // La búsqueda de imágenes en la web usa fuentes abiertas: siempre lista,
+        // no depende de ninguna clave.
+        imagenesWeb: hayImagenesWeb()
       });
     }
 
@@ -125,6 +129,14 @@ export async function atender(req, res) {
       const consulta = String(p.consulta || p.tema || "").trim();
       if (!consulta) return json(res, 400, { error: "Falta la consulta.", code: "SIN_CONSULTA" });
       return json(res, 200, await buscarVideos(consulta));
+    }
+
+    if (req.method === "POST" && req.url === "/imagenes/buscar") {
+      let p = {};
+      try { p = JSON.parse(await readBody(req)); } catch {}
+      const consulta = String(p.consulta || p.tema || "").trim();
+      if (!consulta) return json(res, 400, { error: "Falta la consulta.", code: "SIN_CONSULTA" });
+      return json(res, 200, await buscarImagenes(consulta));
     }
 
     if (req.method === "POST" && req.url === "/salud") {
@@ -393,6 +405,24 @@ const DESCRIPCION_IMAGEN_GEN = "Genera una imagen nueva con IA a partir de una d
   + "Nunca la presentes como evidencia ni como una foto real: es una ilustración generada. "
   + "Para mostrar algo que de verdad existe, usa buscar_imagen_medica, que trae imágenes reales con su fuente.";
 
+// Buscar imágenes en la web abierta. La amplia: tres fuentes a la vez (Openverse,
+// Commons, y Open-i para lo biomédico), no sólo diagramas de anatomía.
+const PARAMETROS_IMAGENES = {
+  type: "object",
+  properties: {
+    consulta: {
+      type: "string",
+      description: "Qué imagen buscar, en pocas palabras y concreto: «mamografía», «sala de telemedicina», "
+        + "«infografía lavado de manos», «electrocardiograma normal». En el idioma que sea; mejor con términos claros."
+    }
+  },
+  required: ["consulta"]
+};
+const DESCRIPCION_IMAGENES = "Busca imágenes reales en la web abierta —tres bancos abiertos a la vez, con foco en salud— y las "
+  + "muestra en una rejilla con su fuente y licencia. Úsala para casi cualquier imagen: fotos, escenas clínicas, dispositivos, "
+  + "infografías, figuras de artículos. Son imágenes reales con su origen, no generadas. "
+  + "Para un diagrama anatómico muy concreto puedes usar buscar_imagen_medica; para inventar una ilustración, generar_imagen.";
+
 // Buscar videos en YouTube. Otra vía de material, con criterio: se muestran los
 // enlaces, el canal y las vistas, y quien los recomiende debe decir que un video
 // muy visto no es lo mismo que uno riguroso.
@@ -521,6 +551,7 @@ const HERRAMIENTAS = [
   { nombre: "buscar_referencias", descripcion: DESCRIPCION_REFERENCIAS, parametros: PARAMETROS_REFERENCIAS },
   { nombre: "buscar_en_la_web", descripcion: DESCRIPCION_WEB, parametros: PARAMETROS_WEB },
   { nombre: "leer_pagina_web", descripcion: DESCRIPCION_LEER, parametros: PARAMETROS_LEER },
+  { nombre: "buscar_imagenes", descripcion: DESCRIPCION_IMAGENES, parametros: PARAMETROS_IMAGENES },
   { nombre: "generar_imagen", descripcion: DESCRIPCION_IMAGEN_GEN, parametros: PARAMETROS_IMAGEN_GEN },
   { nombre: "buscar_videos", descripcion: DESCRIPCION_VIDEOS, parametros: PARAMETROS_VIDEOS },
   { nombre: "enviar_resumen", descripcion: DESCRIPCION_CORREO, parametros: PARAMETROS_CORREO }
