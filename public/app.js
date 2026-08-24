@@ -446,6 +446,8 @@ async function atenderHerramienta(nombre, argumentos) {
   if (nombre === "llamar_por_telefono") return await llamarPorTelefono(argumentos);
   if (nombre === "consultar_llamada") return await consultarLlamada(argumentos);
   if (nombre === "como_llegar") return await comoLlegar(argumentos);
+  if (nombre === "buscar_en_la_web") return await buscarWeb(argumentos);
+  if (nombre === "leer_pagina_web") return await leerPaginaWeb(argumentos);
   // Cualquier otro nombre viene de un conector definido en el administrador.
   // Se manda el nombre, no la dirección: el servidor la resuelve.
   return await usarConector(nombre, argumentos);
@@ -833,6 +835,57 @@ async function pedirLamina(argumentos) {
   }
 }
 
+// Búsqueda en la web abierta. El resumen vuelve como texto para que Catalina lo
+// diga; las fuentes van al panel de referencias, siempre a la vista, porque de
+// ahí sale lo que cuenta.
+async function buscarWeb(argumentos) {
+  const consulta = String(argumentos.consulta || "").trim();
+  if (!consulta) return { ok: false, error: "Falta la consulta" };
+  try {
+    const respuesta = await fetch("/web/buscar", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ consulta })
+    });
+    const datos = await respuesta.json().catch(() => ({}));
+    if (!datos.ok) return { ok: false, error: datos.error || "No se pudo buscar" };
+
+    if (datos.fuentes?.length) mostrarReferencias(datos.fuentes, "Fuentes en la web");
+    // El resumen y el aviso de si trae fuente van al modelo: es lo que dirá, y
+    // debe poder distinguir un dato respaldado de uno que no lo está.
+    return {
+      ok: true,
+      resumen: datos.resumen,
+      respaldado: datos.respaldado,
+      fuentes: (datos.fuentes ?? []).map(f => f.titulo),
+      aviso: datos.respaldado ? undefined : "Esto no trae fuente; dilo al contarlo."
+    };
+  } catch (error) {
+    console.error(error);
+    return { ok: false, error: "Falló la búsqueda en la web" };
+  }
+}
+
+// Leer una página por su dirección. Devuelve el texto para resumir o citar; la
+// página se ofrece como fuente en el panel.
+async function leerPaginaWeb(argumentos) {
+  const url = String(argumentos.url || "").trim();
+  if (!url) return { ok: false, error: "Falta la dirección" };
+  try {
+    const respuesta = await fetch("/web/leer", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url })
+    });
+    const datos = await respuesta.json().catch(() => ({}));
+    if (!datos.ok) return { ok: false, error: datos.error || "No se pudo abrir la página" };
+
+    mostrarReferencias([{ titulo: datos.titulo || datos.url, enlace: datos.url }], "Página leída");
+    return { ok: true, titulo: datos.titulo, texto: datos.texto, recortado: datos.recortado };
+  } catch (error) {
+    console.error(error);
+    return { ok: false, error: "Falló la lectura de la página" };
+  }
+}
+
 async function pedirReferencias(argumentos) {
   const tema = String(argumentos.tema || "").trim();
   if (!tema) return { ok: false, error: "Falta el tema" };
@@ -876,9 +929,9 @@ function mostrarLamina(lamina) {
   mostrarLienzoDeImagen("visible");
 }
 
-function mostrarReferencias(referencias) {
+function mostrarReferencias(referencias, titulo = "Referencias") {
   referenciasEnPantalla = referencias;
-  ui.referenciasTitulo.textContent = "Referencias";
+  ui.referenciasTitulo.textContent = titulo;
   ui.referenciasLista.replaceChildren();
   for (const referencia of referencias) {
     const item = document.createElement("li");
