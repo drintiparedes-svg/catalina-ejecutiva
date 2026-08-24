@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import {
   cargarConfig, guardarConfig, componerInstrucciones, herramientasDeConectores
 } from "./config.mjs";
@@ -12,12 +13,17 @@ import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // Se sube a mano con cada arreglo que el usuario tiene que descargar.
-export const VERSION = "2026-08-23.5";
+export const VERSION = "2026-08-23.6";
 
 const root = fileURLToPath(new URL("./public", import.meta.url));
-// En Vercel no hay .env: las variables vienen del entorno del despliegue y
-// loadEnv no encuentra archivo, que es exactamente lo que debe pasar.
-await loadEnv(fileURLToPath(new URL("./.env", import.meta.url)));
+// El .env se lee de forma síncrona a propósito. Con `await` aquí arriba, en el
+// nivel superior del módulo, Vercel empaqueta la función de una manera que no
+// admite esa espera y el proceso muere al arrancar: la primera petición
+// contesta «A server error has occurred» sin más pista.
+//
+// En Vercel además no hay archivo .env: las variables vienen del entorno del
+// despliegue y aquí no se encuentra nada, que es lo correcto.
+cargarEnv(fileURLToPath(new URL("./.env", import.meta.url)));
 
 const mime = {
   ".html": "text/html; charset=utf-8",
@@ -1490,9 +1496,9 @@ function hasGeminiKey() {
   return key.length > 24 && !key.includes("reemplaza-esto");
 }
 
-async function loadEnv(path) {
+function cargarEnv(path) {
   try {
-    const text = await readFile(path, "utf8");
+    const text = readFileSync(path, "utf8");
     for (const rawLine of text.split(/\r?\n/)) {
       const line = rawLine.trim();
       if (!line || line.startsWith("#")) continue;

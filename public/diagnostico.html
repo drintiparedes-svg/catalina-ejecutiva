@@ -88,7 +88,22 @@ function saltar(desde) {
 let salud;
 try {
   const r = await fetch("/health");
-  salud = await r.json();
+  const crudo = await r.text();
+  // Cuando la función se cae, Vercel devuelve su propia página de error en vez
+  // de JSON. Decirlo así evita que el fallo aparezca como «token inesperado»,
+  // que no le dice nada a nadie.
+  try {
+    salud = JSON.parse(crudo);
+  } catch {
+    marcar(1, "mal",
+      `El servidor contestó ${r.status}, pero no con datos: devolvió una página de error.`,
+      `<code>${crudo.slice(0, 120).replace(/</g, "&lt;")}</code>`);
+    saltar(2);
+    veredicto(false, "La función del servidor se está cayendo",
+      "La página se sirve bien, pero la parte que atiende peticiones muere al arrancar.",
+      "En Vercel el detalle está en el despliegue → pestaña <b>Logs</b> (o <b>Runtime Logs</b>): ahí sale el error real.");
+    throw new Error("respuesta no JSON");
+  }
   marcar(1, "bien",
     `Responde. Versión del código: <code>${salud.version ?? "(sin versión — es una copia anterior al 2026-08-23.4)"}</code>`);
 } catch (error) {
@@ -120,8 +135,13 @@ try {
     marcar(3, "mal", `ElevenLabs o el servidor rechazaron la petición (${r.status}).`,
       `<code>${cuerpo.error ?? "sin detalle"}</code>`);
     saltar(4);
+    // La pista sólo se da cuando encaja. Repetir lo del identificador ante un
+    // fallo de red manda a arreglar lo que no está roto.
+    const sobreLaClave = /clave|sk_|key/i.test(cuerpo.error ?? "");
     veredicto(false, "ElevenLabs no firmó la sesión", cuerpo.error ?? "",
-      "Ese texto dice qué arreglar. Lo más común: se copió el identificador de la clave, el que aparece en la lista de API Keys, en vez de la clave, que empieza por <code>sk_</code> y sólo se ve al crearla.");
+      sobreLaClave
+        ? "Lo más común: se copió el identificador de la clave, el que aparece en la lista de API Keys, en vez de la clave, que empieza por <code>sk_</code> y sólo se ve al crearla."
+        : "Ese texto de arriba, tal cual, es lo que hay que arreglar.");
     throw new Error(cuerpo.error);
   }
   sesion = cuerpo;
