@@ -219,7 +219,93 @@ async function pdfAbierto(doi) {
   } catch { return null; }
 }
 
-// ── Fundir y ordenar ─────────────────────────────────────────────────────────
+// ClinicalTrials.gov — ensayos clínicos registrados, publicados o no. Cierra el
+// sesgo de publicación: un ensayo con resultado negativo que nunca se publicó
+// igual está aquí. No es un artículo revisado por pares: es un registro, y se
+// marca como tal para no confundirlo con evidencia publicada.
+async function deClinicalTrials(consulta) {
+  const url = `https://clinicaltrials.gov/api/v2/studies?query.term=${encodeURIComponent(consulta)}`
+    + `&pageSize=${POR_FUENTE}&format=json`;
+  const datos = await json(url);
+  return (datos.studies ?? []).map(s => {
+    const p = s.protocolSection ?? {};
+    const id = p.identificationModule?.nctId || "";
+    const fecha = p.statusModule?.startDateStruct?.date || p.statusModule?.primaryCompletionDateStruct?.date || "";
+    return {
+      titulo: p.identificationModule?.briefTitle || p.identificationModule?.officialTitle || "",
+      autores: p.sponsorCollaboratorsModule?.leadSponsor?.name || "",
+      anio: Number(String(fecha).slice(0, 4)) || null,
+      revista: "ClinicalTrials.gov",
+      tipo: "registro de ensayo",
+      doi: null,
+      enlace: id ? `https://clinicaltrials.gov/study/${id}` : "",
+      citas: null,
+      accesoAbierto: true,
+      preprint: false,
+      registro: true,             // ni artículo ni preprint: un ensayo registrado
+      estado: p.statusModule?.overallStatus || "",
+      fuente: "ClinicalTrials.gov"
+    };
+  });
+}
+
+// SciELO / LILACS a través de la Biblioteca Virtual en Salud (BVS). Cierra el
+// sesgo geográfico: literatura latinoamericana y del Caribe que las grandes
+// bases del norte apenas indexan. La BVS a veces responde JSON; si no, esta
+// fuente falla sola y se declara como no consultada.
+async function deBVS(consulta) {
+  const url = `https://pesquisa.bvsalud.org/portal/?output=json&lang=es`
+    + `&q=${encodeURIComponent(consulta)}&count=${POR_FUENTE}`;
+  const datos = await json(url);
+  const docs = datos.docs ?? datos.response?.docs ?? [];
+  return docs.slice(0, POR_FUENTE).map(d => {
+    const doi = (Array.isArray(d.doi) ? d.doi[0] : d.doi) || null;
+    return {
+      titulo: (Array.isArray(d.ti) ? d.ti[0] : d.ti) || d.title || "",
+      autores: (Array.isArray(d.au) ? d.au.slice(0, 3).join(", ") : d.au) || "",
+      anio: Number(String(d.da || d.publication_year || "").slice(0, 4)) || null,
+      revista: (Array.isArray(d.ta) ? d.ta[0] : d.ta) || d.journal || "SciELO/LILACS",
+      tipo: (Array.isArray(d.type) ? d.type[0] : d.type) || "",
+      doi,
+      enlace: doi ? `https://doi.org/${doi}` : (d.ur || d.fulltext_url || ""),
+      citas: null,
+      accesoAbierto: true,
+      preprint: false,
+      fuente: "SciELO/LILACS"
+    };
+  });
+}
+
+// Epistemonikos — base de revisiones sistemáticas y evidencia, nacida en Chile.
+// Es de lo mejor para el criterio de evidencia: una revisión que ya sintetizó
+// decenas de estudios pesa más que cualquier estudio suelto. Necesita una clave
+// (EPISTEMONIKOS_API_KEY); sin ella, se declara como no consultada.
+async function deEpistemonikos(consulta) {
+  const clave = process.env.EPISTEMONIKOS_API_KEY?.trim();
+  if (!clave) throw new Error("sin EPISTEMONIKOS_API_KEY");
+  const url = `https://api.epistemonikos.org/v1/documents/search?q=${encodeURIComponent(consulta)}&size=${POR_FUENTE}`;
+  const datos = await json(url, { headers: {
+    "User-Agent": `Catalina/1.0 (mailto:${CORREO})`, Accept: "application/json", apikey: clave
+  } });
+  const docs = datos.documents ?? datos.results ?? datos.data ?? [];
+  return docs.slice(0, POR_FUENTE).map(d => {
+    const doi = d.doi || d.meta_doi || null;
+    return {
+      titulo: d.title || (d.titles?.[0]) || "",
+      autores: Array.isArray(d.authors) ? d.authors.slice(0, 3).join(", ") : (d.authors || ""),
+      anio: Number(d.publication_year || d.year) || null,
+      revista: d.journal || d.source || "Epistemonikos",
+      tipo: d.classification || d.publication_type || "revisión sistemática",
+      doi,
+      enlace: doi ? `https://doi.org/${doi}` : (d.url || (d.id ? `https://www.epistemonikos.org/documents/${d.id}` : "")),
+      citas: null,
+      accesoAbierto: null,
+      preprint: false,
+      fuente: "Epistemonikos"
+    };
+  });
+}
+
 // ── Fundir y ordenar ─────────────────────────────────────────────────────────
 
 function normalizarTitulo(t) {
@@ -240,6 +326,7 @@ function fundir(listas) {
     if ((item.citas ?? -1) > (previo.citas ?? -1)) previo.citas = item.citas;
     if (previo.accesoAbierto == null && item.accesoAbierto != null) previo.accesoAbierto = item.accesoAbierto;
     if (!previo.pdf && item.pdf) previo.pdf = item.pdf;
+    if (!previo.registro && item.registro) { previo.registro = true; previo.estado = item.estado; }
     if (!previo.enlace && item.enlace) previo.enlace = item.enlace;
     if (!previo.revista && item.revista) previo.revista = item.revista;
   }
@@ -254,7 +341,8 @@ const ESTE_ANIO = new Date().getFullYear();
 // reciente como desempate. El modelo recibe estas señales y las cuenta al hablar.
 function puntaje(r) {
   let p = 0;
-  if (!r.preprint) p += 1000;                                   // revisado por pares
+  if (r.registro) p += 400;                                     // ensayo registrado
+  else if (!r.preprint) p += 1000;                              // revisado por pares
   if (/review|meta-?analysis|revisión|systematic/i.test(`${r.tipo} ${r.titulo}`)) p += 300;
   if (r.fuentes.length > 1) p += 50;                            // aparece en varias
   p += Math.min(r.citas ?? 0, 2000) / 10;                       // citas, con techo
@@ -271,9 +359,11 @@ export async function buscarLiteratura(consulta, opciones = {}) {
   // Todas a la vez; que una fuente falle no tumba las demás.
   const intentos = await Promise.allSettled([
     deOpenAlex(termino), deCrossref(termino), deEuropePMC(termino), dePubMed(termino),
-    deSemanticScholar(termino), deArxiv(termino)
+    deSemanticScholar(termino), deArxiv(termino),
+    deClinicalTrials(termino), deBVS(termino), deEpistemonikos(termino)
   ]);
-  const nombres = ["OpenAlex", "Crossref", "Europe PMC", "PubMed", "Semantic Scholar", "arXiv"];
+  const nombres = ["OpenAlex", "Crossref", "Europe PMC", "PubMed", "Semantic Scholar", "arXiv",
+    "ClinicalTrials.gov", "SciELO/LILACS", "Epistemonikos"];
   const listas = [];
   const fallaron = [];
   intentos.forEach((res, i) => {
@@ -306,6 +396,8 @@ export async function buscarLiteratura(consulta, opciones = {}) {
       enlace: r.enlace,
       citas: r.citas,
       preprint: r.preprint,
+      registro: r.registro || false,
+      estado: r.estado || null,
       accesoAbierto: r.accesoAbierto,
       pdf: r.pdf || null,
       // Las bases de las que salió, para que se vea que no es una sola.

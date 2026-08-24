@@ -961,9 +961,12 @@ async function pedirReferencias(argumentos) {
       ok: true,
       mostradas: datos.referencias.length,
       consultadas: datos.consultadas,
+      // Las que fallaron o no se consultaron: Catalina debe nombrarlas como
+      // límite de la búsqueda.
+      noConsultadas: datos.fallaron,
       referencias: datos.referencias.map(r => ({
         titulo: r.titulo, anio: r.anio, revista: r.revista,
-        citas: r.citas, preprint: r.preprint
+        citas: r.citas, preprint: r.preprint, registro: r.registro
       }))
     };
   } catch (error) {
@@ -1021,7 +1024,8 @@ function mostrarReferencias(referencias, titulo = "Referencias") {
     pie.className = "referencia-pie";
     const partes = [referencia.autores, referencia.revista, referencia.anio].filter(Boolean);
     if (Number.isFinite(referencia.citas)) partes.push(`${referencia.citas} ${referencia.citas === 1 ? "cita" : "citas"}`);
-    if (referencia.preprint) partes.push("preprint sin revisar");
+    if (referencia.registro) partes.push(`registro de ensayo${referencia.estado ? " · " + referencia.estado : ""}`);
+    else if (referencia.preprint) partes.push("preprint sin revisar");
     else if (referencia.accesoAbierto) partes.push("acceso abierto");
     pie.textContent = partes.join(" · ");
 

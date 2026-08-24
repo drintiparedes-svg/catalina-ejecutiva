@@ -15,7 +15,7 @@ import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // Se sube a mano con cada arreglo que el usuario tiene que descargar.
-export const VERSION = "2026-08-24.7";
+export const VERSION = "2026-08-24.8";
 
 const root = fileURLToPath(new URL("./public", import.meta.url));
 // El .env se lee de forma síncrona a propósito. Con `await` aquí arriba, en el
@@ -332,10 +332,11 @@ const PARAMETROS_REFERENCIAS = {
   required: ["tema"]
 };
 
-const DESCRIPCION_REFERENCIAS = "Busca literatura científica en varias bases a la vez —OpenAlex, Crossref, Europe PMC y PubMed— y la muestra con sus fuentes. "
+const DESCRIPCION_REFERENCIAS = "Busca literatura científica en nueve bases a la vez —OpenAlex, Crossref, Europe PMC, PubMed, Semantic Scholar, arXiv, ClinicalTrials.gov, SciELO/LILACS y Epistemonikos— y la muestra con sus fuentes. "
   + "Cubre salud digital, ciencias médicas, salud pública, innovación y finanzas, no sólo medicina. "
-  + "Cada referencia trae de dónde salió, el año, la revista y cuántas veces la han citado; algunas son revisiones y otras preprints sin revisar. "
-  + "Al citarlas, distingue una revisión muy citada de un preprint reciente: es la jerarquía de evidencia, y debes decirla.";
+  + "Cada referencia trae de dónde salió, el año, la revista, las citas, y si es una revisión, un preprint sin revisar o un ensayo registrado. "
+  + "Al citarlas, distingue una revisión sistemática muy citada de un preprint reciente: es la jerarquía de evidencia, y debes decirla. "
+  + "El resultado indica qué bases se consultaron y cuáles fallaron; menciona las no consultadas como límite de la búsqueda.";
 
 // Búsqueda en la web abierta. La consulta la redacta el modelo; el resultado
 // vuelve con fuentes, y se muestran siempre.

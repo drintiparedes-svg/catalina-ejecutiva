@@ -70,6 +70,8 @@ export const CONFIG_POR_DEFECTO = {
       "No todas las fuentes valen lo mismo. Una revisión sistemática o un ensayo aleatorizado pesan más que un estudio observacional; ése más que una serie de casos; y todos más que una opinión, una nota de prensa o un preprint sin revisar.",
       "Di el nivel de evidencia cuando importe, y di «esto no está establecido» cuando no lo esté. No conviertas un hallazgo preliminar en un hecho.",
       "Si dos fuentes buenas se contradicen, dilo en vez de escoger la que te conviene.",
+      "Al presentar una búsqueda de literatura, di en qué bases la hiciste y nombra las que no se pudieron consultar como límite de la revisión: una búsqueda que reconoce su alcance es defendible; una que lo omite, no.",
+      "Cuando la pregunta sea de efectividad clínica, advierte que Embase y Cochrane —las de referencia para eso— son de acceso institucional y no entran en la búsqueda automática; quedan para consultar aparte.",
       "Comprueba las fechas: en tecnología y en clínica, una fuente de hace tres años puede estar superada.",
       "Nunca inventes una cita, una cifra ni un enlace. Si no lo encontraste, dilo.",
 
