@@ -484,6 +484,7 @@ async function despacharHerramienta(nombre, argumentos) {
   if (nombre === "leer_pagina_web") return await leerPaginaWeb(argumentos);
   if (nombre === "generar_imagen") return await generarImagen(argumentos);
   if (nombre === "buscar_imagenes") return await buscarImagenes(argumentos);
+  if (nombre === "fuentes_clinicas") return await pedirFuentesClinicas(argumentos);
   if (nombre === "buscar_videos") return await buscarVideos(argumentos);
   // Cualquier otro nombre viene de un conector definido en el administrador.
   // Se manda el nombre, no la dirección: el servidor la resuelve.
@@ -987,6 +988,36 @@ async function buscarImagenes(argumentos) {
     console.error(error);
     mostrarLienzoDeImagen("oculto");
     return { ok: false, mostrada: false, error: "Falló la búsqueda de imágenes" };
+  }
+}
+
+// Fuentes clínicas curadas. No son imágenes en pantalla: son enlaces a sitios de
+// referencia —Gray's Anatomy, Mayo, Science Source— para abrir y buscar ahí.
+// Van al panel de referencias como enlaces con su nota.
+async function pedirFuentesClinicas(argumentos) {
+  const consulta = String(argumentos.consulta || argumentos.tema || "").trim();
+  try {
+    const respuesta = await fetch("/fuentes-clinicas", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ consulta })
+    });
+    const datos = await respuesta.json().catch(() => ({}));
+    if (!datos.ok || !datos.fuentes?.length) return { ok: false, error: "No hay fuentes clínicas disponibles" };
+
+    mostrarReferencias(
+      datos.fuentes.map(f => ({ titulo: f.titulo, enlace: f.enlace, autores: f.dominio, revista: f.nota })),
+      "Fuentes clínicas"
+    );
+    return {
+      ok: true,
+      // Al modelo, para que las nombre y avise de la de pago; los enlaces ya
+      // están en pantalla, no hace falta que los dicte.
+      fuentes: datos.fuentes.map(f => ({ titulo: f.titulo, nota: f.nota })),
+      aviso: "Son enlaces para abrir y buscar ahí, no imágenes en pantalla. Science Source requiere licencia de pago."
+    };
+  } catch (error) {
+    console.error(error);
+    return { ok: false, error: "Falló la carga de fuentes clínicas" };
   }
 }
 

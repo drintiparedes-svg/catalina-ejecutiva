@@ -163,6 +163,63 @@ function puntuar(it, terminos, clinico) {
 
 // ── Búsqueda ─────────────────────────────────────────────────────────────────
 
+// ── Fuentes clínicas curadas (enlaces, no incrustación) ──────────────────────
+//
+// Estas cuatro no tienen API y varias son de pago o con derechos (Mayo, Science
+// Source), así que NO se extraen ni se incrustan sus imágenes —copiarlas sería
+// infringir su licencia, y bloquean el hotlinking—: se entregan como enlaces
+// directos para que la persona los abra y busque ahí. Enlazar es legal; copiar,
+// no. Las láminas de Gray's Anatomy (dominio público) además ya salen por
+// Commons en la búsqueda normal de imágenes.
+const FUENTES_CLINICAS = [
+  {
+    nombre: "Gray's Anatomy (Bartleby)",
+    dominio: "bartleby.com",
+    nota: "Láminas clásicas de anatomía, de dominio público.",
+    enlace: () => "https://www.bartleby.com/lit-hub/anatomy-of-the-human-body/"
+  },
+  {
+    nombre: "Mayo Clinic — Pruebas y procedimientos",
+    dominio: "mayoclinic.org",
+    nota: "Descripciones e imágenes de pruebas y procedimientos, en español.",
+    // La búsqueda de Mayo acepta un término; si lo ignorara, cae en el índice.
+    enlace: q => q
+      ? `https://www.mayoclinic.org/es/search/search-results?q=${encodeURIComponent(q)}`
+      : "https://www.mayoclinic.org/es/tests-procedures"
+  },
+  {
+    nombre: "Mayo — Guía de bancos de imágenes médicas",
+    dominio: "libraryguides.mayo.edu",
+    nota: "Guía de la biblioteca Mayo con bancos de imágenes clínicas.",
+    enlace: () => "https://libraryguides.mayo.edu/c.php?g=280097&p=1867838"
+  },
+  {
+    nombre: "Science Source",
+    dominio: "sciencesource.com",
+    nota: "Banco profesional de imágenes médicas (licencia de pago).",
+    enlace: () => "https://www.sciencesource.com/"
+  }
+];
+
+// Siempre disponibles: son enlaces, no dependen de ninguna clave ni red.
+export const hayFuentesClinicas = () => true;
+
+// Devuelve las fuentes clínicas curadas como enlaces, con el término incrustado
+// donde el sitio lo admite. No sale a la red: sólo arma las direcciones.
+export function fuentesClinicas(consulta = "") {
+  const q = String(consulta || "").trim();
+  return {
+    ok: true,
+    consulta: q,
+    fuentes: FUENTES_CLINICAS.map(f => ({
+      titulo: f.nombre,
+      enlace: f.enlace(q),
+      dominio: f.dominio,
+      nota: f.nota
+    }))
+  };
+}
+
 // Siempre disponible: las tres fuentes son abiertas y no piden clave.
 export const hayImagenesWeb = () => true;
 

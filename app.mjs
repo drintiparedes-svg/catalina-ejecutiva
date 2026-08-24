@@ -6,7 +6,7 @@ import {
 import { plantillaMediSmart, versionTexto, enviarPorResend } from "./correo.mjs";
 import { buscarCentros, calcularRuta, ubicarLugar } from "./salud.mjs";
 import { buscarEnLaWeb, leerPagina, generarImagen, buscarVideos, hayWeb, hayVideos } from "./investigacion.mjs";
-import { buscarImagenes, hayImagenesWeb } from "./medios.mjs";
+import { buscarImagenes, fuentesClinicas, hayImagenesWeb } from "./medios.mjs";
 import { buscarLiteratura } from "./literatura.mjs";
 import {
   telefoniaLista, originarLlamada, estadoLlamada, twimlPuente,
@@ -16,7 +16,7 @@ import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // Se sube a mano con cada arreglo que el usuario tiene que descargar.
-export const VERSION = "2026-08-24.13";
+export const VERSION = "2026-08-24.14";
 
 const root = fileURLToPath(new URL("./public", import.meta.url));
 // El .env se lee de forma síncrona a propósito. Con `await` aquí arriba, en el
@@ -137,6 +137,13 @@ export async function atender(req, res) {
       const consulta = String(p.consulta || p.tema || "").trim();
       if (!consulta) return json(res, 400, { error: "Falta la consulta.", code: "SIN_CONSULTA" });
       return json(res, 200, await buscarImagenes(consulta));
+    }
+
+    if (req.method === "POST" && req.url === "/fuentes-clinicas") {
+      let p = {};
+      try { p = JSON.parse(await readBody(req)); } catch {}
+      // La consulta es opcional: sin ella se devuelven los índices de cada fuente.
+      return json(res, 200, fuentesClinicas(String(p.consulta || p.tema || "")));
     }
 
     if (req.method === "POST" && req.url === "/salud") {
@@ -423,6 +430,24 @@ const DESCRIPCION_IMAGENES = "Busca imágenes reales en la web abierta —tres b
   + "infografías, figuras de artículos. Son imágenes reales con su origen, no generadas. "
   + "Para un diagrama anatómico muy concreto puedes usar buscar_imagen_medica; para inventar una ilustración, generar_imagen.";
 
+// Fuentes clínicas curadas. No traen la imagen a pantalla —son de pago o con
+// derechos, y enlazar es lo correcto—: se le ofrecen a la persona como enlaces.
+const PARAMETROS_FUENTES_CLINICAS = {
+  type: "object",
+  properties: {
+    consulta: {
+      type: "string",
+      description: "Tema o procedimiento a buscar en esas fuentes: «resonancia de rodilla», «anatomía del corazón». Opcional."
+    }
+  },
+  required: []
+};
+const DESCRIPCION_FUENTES_CLINICAS = "Ofrece enlaces a fuentes clínicas de referencia para mirar imágenes: Gray's Anatomy, "
+  + "Mayo Clinic (pruebas y procedimientos), la guía de bancos de imágenes de la biblioteca Mayo, y Science Source. "
+  + "Úsala cuando pidan imágenes clínicas de una fuente autorizada o de más peso que un banco abierto. "
+  + "No trae las imágenes a la pantalla —varias tienen derechos o son de pago—: muestra los enlaces para abrirlos y buscar ahí. "
+  + "Dilo así: son sitios para consultar, y Science Source requiere licencia. Para imágenes que sí se ven en pantalla, usa buscar_imagenes.";
+
 // Buscar videos en YouTube. Otra vía de material, con criterio: se muestran los
 // enlaces, el canal y las vistas, y quien los recomiende debe decir que un video
 // muy visto no es lo mismo que uno riguroso.
@@ -552,6 +577,7 @@ const HERRAMIENTAS = [
   { nombre: "buscar_en_la_web", descripcion: DESCRIPCION_WEB, parametros: PARAMETROS_WEB },
   { nombre: "leer_pagina_web", descripcion: DESCRIPCION_LEER, parametros: PARAMETROS_LEER },
   { nombre: "buscar_imagenes", descripcion: DESCRIPCION_IMAGENES, parametros: PARAMETROS_IMAGENES },
+  { nombre: "fuentes_clinicas", descripcion: DESCRIPCION_FUENTES_CLINICAS, parametros: PARAMETROS_FUENTES_CLINICAS },
   { nombre: "generar_imagen", descripcion: DESCRIPCION_IMAGEN_GEN, parametros: PARAMETROS_IMAGEN_GEN },
   { nombre: "buscar_videos", descripcion: DESCRIPCION_VIDEOS, parametros: PARAMETROS_VIDEOS },
   { nombre: "enviar_resumen", descripcion: DESCRIPCION_CORREO, parametros: PARAMETROS_CORREO }
