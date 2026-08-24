@@ -6,7 +6,7 @@ import {
 import { plantillaMediSmart, versionTexto, enviarPorResend } from "./correo.mjs";
 import { buscarCentros, calcularRuta, ubicarLugar } from "./salud.mjs";
 import { buscarEnLaWeb, leerPagina, generarImagen, buscarVideos, hayWeb, hayVideos } from "./investigacion.mjs";
-import { buscarImagenes, fuentesClinicas, hayImagenesWeb } from "./medios.mjs";
+import { buscarImagenes, fuentesClinicas, proxearImagen, hayImagenesWeb } from "./medios.mjs";
 import { buscarLiteratura } from "./literatura.mjs";
 import {
   telefoniaLista, originarLlamada, estadoLlamada, twimlPuente,
@@ -16,7 +16,7 @@ import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // Se sube a mano con cada arreglo que el usuario tiene que descargar.
-export const VERSION = "2026-08-24.14";
+export const VERSION = "2026-08-24.15";
 
 const root = fileURLToPath(new URL("./public", import.meta.url));
 // El .env se lee de forma síncrona a propósito. Con `await` aquí arriba, en el
@@ -137,6 +137,16 @@ export async function atender(req, res) {
       const consulta = String(p.consulta || p.tema || "").trim();
       if (!consulta) return json(res, 400, { error: "Falta la consulta.", code: "SIN_CONSULTA" });
       return json(res, 200, await buscarImagenes(consulta));
+    }
+
+    // Proxy de imagen: sólo un puente para las que no permiten carga directa.
+    if (req.method === "GET" && req.url.startsWith("/img?")) {
+      const u = new URL(req.url, "http://local").searchParams.get("u");
+      if (!u) return json(res, 400, { error: "Falta la dirección de la imagen." });
+      const r = await proxearImagen(u);
+      if (!r.ok) return json(res, r.estado || 502, { error: r.error });
+      res.writeHead(200, { "Content-Type": r.tipo, "Cache-Control": "public, max-age=86400" });
+      return res.end(r.buffer);
     }
 
     if (req.method === "POST" && req.url === "/fuentes-clinicas") {

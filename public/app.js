@@ -1117,6 +1117,7 @@ function mostrarLamina(lamina) {
   laminaEnPantalla = lamina;
   ocultarGaleria();
   ui.imagenFoto.onclick = null;
+  ui.imagenFoto.onerror = null;
   ui.imagenFoto.style.cursor = "";
   ui.imagenFoto.src = lamina.imagen;
   ui.imagenFoto.alt = lamina.titulo;
@@ -1135,6 +1136,7 @@ function mostrarImagenGenerada(dataUrl, descripcion) {
   laminaEnPantalla = null;
   ocultarGaleria();
   ui.imagenFoto.onclick = null;
+  ui.imagenFoto.onerror = null;
   ui.imagenFoto.style.cursor = "";
   ui.imagenFoto.src = dataUrl;
   ui.imagenFoto.alt = descripcion;
@@ -1149,6 +1151,20 @@ function ocultarGaleria() {
   ui.imagenGaleria.replaceChildren();
 }
 
+// Carga una imagen remota con red de seguridad: si la fuente bloquea la carga
+// directa —hotlinking—, se reintenta UNA vez a través del proxy del servidor,
+// que sólo sirve hosts abiertos conocidos. Así el contenido se muestra igual,
+// y el proxy sólo se paga cuando la carga directa falla.
+function cargarImagen(img, url) {
+  img.dataset.proxied = "";
+  img.onerror = () => {
+    if (img.dataset.proxied === "1") { img.onerror = null; return; }
+    img.dataset.proxied = "1";
+    img.src = `/img?u=${encodeURIComponent(url)}`;
+  };
+  img.src = url;
+}
+
 // Galería de la búsqueda de imágenes. La primera —la mejor puntuada— se pone
 // grande; las demás, como miniaturas debajo, y al tocar una pasa a ser la grande.
 // Nada de esto descarga bytes en el servidor: cada <img> carga de su fuente.
@@ -1157,7 +1173,7 @@ function mostrarGaleria(imagenes) {
   const elegir = imagen => {
     ui.imagenFoto.onclick = null;
     ui.imagenFoto.style.cursor = "";
-    ui.imagenFoto.src = imagen.imagen || imagen.thumb;
+    cargarImagen(ui.imagenFoto, imagen.imagen || imagen.thumb);
     ui.imagenFoto.alt = imagen.titulo || "";
     ui.imagenPie.textContent = (imagen.titulo || "").slice(0, 120);
     // La fuente y la licencia son la prueba de que la imagen existe y de dónde
@@ -1171,12 +1187,12 @@ function mostrarGaleria(imagenes) {
   if (imagenes.length > 1) {
     for (const imagen of imagenes) {
       const t = document.createElement("img");
-      t.src = imagen.thumb || imagen.imagen;
       t.alt = imagen.titulo || "";
       t.loading = "lazy";
       t.dataset.url = imagen.imagen || imagen.thumb;
       t.addEventListener("click", () => elegir(imagen));
       ui.imagenGaleria.append(t);
+      cargarImagen(t, imagen.thumb || imagen.imagen);
     }
     ui.imagenGaleria.hidden = false;
   } else {

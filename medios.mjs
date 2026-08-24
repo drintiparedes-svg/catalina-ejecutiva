@@ -127,6 +127,51 @@ async function deOpeni(q) {
   }));
 }
 
+async function deWikipedia(q) {
+  // Imagen principal de los artículos que coinciden: el esquema o la foto que
+  // ilustra el tema, en español. Las imágenes viven en Commons, con su licencia.
+  const url = new URL("https://es.wikipedia.org/w/api.php");
+  url.search = new URLSearchParams({
+    action: "query", generator: "search", gsrsearch: q, gsrnamespace: "0",
+    gsrlimit: String(POR_FUENTE), prop: "pageimages", piprop: "thumbnail|original",
+    pithumbsize: "480", format: "json", origin: "*"
+  }).toString();
+  const r = await fetch(url, { signal: AbortSignal.timeout(TIEMPO) });
+  if (!r.ok) throw new Error("wikipedia " + r.status);
+  const d = await r.json();
+  const paginas = d?.query?.pages ? Object.values(d.query.pages) : [];
+  return paginas.filter(p => p.thumbnail?.source).map(p => ({
+    titulo: p.title,
+    thumb: p.thumbnail.source,
+    imagen: p.original?.source || p.thumbnail.source,
+    fuente: `https://es.wikipedia.org/wiki/${encodeURIComponent((p.title || "").replace(/ /g, "_"))}`,
+    autor: "",
+    licencia: "Wikipedia · Commons",
+    ancho: p.original?.width || p.thumbnail.width || 0,
+    alto: p.original?.height || p.thumbnail.height || 0,
+    origen: "Wikipedia", diagrama: false
+  }));
+}
+
+async function deWellcome(q) {
+  // Wellcome Collection: banco de imágenes médicas e históricas, abierto y con
+  // licencia (mayormente CC). API pública, sin clave.
+  const url = `https://api.wellcomecollection.org/catalogue/v2/images?query=${encodeURIComponent(q)}&pageSize=${POR_FUENTE}`;
+  const r = await fetch(url, { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(TIEMPO) });
+  if (!r.ok) throw new Error("wellcome " + r.status);
+  const d = await r.json();
+  return (d.results || []).filter(x => x.thumbnail?.url).map(x => ({
+    titulo: x.source?.title || "Wellcome Collection",
+    thumb: x.thumbnail.url,
+    imagen: x.thumbnail.url,
+    fuente: x.source?.id ? `https://wellcomecollection.org/works/${x.source.id}` : "https://wellcomecollection.org",
+    autor: "Wellcome Collection",
+    licencia: "CC · Wellcome",
+    ancho: x.thumbnail.width || 0, alto: x.thumbnail.height || 0,
+    origen: "Wellcome", diagrama: false
+  }));
+}
+
 // ── Fundir y ordenar ─────────────────────────────────────────────────────────
 
 // La misma imagen puede llegar por dos fuentes (Openverse reindexa Commons). Se
@@ -154,8 +199,8 @@ function puntuar(it, terminos, clinico) {
   const menorLado = Math.min(it.ancho || 0, it.alto || 0);
   if (menorLado >= 600) p += 25; else if (menorLado >= 300) p += 12;
   const prioridad = clinico
-    ? { "Open-i (NLM)": 30, "Commons": 20, "Openverse": 10 }
-    : { "Openverse": 30, "Commons": 20, "Open-i (NLM)": 15 };
+    ? { "Open-i (NLM)": 30, "Wellcome": 24, "Commons": 20, "Wikipedia": 22, "Openverse": 10 }
+    : { "Openverse": 30, "Wikipedia": 26, "Commons": 20, "Wellcome": 18, "Open-i (NLM)": 15 };
   p += prioridad[it.origen] || 0;
   if (clinico && it.diagrama) p += 15;
   return p;
@@ -234,9 +279,10 @@ export async function buscarImagenes(consulta, opciones = {}) {
   const clinico = opciones.clinico ?? CLINICO.test(q);
   const terminos = norm(q).split(/\s+/).filter(Boolean);
 
-  // Openverse y Commons siempre; Open-i sólo si la consulta es clínica.
-  const nombres = ["Openverse", "Commons"];
-  const lanes = [deOpenverse(q), deCommons(q)];
+  // Openverse, Commons, Wikipedia y Wellcome siempre; Open-i sólo si la consulta
+  // es clínica (es biomédico y no aporta en lo general).
+  const nombres = ["Openverse", "Commons", "Wikipedia", "Wellcome"];
+  const lanes = [deOpenverse(q), deCommons(q), deWikipedia(q), deWellcome(q)];
   if (clinico) { nombres.push("Open-i (NLM)"); lanes.push(deOpeni(q)); }
 
   const acuerdos = await Promise.allSettled(lanes);
@@ -261,4 +307,52 @@ export async function buscarImagenes(consulta, opciones = {}) {
   };
   aCache(claveCache, datos);
   return datos;
+}
+
+// ── Proxy de imagen ──────────────────────────────────────────────────────────
+//
+// Casi todas estas fuentes permiten cargar la imagen directamente en el
+// navegador, que es lo eficiente: el servidor no toca esos bytes. Pero alguna
+// puede bloquear el hotlinking, y entonces la imagen no se ve. Este proxy es la
+// red de seguridad: el cliente sólo lo usa cuando la carga directa falla, y así
+// el contenido SIEMPRE se muestra.
+//
+// Para no ser un proxy abierto —un agujero de SSRF— sólo sirve imágenes de una
+// lista blanca de hosts conocidos, sólo por https, y sólo si lo que vuelve es de
+// verdad una imagen. Con la lista blanca no hay forma de apuntarlo a la red
+// interna: el host tiene que ser uno de estos dominios públicos.
+const HOSTS_IMAGEN = [
+  "upload.wikimedia.org", "commons.wikimedia.org",
+  "es.wikipedia.org", "en.wikipedia.org",
+  "api.openverse.org", "openi.nlm.nih.gov",
+  "iiif.wellcomecollection.org"
+];
+const MAX_IMAGEN = 6 * 1024 * 1024;
+
+function hostPermitido(host) {
+  return HOSTS_IMAGEN.some(h => host === h || host.endsWith("." + h));
+}
+
+export async function proxearImagen(urlStr) {
+  let url;
+  try { url = new URL(String(urlStr)); } catch { return { ok: false, estado: 400, error: "URL inválida" }; }
+  if (url.protocol !== "https:") return { ok: false, estado: 400, error: "sólo https" };
+  if (!hostPermitido(url.hostname)) return { ok: false, estado: 403, error: "host no permitido" };
+
+  let r;
+  try {
+    r = await fetch(url, {
+      signal: AbortSignal.timeout(TIEMPO),
+      headers: { "User-Agent": "CatalinaEjecutiva/1.0 (imágenes clínicas)", Accept: "image/*" }
+    });
+  } catch { return { ok: false, estado: 502, error: "no se pudo obtener la imagen" }; }
+
+  const tipo = r.headers.get("content-type") || "";
+  if (!r.ok || !tipo.startsWith("image/")) return { ok: false, estado: 502, error: "no es una imagen" };
+  const largo = Number(r.headers.get("content-length") || 0);
+  if (largo && largo > MAX_IMAGEN) return { ok: false, estado: 413, error: "imagen demasiado grande" };
+
+  const buffer = Buffer.from(await r.arrayBuffer());
+  if (buffer.length > MAX_IMAGEN) return { ok: false, estado: 413, error: "imagen demasiado grande" };
+  return { ok: true, tipo, buffer };
 }
