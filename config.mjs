@@ -116,8 +116,12 @@ export const CONFIG_POR_DEFECTO = {
       voz: "",              // vacío = la voz que tenga puesta el agente
       idioma: "es",
       saludo: "",           // vacío = el primer mensaje que tenga el agente
-      estabilidad: .45,     // más bajo, más expresiva; más alto, más plana
-      velocidad: 1
+      // Ajustes finos de la voz. Van vacíos a propósito: son de los overrides
+      // que más agentes bloquean en su panel, y apenas cambian nada. Si el
+      // agente los tiene permitidos y los quieres, pon un número (estabilidad
+      // entre 0 y 1; velocidad alrededor de 1) y se enviarán.
+      estabilidad: null,
+      velocidad: null
     }
   },
 
