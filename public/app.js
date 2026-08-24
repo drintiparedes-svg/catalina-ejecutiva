@@ -439,6 +439,26 @@ let laminaEnPantalla = null;
 let referenciasEnPantalla = [];
 
 async function atenderHerramienta(nombre, argumentos) {
+  // Gesto de espera: mientras la herramienta corre —una búsqueda tarda unos
+  // segundos— la cara pasa a pensar en vez de quedarse congelada. La voz de la
+  // espera la pone el agente (pre_tool_speech en el registro); esto es el gesto.
+  director.setState("thinking");
+  director.setExpression("concentracion", .6);
+  try {
+    return await despacharHerramienta(nombre, argumentos);
+  } finally {
+    // Si tras la herramienta no llegó a hablar, se vuelve a escuchar en vez de
+    // quedarse pensando para siempre. Si sí habla, su audio ya puso "speaking".
+    setTimeout(() => {
+      if (director.state === "thinking") {
+        director.setState(connected ? (faseDeSesion || "listening") : "idle");
+        director.setExpression("neutra");
+      }
+    }, 600);
+  }
+}
+
+async function despacharHerramienta(nombre, argumentos) {
   if (nombre === "buscar_imagen_medica") return await pedirLamina(argumentos);
   if (nombre === "buscar_referencias") return await pedirReferencias(argumentos);
   if (nombre === "enviar_resumen") return await enviarResumen(argumentos);

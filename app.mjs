@@ -15,7 +15,7 @@ import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // Se sube a mano con cada arreglo que el usuario tiene que descargar.
-export const VERSION = "2026-08-24.6";
+export const VERSION = "2026-08-24.7";
 
 const root = fileURLToPath(new URL("./public", import.meta.url));
 // El .env se lee de forma síncrona a propósito. Con `await` aquí arriba, en el
@@ -798,7 +798,11 @@ async function registrarHerramientas(res) {
     // No bloquear la conversación mientras corre: la boca sigue, y el resultado
     // aparece en pantalla cuando llega.
     expects_response: true,
-    response_timeout_secs: 20
+    response_timeout_secs: 20,
+    // Que diga algo antes de ejecutar —«déjame ver», «lo estoy buscando»— para
+    // que la espera suene humana en vez de un silencio. Lo que diga lo decide su
+    // persona; esto sólo le da el turno para decirlo.
+    pre_tool_speech: "force"
   }));
   const nuestrosNombres = new Set(nuestras.map(t => t.name));
 
