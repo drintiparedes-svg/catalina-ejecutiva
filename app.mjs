@@ -13,13 +13,13 @@ import {
   firmaValida, atenderLlamadaEntrante, anotarEstadoTwilio
 } from "./telefonia.mjs";
 import {
-  telefoniaElevenLabsLista, originarLlamadaElevenLabs, estadoLlamadaElevenLabs
+  telefoniaElevenLabsLista, originarLlamadaElevenLabs, estadoLlamadaElevenLabs, diagnosticoElevenLabs
 } from "./llamadas.mjs";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // Se sube a mano con cada arreglo que el usuario tiene que descargar.
-export const VERSION = "2026-08-24.16";
+export const VERSION = "2026-08-24.17";
 
 const root = fileURLToPath(new URL("./public", import.meta.url));
 // El .env se lee de forma síncrona a propósito. Con `await` aquí arriba, en el
@@ -179,6 +179,10 @@ export async function atender(req, res) {
         }
       }
       return json(res, 200, await calcularRuta(peticion));
+    }
+
+    if (req.method === "GET" && req.url === "/telefonia/diagnostico") {
+      return json(res, 200, await diagnosticoElevenLabs());
     }
 
     if (req.method === "POST" && req.url === "/llamada") {

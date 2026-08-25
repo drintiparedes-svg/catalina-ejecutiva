@@ -106,6 +106,47 @@ export async function originarLlamadaElevenLabs({ numero, objetivo }) {
   return { ok: true, id, estado: "en_curso", numero: revisado.numero };
 }
 
+// Valida la configuración SIN gastar una llamada: confirma que están las
+// variables y que ElevenLabs reconoce el número importado y a qué agente está
+// asignado. Es la comprobación que se hace antes de marcar de verdad.
+export async function diagnosticoElevenLabs() {
+  const faltan = [];
+  if (!clave()) faltan.push("ELEVENLABS_API_KEY");
+  if (!agente()) faltan.push("ELEVENLABS_AGENT_ID");
+  if (!numeroId()) faltan.push("ELEVENLABS_PHONE_NUMBER_ID");
+  if (faltan.length) return { ok: false, configurado: false, faltan };
+
+  let r, crudo;
+  try {
+    r = await fetch(`${BASE}/phone-numbers`, { headers: { "xi-api-key": clave() }, signal: AbortSignal.timeout(TIEMPO) });
+    crudo = await r.text();
+  } catch (e) {
+    return { ok: false, configurado: true, error: e.name === "TimeoutError" ? "ElevenLabs tardó demasiado." : "No se pudo consultar ElevenLabs." };
+  }
+  let datos;
+  try { datos = JSON.parse(crudo); } catch {}
+  if (!r.ok) {
+    const detalle = datos?.detail?.message || datos?.detail || datos?.message || (crudo || "").slice(0, 200);
+    return { ok: false, configurado: true, error: `ElevenLabs rechazó la consulta (${r.status})${detalle ? ": " + detalle : ""}.` };
+  }
+
+  const lista = Array.isArray(datos) ? datos : (datos.phone_numbers || datos.items || []);
+  const id = numeroId();
+  const hallado = lista.find(n => (n.phone_number_id || n.id) === id);
+  const asignado = hallado?.assigned_agent?.agent_id || hallado?.agent_id || null;
+  return {
+    ok: true,
+    configurado: true,
+    numeroReconocido: Boolean(hallado),
+    numero: hallado ? (hallado.phone_number || hallado.label || null) : null,
+    agenteAsignado: asignado,
+    // null = el número no tiene agente asignado; conviene asignarlo en el panel.
+    agenteCoincide: asignado ? asignado === agente() : null,
+    cuantosNumeros: lista.length,
+    listaBlanca: (process.env.TELEFONO_PERMITIDOS || "").split(",").map(s => s.trim()).filter(Boolean)
+  };
+}
+
 // Consulta cómo va o cómo terminó una llamada, por su id de conversación.
 export async function estadoLlamadaElevenLabs(id) {
   if (!id) return { ok: false, error: "Falta el identificador de la llamada." };
