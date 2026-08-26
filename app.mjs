@@ -19,7 +19,7 @@ import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // Se sube a mano con cada arreglo que el usuario tiene que descargar.
-export const VERSION = "2026-08-24.20";
+export const VERSION = "2026-08-24.21";
 
 const root = fileURLToPath(new URL("./public", import.meta.url));
 // El .env se lee de forma síncrona a propósito. Con `await` aquí arriba, en el
@@ -912,9 +912,13 @@ async function registrarHerramientas(res) {
   const clave = process.env.ELEVENLABS_API_KEY.trim();
   const cabeceras = { "xi-api-key": clave, "Content-Type": "application/json" };
 
-  // Las que se registran. El teléfono se deja fuera: necesita una conexión
-  // sostenida que un despliegue serverless no da.
-  const nuestras = HERRAMIENTAS.map(h => ({
+  // Las que se registran. El teléfono se INCLUYE si hay telefonía por ElevenLabs
+  // (que sí funciona en serverless); con el puente antiguo Twilio+OpenAI se
+  // dejaba fuera porque necesitaba una conexión sostenida. Sin esto el agente
+  // no tenía la herramienta de llamar y por voz no pasaba nada.
+  const conTelefono = telefoniaElevenLabsLista() || telefoniaLista();
+  const aRegistrar = [...HERRAMIENTAS, ...(conTelefono ? HERRAMIENTAS_TELEFONO : [])];
+  const nuestras = aRegistrar.map(h => ({
     type: "client",
     name: h.nombre,
     description: h.descripcion,
