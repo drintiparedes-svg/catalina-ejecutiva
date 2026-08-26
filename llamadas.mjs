@@ -22,6 +22,17 @@ const BASE = "https://api.elevenlabs.io/v1/convai";
 const TIEMPO = 15_000;
 const MAX_GUARDADAS = 50;
 
+// Rutas de ElevenLabs que pueden cambiar de nombre entre versiones. Se prueban
+// en orden y se usa la primera que NO devuelva 404. Se puede fijar la correcta
+// sin tocar código con la variable de entorno, que va primero.
+const RUTAS_LLAMADA = [
+  process.env.ELEVENLABS_OUTBOUND_PATH?.trim(),
+  "/twilio/outbound-call",
+  "/twilio/outbound_call",
+  "/sip-trunk/outbound-call"
+].filter(Boolean);
+const RUTAS_NUMEROS = ["/phone-numbers", "/phone_numbers"];
+
 // Seguimiento en memoria: id de la llamada → lo último que sabemos. Basta: una
 // llamada dura minutos y el navegador la consulta mientras tanto.
 const llamadas = new Map();
@@ -86,20 +97,24 @@ export async function originarLlamadaElevenLabs({ numero, objetivo, aQuien, rest
     conversation_initiation_client_data: inicio
   };
 
-  let respuesta, crudo;
-  try {
-    respuesta = await fetch(`${BASE}/twilio/outbound-call`, {
-      method: "POST",
-      headers: { "xi-api-key": clave(), "Content-Type": "application/json" },
-      body: JSON.stringify(cuerpo),
-      signal: AbortSignal.timeout(TIEMPO)
-    });
-    crudo = await respuesta.text();
-  } catch (error) {
-    return { ok: false, error: error.name === "TimeoutError" ? "ElevenLabs tardó demasiado en tomar la llamada." : "No se pudo contactar a ElevenLabs para llamar.", code: "SIN_RED" };
+  // Se prueban las rutas en orden; sólo se pasa a la siguiente ante un 404
+  // (endpoint que no existe). Cualquier otro código es una respuesta real.
+  let respuesta, crudo, datos = {}, ruta;
+  for (ruta of RUTAS_LLAMADA) {
+    try {
+      respuesta = await fetch(`${BASE}${ruta}`, {
+        method: "POST",
+        headers: { "xi-api-key": clave(), "Content-Type": "application/json" },
+        body: JSON.stringify(cuerpo),
+        signal: AbortSignal.timeout(TIEMPO)
+      });
+      crudo = await respuesta.text();
+    } catch (error) {
+      return { ok: false, error: error.name === "TimeoutError" ? "ElevenLabs tardó demasiado en tomar la llamada." : "No se pudo contactar a ElevenLabs para llamar.", code: "SIN_RED" };
+    }
+    if (respuesta.status !== 404) break;   // 404 → probar la siguiente ruta
   }
 
-  let datos = {};
   try { datos = JSON.parse(crudo); } catch {}
 
   if (!respuesta.ok) {
@@ -109,7 +124,7 @@ export async function originarLlamadaElevenLabs({ numero, objetivo, aQuien, rest
       ok: false,
       code: "ELEVENLABS_RECHAZO",
       error: respuesta.status === 404
-        ? "ElevenLabs no reconoció el endpoint de llamada saliente; confírmalo en el panel."
+        ? `ElevenLabs no reconoció ninguna ruta de llamada saliente (probé: ${RUTAS_LLAMADA.join(", ")}). Confirma el endpoint en el panel y, si hace falta, ponlo en ELEVENLABS_OUTBOUND_PATH.`
         : `ElevenLabs no aceptó la llamada (${respuesta.status})${detalle ? ": " + detalle : ""}.`
     };
   }
@@ -132,10 +147,14 @@ export async function diagnosticoElevenLabs() {
   if (!numeroId()) faltan.push("ELEVENLABS_PHONE_NUMBER_ID");
   if (faltan.length) return { ok: false, configurado: false, faltan };
 
+  // Se prueban las rutas de listado de números; sólo se avanza ante un 404.
   let r, crudo;
   try {
-    r = await fetch(`${BASE}/phone-numbers`, { headers: { "xi-api-key": clave() }, signal: AbortSignal.timeout(TIEMPO) });
-    crudo = await r.text();
+    for (const ruta of RUTAS_NUMEROS) {
+      r = await fetch(`${BASE}${ruta}`, { headers: { "xi-api-key": clave() }, signal: AbortSignal.timeout(TIEMPO) });
+      crudo = await r.text();
+      if (r.status !== 404) break;
+    }
   } catch (e) {
     return { ok: false, configurado: true, error: e.name === "TimeoutError" ? "ElevenLabs tardó demasiado." : "No se pudo consultar ElevenLabs." };
   }
