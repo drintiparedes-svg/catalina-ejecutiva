@@ -268,6 +268,74 @@ export function fuentesClinicas(consulta = "") {
 // Siempre disponible: las tres fuentes son abiertas y no piden clave.
 export const hayImagenesWeb = () => true;
 
+// ── Búsqueda de imágenes en la WEB ABIERTA (motor de Google) ─────────────────
+//
+// Segundo paso, sólo tras autorización del usuario: cuando lo pedido no está en
+// los bancos abiertos (una persona, un autor, algo no médico), se busca en toda
+// la web con la API de búsqueda de imágenes de Google (Custom Search). Es la vía
+// legítima y estable —scrapear Google Images va contra sus términos y se
+// bloquea—. Devuelve imágenes reales con su página de origen.
+//
+// Necesita un buscador programable (GOOGLE_CSE_ID) y una clave de Google
+// (GOOGLE_CSE_KEY, o la de Gemini si su proyecto tiene «Custom Search API»
+// activada). OJO: son fotos de la web abierta, con derechos de sus dueños; se
+// muestran para ver y referenciar, con su fuente, no como material libre.
+const CSE_ID = () => process.env.GOOGLE_CSE_ID?.trim();
+const CSE_KEY = () => (process.env.GOOGLE_CSE_KEY || process.env.GEMINI_API_KEY)?.trim();
+
+export const hayImagenesWebAbierta = () => Boolean(CSE_ID() && CSE_KEY());
+
+function detalleGoogle(crudo) {
+  try { return String(JSON.parse(crudo)?.error?.message || "").slice(0, 200); } catch { return ""; }
+}
+
+export async function buscarImagenesWebAbierta(consulta, opciones = {}) {
+  const q = String(consulta || "").trim();
+  if (!q) return { ok: false, error: "Falta la consulta de imagen." };
+  if (!hayImagenesWebAbierta()) {
+    return { ok: false, error: "Falta GOOGLE_CSE_ID y/o la clave: la búsqueda web de imágenes no está configurada.", code: "SIN_CSE" };
+  }
+
+  const cuantos = Math.min(Math.max(Number(opciones.cuantos) || 10, 1), 10);   // el máximo por página del API es 10
+  const url = new URL("https://www.googleapis.com/customsearch/v1");
+  url.search = new URLSearchParams({
+    key: CSE_KEY(), cx: CSE_ID(), q, searchType: "image",
+    num: String(cuantos), safe: "active"
+  }).toString();
+
+  let crudo, r;
+  try {
+    r = await fetch(url, { signal: AbortSignal.timeout(TIEMPO) });
+    crudo = await r.text();
+  } catch (e) {
+    return { ok: false, error: e.name === "TimeoutError" ? "La búsqueda web tardó demasiado." : "No se pudo buscar en la web." };
+  }
+  if (!r.ok) {
+    const detalle = detalleGoogle(crudo);
+    return {
+      ok: false,
+      error: r.status === 403
+        ? `Google rechazó la búsqueda${detalle ? ": " + detalle : ""}. Activa «Custom Search API» en el proyecto de la clave.`
+        : `La búsqueda web falló (${r.status})${detalle ? ": " + detalle : ""}.`
+    };
+  }
+
+  let datos = {};
+  try { datos = JSON.parse(crudo); } catch {}
+  const imagenes = (datos.items || []).filter(it => it.link).map(it => ({
+    titulo: it.title || it.displayLink || "Imagen",
+    thumb: it.image?.thumbnailLink || it.link,
+    imagen: it.link,
+    fuente: it.image?.contextLink || it.link,
+    autor: it.displayLink || "",
+    licencia: "Web abierta · verifica derechos",
+    ancho: it.image?.width || 0, alto: it.image?.height || 0,
+    origen: "Web (Google)", diagrama: false
+  }));
+
+  return { ok: true, total: imagenes.length, imagenes, consultadas: ["Web (Google)"], vacio: imagenes.length === 0 };
+}
+
 export async function buscarImagenes(consulta, opciones = {}) {
   const q = String(consulta || "").trim();
   if (!q) return { ok: false, error: "Falta la consulta de imagen." };

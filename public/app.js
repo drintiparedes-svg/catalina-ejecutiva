@@ -484,6 +484,7 @@ async function despacharHerramienta(nombre, argumentos) {
   if (nombre === "leer_pagina_web") return await leerPaginaWeb(argumentos);
   if (nombre === "generar_imagen") return await generarImagen(argumentos);
   if (nombre === "buscar_imagenes") return await buscarImagenes(argumentos);
+  if (nombre === "buscar_imagenes_web") return await buscarImagenesWeb(argumentos);
   if (nombre === "fuentes_clinicas") return await pedirFuentesClinicas(argumentos);
   if (nombre === "buscar_videos") return await buscarVideos(argumentos);
   // Cualquier otro nombre viene de un conector definido en el administrador.
@@ -1020,6 +1021,38 @@ async function pedirFuentesClinicas(argumentos) {
   } catch (error) {
     console.error(error);
     return { ok: false, error: "Falló la carga de fuentes clínicas" };
+  }
+}
+
+// Búsqueda en la web abierta con Google. Segundo paso, tras autorización: para
+// lo que no está en los bancos (una persona, un autor, algo no médico). Misma
+// rejilla; al modelo se le recuerda avisar que son de la web, con derechos.
+async function buscarImagenesWeb(argumentos) {
+  const consulta = String(argumentos.consulta || argumentos.tema || "").trim();
+  if (!consulta) return { ok: false, error: "Falta la consulta" };
+  setStatus("Buscando en la web…");
+  mostrarLienzoDeImagen("cargando");
+  try {
+    const respuesta = await fetch("/imagenes/web", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ consulta })
+    });
+    const datos = await respuesta.json().catch(() => ({}));
+    if (!datos.ok || !datos.imagenes?.length) {
+      mostrarLienzoDeImagen("oculto");
+      return { ok: false, mostrada: false, error: datos.error || "No encontré imágenes en la web para eso." };
+    }
+    mostrarGaleria(datos.imagenes);
+    return {
+      ok: true,
+      mostradas: datos.imagenes.length,
+      imagenes: datos.imagenes.slice(0, 6).map(i => ({ titulo: i.titulo, fuente: i.autor || i.origen })),
+      aviso: "Son imágenes de la web abierta, con derechos de sus dueños; preséntalas con su fuente, no como material libre."
+    };
+  } catch (error) {
+    console.error(error);
+    mostrarLienzoDeImagen("oculto");
+    return { ok: false, mostrada: false, error: "Falló la búsqueda en la web" };
   }
 }
 

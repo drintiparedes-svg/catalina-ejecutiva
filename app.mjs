@@ -6,7 +6,7 @@ import {
 import { plantillaMediSmart, versionTexto, enviarPorResend } from "./correo.mjs";
 import { buscarCentros, calcularRuta, ubicarLugar } from "./salud.mjs";
 import { buscarEnLaWeb, leerPagina, generarImagen, buscarVideos, hayWeb, hayVideos } from "./investigacion.mjs";
-import { buscarImagenes, fuentesClinicas, proxearImagen, hayImagenesWeb } from "./medios.mjs";
+import { buscarImagenes, buscarImagenesWebAbierta, fuentesClinicas, proxearImagen, hayImagenesWeb, hayImagenesWebAbierta } from "./medios.mjs";
 import { buscarLiteratura } from "./literatura.mjs";
 import {
   telefoniaLista, originarLlamada, estadoLlamada, twimlPuente,
@@ -19,7 +19,7 @@ import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // Se sube a mano con cada arreglo que el usuario tiene que descargar.
-export const VERSION = "2026-08-24.21";
+export const VERSION = "2026-08-24.22";
 
 const root = fileURLToPath(new URL("./public", import.meta.url));
 // El .env se lee de forma síncrona a propósito. Con `await` aquí arriba, en el
@@ -75,6 +75,9 @@ export async function atender(req, res) {
         // La búsqueda de imágenes en la web usa fuentes abiertas: siempre lista,
         // no depende de ninguna clave.
         imagenesWeb: hayImagenesWeb(),
+        // La búsqueda en la web abierta con Google necesita un buscador
+        // programable (GOOGLE_CSE_ID) y una clave.
+        imagenesWebAbierta: hayImagenesWebAbierta(),
         // Llamadas salientes: por ElevenLabs (preferido) o por el puente Twilio.
         telefonia: telefoniaElevenLabsLista() ? "elevenlabs" : telefoniaLista() ? "twilio" : false
       });
@@ -152,6 +155,14 @@ export async function atender(req, res) {
       if (!r.ok) return json(res, r.estado || 502, { error: r.error });
       res.writeHead(200, { "Content-Type": r.tipo, "Cache-Control": "public, max-age=86400" });
       return res.end(r.buffer);
+    }
+
+    if (req.method === "POST" && req.url === "/imagenes/web") {
+      let p = {};
+      try { p = JSON.parse(await readBody(req)); } catch {}
+      const consulta = String(p.consulta || p.tema || "").trim();
+      if (!consulta) return json(res, 400, { error: "Falta la consulta.", code: "SIN_CONSULTA" });
+      return json(res, 200, await buscarImagenesWebAbierta(consulta));
     }
 
     if (req.method === "POST" && req.url === "/fuentes-clinicas") {
@@ -449,10 +460,17 @@ const PARAMETROS_IMAGENES = {
   },
   required: ["consulta"]
 };
-const DESCRIPCION_IMAGENES = "Busca imágenes reales en la web abierta —tres bancos abiertos a la vez, con foco en salud— y las "
-  + "muestra en una rejilla con su fuente y licencia. Úsala para casi cualquier imagen: fotos, escenas clínicas, dispositivos, "
-  + "infografías, figuras de artículos. Son imágenes reales con su origen, no generadas. "
-  + "Para un diagrama anatómico muy concreto puedes usar buscar_imagen_medica; para inventar una ilustración, generar_imagen.";
+const DESCRIPCION_IMAGENES = "PRIMERA opción para buscar imágenes: cinco bancos abiertos a la vez (Openverse, Commons, Wikipedia, Wellcome y Open-i), "
+  + "con foco en salud, mostradas en una rejilla con su fuente y licencia. Úsala para casi cualquier imagen: fotos, escenas clínicas, dispositivos, "
+  + "infografías, figuras de artículos. Son imágenes reales con su origen, no generadas. Si NO encuentra lo pedido —sobre todo personas, autores o "
+  + "temas no médicos que rara vez están en estos bancos—, ofrece buscar en la web abierta y pide permiso antes de usar buscar_imagenes_web.";
+
+// Segundo paso: búsqueda en la web abierta con el motor de Google. Requiere que
+// el usuario lo autorice, porque son fotos con derechos de sus dueños.
+const DESCRIPCION_IMAGENES_WEB = "Busca imágenes en TODA la web abierta con el motor de Google. Úsala SÓLO como segundo paso, cuando buscar_imagenes "
+  + "no encontró lo pedido, y SÓLO después de pedirle permiso a la persona y que diga que sí. Sirve para lo que no está en los bancos abiertos: "
+  + "una persona, un autor, un producto, algo no médico. Muestra las imágenes con su página de origen. Advierte que vienen de la web abierta y "
+  + "tienen derechos de sus dueños: son para ver y referenciar con su fuente, no material de libre uso.";
 
 // Fuentes clínicas curadas. No traen la imagen a pantalla —son de pago o con
 // derechos, y enlazar es lo correcto—: se le ofrecen a la persona como enlaces.
@@ -612,6 +630,7 @@ const HERRAMIENTAS = [
   { nombre: "buscar_en_la_web", descripcion: DESCRIPCION_WEB, parametros: PARAMETROS_WEB },
   { nombre: "leer_pagina_web", descripcion: DESCRIPCION_LEER, parametros: PARAMETROS_LEER },
   { nombre: "buscar_imagenes", descripcion: DESCRIPCION_IMAGENES, parametros: PARAMETROS_IMAGENES },
+  { nombre: "buscar_imagenes_web", descripcion: DESCRIPCION_IMAGENES_WEB, parametros: PARAMETROS_IMAGENES },
   { nombre: "fuentes_clinicas", descripcion: DESCRIPCION_FUENTES_CLINICAS, parametros: PARAMETROS_FUENTES_CLINICAS },
   { nombre: "generar_imagen", descripcion: DESCRIPCION_IMAGEN_GEN, parametros: PARAMETROS_IMAGEN_GEN },
   { nombre: "buscar_videos", descripcion: DESCRIPCION_VIDEOS, parametros: PARAMETROS_VIDEOS },

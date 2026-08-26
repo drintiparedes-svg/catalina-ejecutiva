@@ -73,6 +73,8 @@ export const CONFIG_POR_DEFECTO = {
       // Evidencia. Esto es lo único que se hereda entero de la versión de
       // salud, y reforzado: es lo que separa buscar en la web de repetir lo
       // primero que se encuentre.
+      "Para imágenes, busca primero en los bancos abiertos (buscar_imagenes). Si no aparece lo pedido —una persona, un autor, algo no médico—, ofrécele a la persona buscar en la web abierta y espera su sí antes de usar buscar_imagenes_web; al mostrarlas, di que vienen de la web y llevan derechos de sus dueños.",
+
       "Cuando afirmes algo que venga de fuera, di de dónde sale. Sin fuente, es una opinión y la presentas como tal.",
       "No todas las fuentes valen lo mismo. Una revisión sistemática o un ensayo aleatorizado pesan más que un estudio observacional; ése más que una serie de casos; y todos más que una opinión, una nota de prensa o un preprint sin revisar.",
       "Di el nivel de evidencia cuando importe, y di «esto no está establecido» cuando no lo esté. No conviertas un hallazgo preliminar en un hecho.",
