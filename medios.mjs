@@ -282,47 +282,53 @@ export const hayImagenesWeb = () => true;
 // muestran para ver y referenciar, con su fuente, no como material libre.
 const CSE_ID = () => process.env.GOOGLE_CSE_ID?.trim();
 const CSE_KEY = () => (process.env.GOOGLE_CSE_KEY || process.env.GEMINI_API_KEY)?.trim();
-
-export const hayImagenesWebAbierta = () => Boolean(CSE_ID() && CSE_KEY());
+const SERPAPI = () => process.env.SERPAPI_KEY?.trim();
 
 function detalleGoogle(crudo) {
   try { return String(JSON.parse(crudo)?.error?.message || "").slice(0, 200); } catch { return ""; }
 }
 
-export async function buscarImagenesWebAbierta(consulta, opciones = {}) {
-  const q = String(consulta || "").trim();
-  if (!q) return { ok: false, error: "Falta la consulta de imagen." };
-  if (!hayImagenesWebAbierta()) {
-    return { ok: false, error: "Falta GOOGLE_CSE_ID y/o la clave: la búsqueda web de imágenes no está configurada.", code: "SIN_CSE" };
-  }
+// Siempre disponible: aunque no haya clave, el respaldo de Wikipedia (sin clave)
+// da resultados para muchas personas y entidades conocidas.
+export const hayImagenesWebAbierta = () => true;
+// ¿Hay un buscador web "completo" configurado (Google/SerpAPI), o sólo Wikipedia?
+export const hayBuscadorWebCompleto = () => Boolean(SERPAPI() || (CSE_ID() && CSE_KEY()));
 
-  const cuantos = Math.min(Math.max(Number(opciones.cuantos) || 10, 1), 10);   // el máximo por página del API es 10
+// SerpAPI: resultados reales de Google Images con una sola clave, sin montar un
+// buscador programable. Tiene tier gratis; luego es de pago.
+async function deSerpApi(q) {
+  const url = new URL("https://serpapi.com/search.json");
+  url.search = new URLSearchParams({ engine: "google_images", q, api_key: SERPAPI(), num: "10", safe: "active" }).toString();
+  const r = await fetch(url, { signal: AbortSignal.timeout(TIEMPO) });
+  const crudo = await r.text();
+  if (!r.ok) throw new Error(`SerpAPI ${r.status}: ${detalleGoogle(crudo) || crudo.slice(0, 120)}`);
+  let d = {}; try { d = JSON.parse(crudo); } catch {}
+  return (d.images_results || []).filter(it => it.original || it.thumbnail).map(it => ({
+    titulo: it.title || it.source || "Imagen",
+    thumb: it.thumbnail || it.original,
+    imagen: it.original || it.thumbnail,
+    fuente: it.link || it.source || "",
+    autor: it.source || "",
+    licencia: "Web abierta · verifica derechos",
+    ancho: it.original_width || 0, alto: it.original_height || 0,
+    origen: "Web (SerpAPI)", diagrama: false
+  }));
+}
+
+// Google Programmable Search (Custom Search JSON API).
+async function deCSE(q) {
   const url = new URL("https://www.googleapis.com/customsearch/v1");
-  url.search = new URLSearchParams({
-    key: CSE_KEY(), cx: CSE_ID(), q, searchType: "image",
-    num: String(cuantos), safe: "active"
-  }).toString();
-
-  let crudo, r;
-  try {
-    r = await fetch(url, { signal: AbortSignal.timeout(TIEMPO) });
-    crudo = await r.text();
-  } catch (e) {
-    return { ok: false, error: e.name === "TimeoutError" ? "La búsqueda web tardó demasiado." : "No se pudo buscar en la web." };
-  }
+  url.search = new URLSearchParams({ key: CSE_KEY(), cx: CSE_ID(), q, searchType: "image", num: "10", safe: "active" }).toString();
+  const r = await fetch(url, { signal: AbortSignal.timeout(TIEMPO) });
+  const crudo = await r.text();
   if (!r.ok) {
     const detalle = detalleGoogle(crudo);
-    return {
-      ok: false,
-      error: r.status === 403
-        ? `Google rechazó la búsqueda${detalle ? ": " + detalle : ""}. Activa «Custom Search API» en el proyecto de la clave.`
-        : `La búsqueda web falló (${r.status})${detalle ? ": " + detalle : ""}.`
-    };
+    throw new Error(r.status === 403
+      ? `Google rechazó la búsqueda${detalle ? ": " + detalle : ""} (activa «Custom Search API» y usa un motor "para toda la web")`
+      : `Google ${r.status}${detalle ? ": " + detalle : ""}`);
   }
-
-  let datos = {};
-  try { datos = JSON.parse(crudo); } catch {}
-  const imagenes = (datos.items || []).filter(it => it.link).map(it => ({
+  let d = {}; try { d = JSON.parse(crudo); } catch {}
+  return (d.items || []).filter(it => it.link).map(it => ({
     titulo: it.title || it.displayLink || "Imagen",
     thumb: it.image?.thumbnailLink || it.link,
     imagen: it.link,
@@ -332,8 +338,63 @@ export async function buscarImagenesWebAbierta(consulta, opciones = {}) {
     ancho: it.image?.width || 0, alto: it.image?.height || 0,
     origen: "Web (Google)", diagrama: false
   }));
+}
 
-  return { ok: true, total: imagenes.length, imagenes, consultadas: ["Web (Google)"], vacio: imagenes.length === 0 };
+// Respaldo sin clave: la imagen principal de los artículos de Wikipedia que
+// coinciden con la búsqueda. Cubre muchas personas y entidades públicas.
+async function deWikiWeb(lang, q) {
+  const url = new URL(`https://${lang}.wikipedia.org/w/api.php`);
+  url.search = new URLSearchParams({
+    action: "query", generator: "search", gsrsearch: q, gsrnamespace: "0", gsrlimit: "6",
+    prop: "pageimages", piprop: "thumbnail|original", pithumbsize: "480", format: "json", origin: "*"
+  }).toString();
+  const r = await fetch(url, { signal: AbortSignal.timeout(TIEMPO) });
+  if (!r.ok) return [];
+  const d = await r.json();
+  const paginas = d?.query?.pages ? Object.values(d.query.pages) : [];
+  return paginas.filter(p => p.thumbnail?.source).map(p => ({
+    titulo: p.title,
+    thumb: p.thumbnail.source,
+    imagen: p.original?.source || p.thumbnail.source,
+    fuente: `https://${lang}.wikipedia.org/wiki/${encodeURIComponent((p.title || "").replace(/ /g, "_"))}`,
+    autor: "", licencia: "Wikipedia · Commons",
+    ancho: p.original?.width || 0, alto: p.original?.height || 0,
+    origen: "Wikipedia", diagrama: false
+  }));
+}
+async function deWikipediaWeb(q) {
+  const en = await deWikiWeb("en", q).catch(() => []);
+  if (en.length) return en;
+  return deWikiWeb("es", q).catch(() => []);
+}
+
+// Cascada: SerpAPI → Google CSE → Wikipedia. Usa la primera que dé resultados;
+// Wikipedia va siempre al final como respaldo sin clave.
+export async function buscarImagenesWebAbierta(consulta, opciones = {}) {
+  const q = String(consulta || "").trim();
+  if (!q) return { ok: false, error: "Falta la consulta de imagen." };
+
+  const proveedores = [];
+  if (SERPAPI()) proveedores.push(["Web (SerpAPI)", () => deSerpApi(q)]);
+  if (CSE_ID() && CSE_KEY()) proveedores.push(["Web (Google)", () => deCSE(q)]);
+  proveedores.push(["Wikipedia", () => deWikipediaWeb(q)]);
+
+  let ultimoError = "";
+  for (const [nombre, fn] of proveedores) {
+    try {
+      const imagenes = await fn();
+      if (imagenes.length) return { ok: true, total: imagenes.length, imagenes, consultadas: [nombre], vacio: false };
+    } catch (e) {
+      ultimoError = e.message || String(e);
+    }
+  }
+  return {
+    ok: false,
+    vacio: true,
+    error: ultimoError
+      ? `No encontré imágenes. Último intento: ${ultimoError}.`
+      : "No encontré imágenes en la web para eso. Para más alcance, configura SERPAPI_KEY o un GOOGLE_CSE_ID «para toda la web»."
+  };
 }
 
 export async function buscarImagenes(consulta, opciones = {}) {

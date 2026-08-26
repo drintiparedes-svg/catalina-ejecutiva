@@ -6,7 +6,7 @@ import {
 import { plantillaMediSmart, versionTexto, enviarPorResend } from "./correo.mjs";
 import { buscarCentros, calcularRuta, ubicarLugar } from "./salud.mjs";
 import { buscarEnLaWeb, leerPagina, generarImagen, buscarVideos, hayWeb, hayVideos } from "./investigacion.mjs";
-import { buscarImagenes, buscarImagenesWebAbierta, fuentesClinicas, proxearImagen, hayImagenesWeb, hayImagenesWebAbierta } from "./medios.mjs";
+import { buscarImagenes, buscarImagenesWebAbierta, fuentesClinicas, proxearImagen, hayImagenesWeb, hayImagenesWebAbierta, hayBuscadorWebCompleto } from "./medios.mjs";
 import { buscarLiteratura } from "./literatura.mjs";
 import {
   telefoniaLista, originarLlamada, estadoLlamada, twimlPuente,
@@ -19,7 +19,7 @@ import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // Se sube a mano con cada arreglo que el usuario tiene que descargar.
-export const VERSION = "2026-08-24.23";
+export const VERSION = "2026-08-24.24";
 
 const root = fileURLToPath(new URL("./public", import.meta.url));
 // El .env se lee de forma síncrona a propósito. Con `await` aquí arriba, en el
@@ -75,9 +75,10 @@ export async function atender(req, res) {
         // La búsqueda de imágenes en la web usa fuentes abiertas: siempre lista,
         // no depende de ninguna clave.
         imagenesWeb: hayImagenesWeb(),
-        // La búsqueda en la web abierta con Google necesita un buscador
-        // programable (GOOGLE_CSE_ID) y una clave.
+        // Búsqueda en la web abierta: siempre hay respaldo (Wikipedia, sin
+        // clave). "completo" indica si además hay Google CSE o SerpAPI.
         imagenesWebAbierta: hayImagenesWebAbierta(),
+        buscadorWebCompleto: hayBuscadorWebCompleto(),
         // Llamadas salientes: por ElevenLabs (preferido) o por el puente Twilio.
         telefonia: telefoniaElevenLabsLista() ? "elevenlabs" : telefoniaLista() ? "twilio" : false
       });
