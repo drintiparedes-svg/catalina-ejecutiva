@@ -27,7 +27,7 @@
 <main>
   <h1>Telefonía de Catalina</h1>
   <p class="sub">Comprueba que ElevenLabs reconoce tu número —sin gastar una llamada— y deja hacer una llamada de prueba a tu propio teléfono.</p>
-  <p class="sub" style="font-size:.85rem;opacity:.7">Página del <b>2026-08-24.24</b>.</p>
+  <p class="sub" style="font-size:.85rem;opacity:.7">Página del <b>2026-08-24.25</b>.</p>
 
   <section class="paso" id="p0"><h2><span class="marca espera">•</span> 1. Configuración y número</h2><p class="detalle">Comprobando…</p></section>
 
@@ -106,7 +106,7 @@ btn.addEventListener("click", async () => {
     for (let i = 0; i < 20; i++) {
       await new Promise(r => setTimeout(r, 3000));
       const e = await (await fetch(`/llamada/${encodeURIComponent(d.id)}`)).json().catch(() => ({}));
-      if (e.estado) salida.innerHTML = `Estado: <b>${esc(e.estado)}</b>${e.resumen ? " — " + esc(e.resumen) : ""}`;
+      if (e.estado) salida.innerHTML = `Estado: <b>${esc(e.estado)}</b>${e.motivo ? " — motivo: <code>" + esc(e.motivo) + "</code>" : e.resumen ? " — " + esc(e.resumen) : ""}`;
       if (e.estado === "terminada" || e.estado === "fallo") break;
     }
   } catch (e) {

@@ -223,6 +223,13 @@ export async function estadoLlamadaElevenLabs(id) {
   // Resumen o transcripción, si la llamada ya terminó, para que Catalina cuente
   // el desenlace en vez de sólo decir «terminó».
   const resumen = datos.analysis?.transcript_summary || datos.transcript_summary || "";
+  // Motivo del corte, sobre todo si la llamada FALLÓ: aquí aparece el problema
+  // de Twilio (permisos geográficos, número no verificado, sin saldo…) con los
+  // nombres de campo que ha usado la API en distintas versiones.
+  const meta = datos.metadata || datos.conversation_metadata || {};
+  const motivo = meta.termination_reason || meta.error || meta.call_error
+    || datos.termination_reason || datos.error_reason || datos.error
+    || meta.phone_call?.error || meta.twilio?.error || "";
   recordar(id, { estado });
-  return { ok: true, id, estado, resumen: resumen || undefined, enVivo: true };
+  return { ok: true, id, estado, resumen: resumen || undefined, motivo: motivo || undefined, enVivo: true };
 }
