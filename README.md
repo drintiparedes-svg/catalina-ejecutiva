@@ -1,11 +1,22 @@
-# Catalina — avatar conversacional local
+# Catalina Ejecutiva — jefa de gabinete con avatar
 
-Prototipo local de voz a voz basado en OpenAI Realtime API. La clave permanece en el servidor local y nunca se entrega al navegador.
+Rama aparte de [catalina-avatar](https://github.com/drintiparedes-svg/catalina-avatar):
+la misma cara y el mismo motor de animación, con la voz y el cerebro de un
+**agente de ElevenLabs** en vez de la asistente de salud.
+
+La cara no cambió ni una línea: el avatar analiza el audio que suene, venga del
+proveedor que venga. Lo que sí cambió es la boca — con ElevenLabs ya no se
+adivina del espectro, porque el agente manda qué carácter suena y cuándo.
+
+Quedan tres voces en cadena: ElevenLabs primero, OpenAI y Gemini de respaldo.
+Ninguna clave llega al navegador; el servidor firma cada sesión.
 
 ## Iniciar en macOS
 
-1. Duplica `.env.example` como `.env` y pega tu `OPENAI_API_KEY`.
-2. Haz doble clic en `start.command`.
+1. Haz doble clic en `start.command`.
+2. La primera vez te pide dos datos de tu cuenta de ElevenLabs y los guarda él
+   solo: la clave (Settings → API Keys) y el identificador del agente que
+   crees en Agents, el que empieza por `agent_`.
 3. En el navegador, pulsa **Iniciar conversación** y permite el micrófono.
 
 También puedes ejecutar `npm start` si ya tienes Node.js instalado.
@@ -296,6 +307,44 @@ La configuración se guarda en `data/config.json`, que está ignorado por git
 porque puede llevar credenciales de conectores. **En Vercel no se puede guardar**:
 el disco es de sólo lectura y el panel lo dirá con un error claro en vez de fingir
 que guardó. Para editar en producción haría falta un almacén externo.
+
+## Cuando algo no funciona
+
+Abre **`/diagnostico.html`**, en local o en el despliegue. Recorre el camino
+entero hasta ElevenLabs —servidor, claves, firma de la sesión y apertura de la
+conversación— y se para en el primer punto que falla, diciendo qué arreglar.
+
+El paso que más cuesta ver sin esta página es el cuarto: cuando ElevenLabs
+acepta firmar la sesión pero cierra la conversación al abrirla. Ahí aparece su
+código y su motivo textual, que es lo que distingue una cuenta sin crédito de un
+agente que no permite sobrescribir su configuración.
+
+## Desplegar en Vercel
+
+En Vercel no hace falta descargar nada ni pegar claves en ningún archivo: se
+conecta el repositorio una vez y cada cambio queda publicado solo.
+
+1. En [vercel.com](https://vercel.com) → **Add New… → Project** → importa
+   `catalina-ejecutiva`.
+2. En **Settings → Git**, pon la rama de producción en `elevenlabs-ejecutiva`.
+3. En **Settings → Environment Variables**, añade `ELEVENLABS_API_KEY` (la que
+   empieza por `sk_`) y `ELEVENLABS_AGENT_ID`.
+4. **Deploy**.
+
+Cómo está montado: `app.mjs` tiene el manejador de peticiones y no escucha en
+ningún puerto. Lo usan dos envolturas —`server.mjs` en local, `api/index.mjs`
+en Vercel— para que las rutas y las herramientas sean literalmente el mismo
+código en los dos sitios. `vercel.json` sirve `public/` como estático y manda
+sólo las rutas de la API a la función.
+
+El micrófono funciona porque Vercel sirve por HTTPS, que es lo que exige el
+navegador. La conversación no pasa por el servidor: el navegador abre el
+WebSocket contra ElevenLabs con una dirección que el servidor firmó, así que la
+clave no viaja al navegador y no hace falta que Vercel sostenga la conexión.
+
+Lo que **no** funciona en un despliegue: guardar la configuración desde el panel
+—el disco es de sólo lectura— y las llamadas telefónicas, que necesitan una
+conexión sostenida.
 
 ## Continuar en otro equipo
 

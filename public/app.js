@@ -9,6 +9,7 @@ import { PerformanceDirector } from "./animation/director.js";
 import { VoiceTracker } from "./audio/voice-tracker.js";
 import { RealtimeSession } from "./realtime/session.js";
 import { GeminiSession } from "./realtime/gemini-session.js";
+import { ElevenLabsSession } from "./realtime/elevenlabs-session.js";
 import { dibujarRuta } from "./mapa.js";
 import { EscuchaDeReunion, escuchaDisponible } from "./escucha.js";
 
@@ -27,11 +28,13 @@ const ui = {
   imagenFoto: document.querySelector("#imagenFoto"),
   imagenPie: document.querySelector("#imagenPie"),
   imagenCredito: document.querySelector("#imagenCredito"),
+  imagenGaleria: document.querySelector("#imagenGaleria"),
   imagenCerrar: document.querySelector("#imagenCerrar"),
   referencias: document.querySelector("#referencias"),
   referenciasLista: document.querySelector("#referenciasLista"),
   referenciasTitulo: document.querySelector("#referenciasTitulo"),
   referenciasCerrar: document.querySelector("#referenciasCerrar"),
+  referenciasAmpliar: document.querySelector("#referenciasAmpliar"),
   panel: document.querySelector("#panel"),
   panelBody: document.querySelector("#panelBody"),
   panelClose: document.querySelector("#panelClose"),
@@ -68,6 +71,7 @@ const manejadores = {
   },
   onConnected: () => {
     connected = true;
+    ultimoFallo = null;
     hayActividad();
     calentarUbicacion();   // deja lista la zona antes de que nadie pregunte
     mostrarAviso("");   // si el intento anterior falló, su aviso ya no aplica
@@ -93,7 +97,9 @@ const manejadores = {
     ui.connect.disabled = false;
     ui.mute.disabled = true;
     ui.mute.textContent = "Silenciar micrófono";
-    setStatus("Lista para comenzar");
+    // Si la sesión cayó por un fallo, se conserva su mensaje: decir «Lista para
+    // comenzar» encima lo borraría justo cuando hace falta leerlo.
+    setStatus(ultimoFallo?.mensaje || "Lista para comenzar");
   },
   onPhase: phase => {
     hayActividad();
@@ -116,6 +122,7 @@ const manejadores = {
   // Los avisos del sistema se muestran siempre, aunque los subtítulos estén
   // apagados: son cosas que la persona necesita leer para poder seguir.
   onHelp: mostrarAviso,
+  onNota: anotarNota,
   onTranscript: text => {
     hayActividad();
     anotarTurno(text);
@@ -139,23 +146,30 @@ const manejadores = {
 // Cada intento vuelve a empezar por el principal: si falló por un tope de uso,
 // al reponerse se vuelve solo sin tener que tocar nada.
 const sesiones = {
+  elevenlabs: new ElevenLabsSession(manejadores),
   openai: new RealtimeSession(manejadores),
   gemini: new GeminiSession(manejadores)
 };
 
-const ORDEN = ["gemini", "openai"];
+// ElevenLabs va primero: es el agente de esta versión —oído, cerebro y voz
+// suyos— y el único que además manda la alineación con la que se mueve la boca.
+// Los otros dos quedan de respaldo para no quedarse sin conversación si su
+// servicio falla, aunque entonces los labios vuelven a deducirse del espectro.
+const ORDEN = ["elevenlabs", "gemini", "openai"];
 
 // Motivos por los que ese proveedor no va a funcionar por mucho que se
 // reintente: sin crédito o sin clave válida. Un fallo de red no entra aquí,
 // porque cambiar de proveedor no lo arreglaría y ocultaría el problema real.
 const MOTIVOS_DE_RELEVO = new Set([
   "API_RATE_LIMIT", "API_KEY_MISSING", "API_KEY_INVALID",
-  "GEMINI_KEY_MISSING", "GEMINI_KEY_INVALID", "GEMINI_SESSION_ERROR"
+  "GEMINI_KEY_MISSING", "GEMINI_KEY_INVALID", "GEMINI_SESSION_ERROR",
+  "ELEVENLABS_KEY_MISSING", "ELEVENLABS_AGENT_MISSING", "ELEVENLABS_SESSION_ERROR"
 ]);
 
-const disponible = { openai: false, gemini: false };
+const disponible = { elevenlabs: false, openai: false, gemini: false };
 let proveedor = null;
 let sesion = null;
+let ultimoFallo = null;   // el motivo del último corte, para no perderlo al desconectar
 
 function proveedoresUtiles() {
   return ORDEN.filter(nombre => disponible[nombre]);
@@ -165,7 +179,7 @@ async function conectar() {
   const cadena = proveedoresUtiles();
   if (!cadena.length) {
     setStatus("No hay ninguna voz configurada");
-    mostrarAviso("Falta una clave de OpenAI o de Gemini para poder conversar.");
+    mostrarAviso("Falta la clave de ElevenLabs, de OpenAI o de Gemini para poder conversar.");
     ui.connect.disabled = false;
     return;
   }
@@ -221,8 +235,15 @@ async function atenderFallo(error) {
   const siguiente = cadena[cadena.indexOf(proveedor) + 1];
 
   if (!siguiente || !MOTIVOS_DE_RELEVO.has(error.code)) {
-    setStatus(error.mensaje || "No se pudo conectar");
+    ultimoFallo = { mensaje: error.mensaje || "No se pudo conectar" };
+    setStatus(ultimoFallo.mensaje);
     mostrarAviso(error.ayuda || "");
+    // El botón vuelve a estar listo para reintentar aunque la sesión no llegue
+    // a llamar a onDisconnected (p. ej. si falló antes de conectar del todo).
+    connected = false;
+    ui.connect.textContent = "Iniciar conversación";
+    ui.connect.disabled = false;
+    ui.mute.disabled = true;
     return;
   }
 
@@ -274,10 +295,15 @@ ui.panelClose.addEventListener("click", () => fijarPanel(false));
 ui.imagenCerrar.addEventListener("click", () => {
   mostrarLienzoDeImagen("oculto");
   laminaEnPantalla = null;
+  ocultarGaleria();
 });
 ui.referenciasCerrar.addEventListener("click", () => {
   ui.referencias.dataset.estado = "oculto";
   referenciasEnPantalla = [];
+});
+ui.referenciasAmpliar.addEventListener("click", () => {
+  referenciasExpandido = !referenciasExpandido;
+  pintarReferencias();
 });
 document.addEventListener("keydown", event => {
   if (event.target.matches("input, textarea")) return;
@@ -418,8 +444,35 @@ async function atenderLlamado(peticion, contexto) {
 // pedirle que reconstruya de memoria algo que puede recordar mal.
 let laminaEnPantalla = null;
 let referenciasEnPantalla = [];
+// El panel llega colapsado: se muestran las más relevantes y se guarda la lista
+// entera para poder ampliarla, reordenándola entonces por factor de impacto.
+let referenciasTotal = 0;
+let referenciasTitulo = "Referencias";
+let referenciasAmpliable = false;
+let referenciasExpandido = false;
+const REFERENCIAS_COLAPSADAS = 8;
 
 async function atenderHerramienta(nombre, argumentos) {
+  // Gesto de espera: mientras la herramienta corre —una búsqueda tarda unos
+  // segundos— la cara pasa a pensar en vez de quedarse congelada. La voz de la
+  // espera la pone el agente (pre_tool_speech en el registro); esto es el gesto.
+  director.setState("thinking");
+  director.setExpression("concentracion", .6);
+  try {
+    return await despacharHerramienta(nombre, argumentos);
+  } finally {
+    // Si tras la herramienta no llegó a hablar, se vuelve a escuchar en vez de
+    // quedarse pensando para siempre. Si sí habla, su audio ya puso "speaking".
+    setTimeout(() => {
+      if (director.state === "thinking") {
+        director.setState(connected ? (faseDeSesion || "listening") : "idle");
+        director.setExpression("neutra");
+      }
+    }, 600);
+  }
+}
+
+async function despacharHerramienta(nombre, argumentos) {
   if (nombre === "buscar_imagen_medica") return await pedirLamina(argumentos);
   if (nombre === "buscar_referencias") return await pedirReferencias(argumentos);
   if (nombre === "enviar_resumen") return await enviarResumen(argumentos);
@@ -427,6 +480,13 @@ async function atenderHerramienta(nombre, argumentos) {
   if (nombre === "llamar_por_telefono") return await llamarPorTelefono(argumentos);
   if (nombre === "consultar_llamada") return await consultarLlamada(argumentos);
   if (nombre === "como_llegar") return await comoLlegar(argumentos);
+  if (nombre === "buscar_en_la_web") return await buscarWeb(argumentos);
+  if (nombre === "leer_pagina_web") return await leerPaginaWeb(argumentos);
+  if (nombre === "generar_imagen") return await generarImagen(argumentos);
+  if (nombre === "buscar_imagenes") return await buscarImagenes(argumentos);
+  if (nombre === "buscar_imagenes_web") return await buscarImagenesWeb(argumentos);
+  if (nombre === "fuentes_clinicas") return await pedirFuentesClinicas(argumentos);
+  if (nombre === "buscar_videos") return await buscarVideos(argumentos);
   // Cualquier otro nombre viene de un conector definido en el administrador.
   // Se manda el nombre, no la dirección: el servidor la resuelve.
   return await usarConector(nombre, argumentos);
@@ -688,6 +748,8 @@ async function llamarPorTelefono(argumentos) {
       body: JSON.stringify({
         numero: argumentos.numero,
         objetivo: argumentos.objetivo,
+        a_quien: argumentos.a_quien,
+        restricciones: argumentos.restricciones,
         confirmado: argumentos.confirmado === true
       })
     });
@@ -814,6 +876,232 @@ async function pedirLamina(argumentos) {
   }
 }
 
+// Búsqueda en la web abierta. El resumen vuelve como texto para que Catalina lo
+// diga; las fuentes van al panel de referencias, siempre a la vista, porque de
+// ahí sale lo que cuenta.
+async function buscarWeb(argumentos) {
+  const consulta = String(argumentos.consulta || "").trim();
+  if (!consulta) return { ok: false, error: "Falta la consulta" };
+  try {
+    const respuesta = await fetch("/web/buscar", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ consulta })
+    });
+    const datos = await respuesta.json().catch(() => ({}));
+    if (!datos.ok) return { ok: false, error: datos.error || "No se pudo buscar" };
+
+    if (datos.fuentes?.length) mostrarReferencias(datos.fuentes, "Fuentes en la web");
+    // El resumen y el aviso de si trae fuente van al modelo: es lo que dirá, y
+    // debe poder distinguir un dato respaldado de uno que no lo está.
+    return {
+      ok: true,
+      resumen: datos.resumen,
+      respaldado: datos.respaldado,
+      fuentes: (datos.fuentes ?? []).map(f => f.titulo),
+      aviso: datos.respaldado ? undefined : "Esto no trae fuente; dilo al contarlo."
+    };
+  } catch (error) {
+    console.error(error);
+    return { ok: false, error: "Falló la búsqueda en la web" };
+  }
+}
+
+// Leer una página por su dirección. Devuelve el texto para resumir o citar; la
+// página se ofrece como fuente en el panel.
+async function leerPaginaWeb(argumentos) {
+  const url = String(argumentos.url || "").trim();
+  if (!url) return { ok: false, error: "Falta la dirección" };
+  try {
+    const respuesta = await fetch("/web/leer", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url })
+    });
+    const datos = await respuesta.json().catch(() => ({}));
+    if (!datos.ok) return { ok: false, error: datos.error || "No se pudo abrir la página" };
+
+    mostrarReferencias([{ titulo: datos.titulo || datos.url, enlace: datos.url }], "Página leída");
+    return { ok: true, titulo: datos.titulo, texto: datos.texto, recortado: datos.recortado };
+  } catch (error) {
+    console.error(error);
+    return { ok: false, error: "Falló la lectura de la página" };
+  }
+}
+
+// Generar una imagen. Sólo a petición explícita. Se muestra marcada como
+// generada: no es evidencia, y el crédito lo dice en vez de enlazar a una fuente.
+async function generarImagen(argumentos) {
+  const descripcion = String(argumentos.descripcion || "").trim();
+  if (!descripcion) return { ok: false, error: "Falta la descripción" };
+  setStatus("Generando la imagen…");
+  mostrarLienzoDeImagen("cargando");
+  try {
+    const respuesta = await fetch("/imagen/generar", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ descripcion })
+    });
+    const datos = await respuesta.json().catch(() => ({}));
+    if (!datos.ok || !datos.imagen) {
+      mostrarLienzoDeImagen("oculto");
+      return { ok: false, mostrada: false, error: datos.error || "No se pudo generar" };
+    }
+    mostrarImagenGenerada(datos.imagen, descripcion);
+    return {
+      ok: true,
+      mostrada: true,
+      // Explícito para que Catalina lo diga: es una ilustración, no una prueba.
+      generada: true,
+      aviso: "Es una imagen generada; preséntala como ilustración, nunca como evidencia."
+    };
+  } catch (error) {
+    console.error(error);
+    mostrarLienzoDeImagen("oculto");
+    return { ok: false, mostrada: false, error: "Falló la generación de la imagen" };
+  }
+}
+
+// Buscar imágenes reales en la web abierta. Devuelve una rejilla; la mejor va
+// grande y las demás como miniaturas. Al modelo le llegan los títulos y fuentes
+// para que las nombre y las sitúe. Si no encuentra, lo dice —no inventa.
+async function buscarImagenes(argumentos) {
+  const consulta = String(argumentos.consulta || argumentos.tema || "").trim();
+  if (!consulta) return { ok: false, error: "Falta la consulta" };
+  setStatus("Buscando imágenes…");
+  mostrarLienzoDeImagen("cargando");
+  try {
+    const respuesta = await fetch("/imagenes/buscar", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ consulta })
+    });
+    const datos = await respuesta.json().catch(() => ({}));
+    if (!datos.ok || !datos.imagenes?.length) {
+      mostrarLienzoDeImagen("oculto");
+      return { ok: false, mostrada: false, error: datos.error || "No encontré imágenes para eso." };
+    }
+    mostrarGaleria(datos.imagenes);
+    return {
+      ok: true,
+      mostradas: datos.imagenes.length,
+      total: datos.total,
+      consultadas: datos.consultadas,
+      // Títulos y fuentes al modelo, para que describa lo que hay en pantalla y
+      // diga de dónde sale; las imágenes reales llevan su origen, no se inventan.
+      imagenes: datos.imagenes.slice(0, 6).map(i => ({ titulo: i.titulo, fuente: i.origen, licencia: i.licencia }))
+    };
+  } catch (error) {
+    console.error(error);
+    mostrarLienzoDeImagen("oculto");
+    return { ok: false, mostrada: false, error: "Falló la búsqueda de imágenes" };
+  }
+}
+
+// Fuentes clínicas curadas. No son imágenes en pantalla: son enlaces a sitios de
+// referencia —Gray's Anatomy, Mayo, Science Source— para abrir y buscar ahí.
+// Van al panel de referencias como enlaces con su nota.
+async function pedirFuentesClinicas(argumentos) {
+  const consulta = String(argumentos.consulta || argumentos.tema || "").trim();
+  try {
+    const respuesta = await fetch("/fuentes-clinicas", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ consulta })
+    });
+    const datos = await respuesta.json().catch(() => ({}));
+    if (!datos.ok || !datos.fuentes?.length) return { ok: false, error: "No hay fuentes clínicas disponibles" };
+
+    mostrarReferencias(
+      datos.fuentes.map(f => ({ titulo: f.titulo, enlace: f.enlace, autores: f.dominio, revista: f.nota })),
+      "Fuentes clínicas"
+    );
+    return {
+      ok: true,
+      // Al modelo, para que las nombre y avise de la de pago; los enlaces ya
+      // están en pantalla, no hace falta que los dicte.
+      fuentes: datos.fuentes.map(f => ({ titulo: f.titulo, nota: f.nota })),
+      aviso: "Son enlaces para abrir y buscar ahí, no imágenes en pantalla. Science Source requiere licencia de pago."
+    };
+  } catch (error) {
+    console.error(error);
+    return { ok: false, error: "Falló la carga de fuentes clínicas" };
+  }
+}
+
+// Búsqueda en la web abierta con Google. Segundo paso, tras autorización: para
+// lo que no está en los bancos (una persona, un autor, algo no médico). Misma
+// rejilla; al modelo se le recuerda avisar que son de la web, con derechos.
+async function buscarImagenesWeb(argumentos) {
+  const consulta = String(argumentos.consulta || argumentos.tema || "").trim();
+  if (!consulta) return { ok: false, error: "Falta la consulta" };
+  setStatus("Buscando en la web…");
+  mostrarLienzoDeImagen("cargando");
+  try {
+    const respuesta = await fetch("/imagenes/web", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ consulta })
+    });
+    const datos = await respuesta.json().catch(() => ({}));
+    if (!datos.ok || !datos.imagenes?.length) {
+      mostrarLienzoDeImagen("oculto");
+      return { ok: false, mostrada: false, error: datos.error || "No encontré imágenes en la web para eso." };
+    }
+    mostrarGaleria(datos.imagenes);
+    return {
+      ok: true,
+      mostradas: datos.imagenes.length,
+      imagenes: datos.imagenes.slice(0, 6).map(i => ({ titulo: i.titulo, fuente: i.autor || i.origen })),
+      aviso: "Son imágenes de la web abierta, con derechos de sus dueños; preséntalas con su fuente, no como material libre."
+    };
+  } catch (error) {
+    console.error(error);
+    mostrarLienzoDeImagen("oculto");
+    return { ok: false, mostrada: false, error: "Falló la búsqueda en la web" };
+  }
+}
+
+// Vistas en forma corta: 1200000 → «1,2 M». Es una señal de popularidad, no de
+// rigor, y así se dice al recomendarlo.
+function formatoVistas(n) {
+  if (!Number.isFinite(n)) return "";
+  if (n >= 1e6) return `${(n / 1e6).toFixed(1).replace(".", ",")} M vistas`;
+  if (n >= 1e3) return `${Math.round(n / 1e3)} mil vistas`;
+  return `${n} vistas`;
+}
+
+// Buscar videos en YouTube. Los enlaces van al panel de referencias —la misma
+// lista, reutilizada— con el canal, la duración y las vistas en el pie. Al modelo
+// van los títulos y canales para que los nombre y advierta que vistas ≠ rigor.
+async function buscarVideos(argumentos) {
+  const consulta = String(argumentos.consulta || argumentos.tema || "").trim();
+  if (!consulta) return { ok: false, error: "Falta la consulta" };
+  try {
+    const respuesta = await fetch("/videos/buscar", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ consulta })
+    });
+    const datos = await respuesta.json().catch(() => ({}));
+    if (!datos.ok) return { ok: false, error: datos.error || "No se pudo buscar en YouTube" };
+    if (!datos.videos?.length) return { ok: true, videos: [], aviso: "No encontré videos para eso." };
+
+    // Cada video se pinta como una referencia: título con enlace, y en el pie el
+    // canal, la plataforma con la duración, el año y las vistas.
+    const comoReferencias = datos.videos.map(v => ({
+      titulo: v.titulo, enlace: v.enlace, autores: v.canal, anio: v.anio,
+      revista: ["YouTube", v.duracion, formatoVistas(v.vistas)].filter(Boolean).join(" · ")
+    }));
+    mostrarReferencias(comoReferencias, "Videos de YouTube");
+
+    return {
+      ok: true,
+      mostrados: datos.videos.length,
+      // Va al modelo para que los nombre y los sitúe. Sin filtro de evidencia:
+      // son material para orientar, no fuentes validadas, y así se ofrecen.
+      videos: datos.videos.map(v => ({ titulo: v.titulo, canal: v.canal, vistas: v.vistas, duracion: v.duracion })),
+      aviso: "Son videos de YouTube para orientar, no evidencia validada; ofrécelos como material útil, sin descartarlos por rigor."
+    };
+  } catch (error) {
+    console.error(error);
+    return { ok: false, error: "Falló la búsqueda de videos" };
+  }
+}
+
 async function pedirReferencias(argumentos) {
   const tema = String(argumentos.tema || "").trim();
   if (!tema) return { ok: false, error: "Falta el tema" };
@@ -829,10 +1117,27 @@ async function pedirReferencias(argumentos) {
       return { ok: false, error: datos.error || "Sin referencias" };
     }
 
-    mostrarReferencias(datos.referencias);
-    // Van los títulos para que pueda mencionarlas de palabra; los enlaces ya
-    // están en pantalla y leerlos en voz alta no aportaría nada.
-    return { ok: true, mostradas: datos.referencias.length, titulos: datos.referencias.map(r => r.titulo) };
+    // total = cuántas encontró en total; en pantalla van las mejores, ampliables
+    // a las 20 más relevantes reordenadas por factor de impacto de la revista.
+    mostrarReferencias(datos.referencias, "Referencias", {
+      total: datos.total ?? datos.referencias.length,
+      ampliable: true
+    });
+    // Van los títulos y las señales de evidencia —citas, si es preprint— para
+    // que Catalina pueda ordenarlas al hablar; los enlaces ya están en pantalla.
+    return {
+      ok: true,
+      encontradas: datos.total ?? datos.referencias.length,
+      mostradas: datos.referencias.length,
+      consultadas: datos.consultadas,
+      // Las que fallaron o no se consultaron: Catalina debe nombrarlas como
+      // límite de la búsqueda.
+      noConsultadas: datos.fallaron,
+      referencias: datos.referencias.map(r => ({
+        titulo: r.titulo, anio: r.anio, revista: r.revista,
+        citas: r.citas, impacto: r.impacto, preprint: r.preprint, registro: r.registro
+      }))
+    };
   } catch (error) {
     console.error(error);
     return { ok: false, error: "Falló la conexión con PubMed" };
@@ -845,7 +1150,9 @@ function mostrarLienzoDeImagen(estado) {
 
 function mostrarLamina(lamina) {
   laminaEnPantalla = lamina;
+  ocultarGaleria();
   ui.imagenFoto.onclick = null;
+  ui.imagenFoto.onerror = null;
   ui.imagenFoto.style.cursor = "";
   ui.imagenFoto.src = lamina.imagen;
   ui.imagenFoto.alt = lamina.titulo;
@@ -857,11 +1164,121 @@ function mostrarLamina(lamina) {
   mostrarLienzoDeImagen("visible");
 }
 
-function mostrarReferencias(referencias) {
+// Imagen generada. Mismo panel que las láminas, pero el crédito avisa —sin
+// enlace— de que es generada: una lámina de Commons tiene fuente que comprobar;
+// ésta no, y decirlo es parte de mostrarla con criterio.
+function mostrarImagenGenerada(dataUrl, descripcion) {
+  laminaEnPantalla = null;
+  ocultarGaleria();
+  ui.imagenFoto.onclick = null;
+  ui.imagenFoto.onerror = null;
+  ui.imagenFoto.style.cursor = "";
+  ui.imagenFoto.src = dataUrl;
+  ui.imagenFoto.alt = descripcion;
+  ui.imagenPie.textContent = descripcion.slice(0, 120);
+  ui.imagenCredito.textContent = "Imagen generada con IA · no es evidencia";
+  ui.imagenCredito.removeAttribute("href");
+  mostrarLienzoDeImagen("visible");
+}
+
+function ocultarGaleria() {
+  ui.imagenGaleria.hidden = true;
+  ui.imagenGaleria.replaceChildren();
+}
+
+// Carga una imagen remota con red de seguridad: si la fuente bloquea la carga
+// directa —hotlinking—, se reintenta UNA vez a través del proxy del servidor,
+// que sólo sirve hosts abiertos conocidos. Así el contenido se muestra igual,
+// y el proxy sólo se paga cuando la carga directa falla.
+function cargarImagen(img, url) {
+  img.dataset.proxied = "";
+  img.onerror = () => {
+    if (img.dataset.proxied === "1") { img.onerror = null; return; }
+    img.dataset.proxied = "1";
+    img.src = `/img?u=${encodeURIComponent(url)}`;
+  };
+  img.src = url;
+}
+
+// Galería de la búsqueda de imágenes. La primera —la mejor puntuada— se pone
+// grande; las demás, como miniaturas debajo, y al tocar una pasa a ser la grande.
+// Nada de esto descarga bytes en el servidor: cada <img> carga de su fuente.
+function mostrarGaleria(imagenes) {
+  laminaEnPantalla = null;
+  const elegir = imagen => {
+    ui.imagenFoto.onclick = null;
+    ui.imagenFoto.style.cursor = "";
+    cargarImagen(ui.imagenFoto, imagen.imagen || imagen.thumb);
+    ui.imagenFoto.alt = imagen.titulo || "";
+    ui.imagenPie.textContent = (imagen.titulo || "").slice(0, 120);
+    // La fuente y la licencia son la prueba de que la imagen existe y de dónde
+    // viene; van con enlace para poder comprobarlas.
+    ui.imagenCredito.textContent = [imagen.autor, imagen.licencia, imagen.origen].filter(Boolean).join(" · ") || imagen.origen || "";
+    if (imagen.fuente) ui.imagenCredito.href = imagen.fuente; else ui.imagenCredito.removeAttribute("href");
+    for (const t of ui.imagenGaleria.children) t.setAttribute("aria-current", t.dataset.url === (imagen.imagen || imagen.thumb) ? "true" : "false");
+  };
+
+  ui.imagenGaleria.replaceChildren();
+  if (imagenes.length > 1) {
+    for (const imagen of imagenes) {
+      const t = document.createElement("img");
+      t.alt = imagen.titulo || "";
+      t.loading = "lazy";
+      t.dataset.url = imagen.imagen || imagen.thumb;
+      t.addEventListener("click", () => elegir(imagen));
+      ui.imagenGaleria.append(t);
+      cargarImagen(t, imagen.thumb || imagen.imagen);
+    }
+    ui.imagenGaleria.hidden = false;
+  } else {
+    ui.imagenGaleria.hidden = true;
+  }
+
+  elegir(imagenes[0]);
+  mostrarLienzoDeImagen("visible");
+}
+
+function mostrarReferencias(referencias, titulo = "Referencias", meta = {}) {
   referenciasEnPantalla = referencias;
-  ui.referenciasTitulo.textContent = "Referencias";
+  referenciasTitulo = titulo;
+  referenciasTotal = Number.isFinite(meta.total) ? meta.total : referencias.length;
+  // Sólo el panel de literatura se amplía y sólo si hay más de lo que cabe.
+  referenciasAmpliable = Boolean(meta.ampliable) && referencias.length > REFERENCIAS_COLAPSADAS;
+  referenciasExpandido = false;
+  pintarReferencias();
+  ui.referencias.dataset.estado = "visible";
+}
+
+// Pinta la lista según esté colapsada o ampliada. Colapsada muestra las mejores
+// en el orden de relevancia que trajo el servidor; ampliada muestra las 20 y las
+// reordena por factor de impacto de la revista, que es lo que se pidió al ampliar.
+function pintarReferencias() {
+  let lista = referenciasEnPantalla;
+  if (referenciasExpandido) {
+    lista = referenciasEnPantalla.slice().sort((a, b) => {
+      const ia = Number.isFinite(a.impacto) ? a.impacto : -1;
+      const ib = Number.isFinite(b.impacto) ? b.impacto : -1;
+      return ib - ia;   // mayor impacto primero; las sin dato, al final
+    });
+  } else if (referenciasAmpliable) {
+    lista = referenciasEnPantalla.slice(0, REFERENCIAS_COLAPSADAS);
+  }
+
+  // El título lleva el número encontrado, que puede ser mayor que lo mostrado.
+  ui.referenciasTitulo.textContent =
+    referenciasTotal > lista.length ? `${referenciasTitulo} · ${referenciasTotal}` : referenciasTitulo;
+
+  ui.referencias.dataset.expandido = referenciasExpandido ? "si" : "no";
+  ui.referenciasAmpliar.hidden = !referenciasAmpliable;
+  if (referenciasAmpliable) {
+    ui.referenciasAmpliar.setAttribute("aria-expanded", referenciasExpandido ? "true" : "false");
+    ui.referenciasAmpliar.textContent = referenciasExpandido
+      ? "Ver menos"
+      : `Ver las ${referenciasEnPantalla.length} por impacto`;
+  }
+
   ui.referenciasLista.replaceChildren();
-  for (const referencia of referencias) {
+  for (const referencia of lista) {
     const item = document.createElement("li");
     const enlace = document.createElement("a");
     enlace.href = referencia.enlace;
@@ -871,13 +1288,25 @@ function mostrarReferencias(referencias) {
 
     const pie = document.createElement("span");
     pie.className = "referencia-pie";
-    pie.textContent = [referencia.autores, referencia.revista, referencia.anio]
-      .filter(Boolean).join(" · ");
+    const partes = [referencia.autores, referencia.revista, referencia.anio].filter(Boolean);
+    if (Number.isFinite(referencia.citas)) partes.push(`${referencia.citas} ${referencia.citas === 1 ? "cita" : "citas"}`);
+    if (referencia.registro) partes.push(`registro de ensayo${referencia.estado ? " · " + referencia.estado : ""}`);
+    else if (referencia.preprint) partes.push("preprint sin revisar");
+    else if (referencia.accesoAbierto) partes.push("acceso abierto");
+    pie.textContent = partes.join(" · ");
 
     item.append(enlace, pie);
+    // El factor de impacto va aparte y con color: es la señal por la que se
+    // reordena al ampliar, así que se ve de un vistazo.
+    if (Number.isFinite(referencia.impacto) && referencia.impacto > 0) {
+      const impacto = document.createElement("span");
+      impacto.className = "referencia-impacto";
+      impacto.textContent = ` · IF≈${referencia.impacto.toFixed(1)}`;
+      pie.append(impacto);
+    }
+
     ui.referenciasLista.append(item);
   }
-  ui.referencias.dataset.estado = "visible";
 }
 
 // Subtítulos e historial.
@@ -963,11 +1392,15 @@ function anotarTurno(texto) {
   }
 
   if (avisoActivo) avisoActivo = false;
-  ui.caption.textContent = texto;
+  // Catalina antepone a veces una etiqueta de tono —[Con calidez], [Con
+  // confianza]— que es una indicación interna, no algo para leer. Se quita del
+  // subtítulo y del historial; lo que se guarda es sólo lo que dijo.
+  const limpio = sinEtiquetas(texto);
+  ui.caption.textContent = limpio;
   ui.caption.dataset.visible = String(verSubtitulos);
 
   if (!turnoVivo) turnoVivo = crearTurno();
-  turnoVivo.texto.textContent = texto;
+  turnoVivo.texto.textContent = limpio;
 
   // Sólo se sigue el fondo si ya estábamos abajo: si la persona subió a releer
   // algo, el texto nuevo no le arrebata la posición.
@@ -975,7 +1408,18 @@ function anotarTurno(texto) {
   if (alFondo) ui.panelBody.scrollTop = ui.panelBody.scrollHeight;
 }
 
-function crearTurno() {
+// Quita las etiquetas de tono entre corchetes —[Con calidez]— y cualquier
+// corchete de indicación, incluido uno a medio llegar al final del stream, para
+// que no parpadee mientras se escribe. Deja sólo el texto hablado.
+function sinEtiquetas(texto) {
+  return String(texto)
+    .replace(/\[[^\]\n]{1,40}\]/g, "")   // etiquetas completas: [Con confianza]
+    .replace(/\[[^\]\n]{0,40}$/, "")     // una etiqueta aún sin cerrar al final
+    .replace(/\s{2,}/g, " ")
+    .replace(/^\s+/, "");
+}
+
+function crearTurno(deQuien = "Catalina") {
   ui.panelBody.querySelector(".panel-empty")?.remove();
 
   const nodo = document.createElement("article");
@@ -987,7 +1431,7 @@ function crearTurno() {
 
   const quien = document.createElement("span");
   quien.className = "turno-quien";
-  quien.textContent = "Catalina";
+  quien.textContent = deQuien;
 
   const hora = document.createElement("time");
   hora.className = "turno-hora";
@@ -1002,6 +1446,16 @@ function crearTurno() {
   nodo.append(cabecera, texto);
   ui.panelBody.append(nodo);
   return { nodo, texto };
+}
+
+// Estas notas —por qué se cerró la sesión, qué activar en el panel del agente—
+// son de uso interno: sirven para diagnosticar, no para el usuario final, así
+// que NO se escriben en el historial de la conversación. Quedan en la consola
+// para quien esté depurando; la orientación que sí debe ver el usuario llega por
+// otro lado (onHelp/onFailure, que la muestran de forma transitoria).
+function anotarNota(texto) {
+  if (!texto) return;
+  console.info("[nota interna]", texto);
 }
 
 function cerrarTurno() {
@@ -1021,6 +1475,7 @@ fijarPanel(verPanel);
 fetch("/health")
   .then(respuesta => respuesta.json())
   .then(estado => {
+    disponible.elevenlabs = Boolean(estado.proveedores?.elevenlabs);
     disponible.openai = Boolean(estado.proveedores?.openai);
     disponible.gemini = Boolean(estado.proveedores?.gemini);
   })
@@ -1089,9 +1544,33 @@ function resize() {
   viewport = { width: innerWidth, height: innerHeight, pixelRatio };
 }
 
+// Boca guiada por la alineación del agente, cuando el proveedor la manda.
+//
+// El analizador sigue mandando en una cosa —cuánta voz hay ahora mismo— y la
+// alineación en la otra —qué sonido es—. Se mezclan así porque cada uno acierta
+// en lo suyo: la energía sabe de silencios y de acentos, y la alineación sabe
+// que una /u/ redondea aunque suene flojito.
+//
+// Si no hay alineación (los otros proveedores, o un trozo sin ella) no se toca
+// nada y la boca se deduce del espectro, como siempre.
+function aplicarBocaAlineada(reading) {
+  const postura = sesion?.posturaDeBoca?.();
+  if (!postura) return;
+
+  // Con la voz apagada la boca se cierra aunque la alineación diga otra cosa:
+  // el final de una palabra no es el final del sonido.
+  const fuerza = Math.min(1, reading.energy * 3.2);
+  reading.open = postura.open * fuerza;
+  reading.spread = postura.spread;
+  reading.round = postura.round;
+  reading.press = Math.max(reading.press, postura.press * fuerza);
+  reading.alineada = true;
+}
+
 function render(now) {
   const reading = connected ? voice.read(now) : null;
   if (reading) seguirFinDeTurno(reading, now);
+  if (reading) aplicarBocaAlineada(reading);
   const pose = director.update(now, reading);
   renderer.draw(ctx, viewport, pose);
   requestAnimationFrame(render);

@@ -1,10 +1,34 @@
 {
-  "headers": [
+  "version": 2,
+  "builds": [
     {
-      "source": "/(.*)",
-      "headers": [
-        { "key": "X-Content-Type-Options", "value": "nosniff" }
-      ]
+      "src": "api/index.mjs",
+      "use": "@vercel/node"
+    },
+    {
+      "src": "public/**",
+      "use": "@vercel/static"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/(.*)",
+      "headers": {
+        "X-Content-Type-Options": "nosniff"
+      },
+      "continue": true
+    },
+    {
+      "src": "/(health|session|gemini/token|elevenlabs/sesion|elevenlabs/registrar-herramientas|imagen-medica|referencias|web/buscar|web/leer|imagen/generar|videos/buscar|imagenes/buscar|imagenes/web|fuentes-clinicas|img|salud|ruta|correo|conector|llamada|llamada/.*|admin/.*|telefonia/.*)",
+      "dest": "/api/index.mjs"
+    },
+    {
+      "src": "/",
+      "dest": "/public/index.html"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "/public/$1"
     }
   ]
 }

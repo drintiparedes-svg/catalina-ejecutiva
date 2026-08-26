@@ -13,9 +13,14 @@
 //   · **Re-precargar sólo al empezar.** Exigir el colchón otra vez después de
 //     cada apuro momentáneo metía 120 ms de silencio cada vez. Sólo se espera
 //     al principio de cada turno.
+//
+// Además lleva la cuenta de las muestras que de verdad han salido, y la avisa
+// al hilo principal. Ése es el reloj con el que se mueve la boca: el audio llega
+// a ráfagas y por delante, así que un reloj de pared la adelantaría.
 
 const INICIAL = 24000 * 10;       // diez segundos para empezar
 const PRECARGA = 24000 * 0.12;    // 120 ms antes del primer sonido de cada turno
+const AVISO = 24000 * 0.02;       // cada 20 ms se dice por dónde va la reproducción
 
 class ReproductorPcm extends AudioWorkletProcessor {
   constructor() {
@@ -24,6 +29,8 @@ class ReproductorPcm extends AudioWorkletProcessor {
     this.escritura = 0;
     this.lectura = 0;
     this.arrancado = false;
+    this.reproducidas = 0;      // muestras que ya sonaron, no las encoladas
+    this.avisadas = 0;
 
     this.port.onmessage = ({ data }) => {
       if (data.tipo === "audio") return this.#guardar(data.muestras);
@@ -32,6 +39,11 @@ class ReproductorPcm extends AudioWorkletProcessor {
       if (data.tipo === "callar") {
         this.lectura = this.escritura = 0;
         this.arrancado = false;
+        // El reloj se reinicia con el silencio: lo que venga después es otro
+        // turno y su alineación vuelve a empezar en cero.
+        this.reproducidas = 0;
+        this.avisadas = 0;
+        this.port.postMessage({ tipo: "reloj", muestras: 0, reinicio: true });
       }
     };
   }
@@ -87,9 +99,18 @@ class ReproductorPcm extends AudioWorkletProcessor {
       if (this.lectura !== this.escritura) {
         canal[i] = this.buffer[this.lectura];
         this.lectura = (this.lectura + 1) % this.buffer.length;
+        this.reproducidas += 1;
       } else {
-        canal[i] = 0;
+        canal[i] = 0;   // silencio de relleno: no cuenta como audio sonado
       }
+    }
+
+    // Se avisa cada 20 ms y no en cada bloque: a 128 muestras por bloque serían
+    // casi doscientos mensajes por segundo para mover una boca que se dibuja
+    // sesenta veces.
+    if (this.reproducidas - this.avisadas >= AVISO) {
+      this.avisadas = this.reproducidas;
+      this.port.postMessage({ tipo: "reloj", muestras: this.reproducidas });
     }
     return true;
   }

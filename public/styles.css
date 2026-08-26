@@ -119,6 +119,18 @@ h1 { margin: 0; font-size: clamp(26px, 4vw, 44px); font-weight: 420; letter-spac
 .imagen[data-estado="visible"] img { display: block; }
 .imagen figcaption { display: block; margin: 9px 3px 3px; color: rgba(233,246,252,.8); font-size: 12.5px; line-height: 1.45; }
 .imagen[data-estado="cargando"] figcaption { display: none; }
+/* Rejilla de resultados: tira de miniaturas bajo la imagen grande. Cargan
+   directo desde la fuente —el servidor no las toca— y al tocar una, esa pasa a
+   ser la grande. Sólo aparece cuando hay más de un resultado. */
+.imagen-galeria { display: none; grid-template-columns: repeat(4, 1fr); gap: 5px; margin-top: 9px; }
+.imagen[data-estado="visible"] .imagen-galeria:not([hidden]) { display: grid; }
+.imagen-galeria img {
+  width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 7px; padding: 0;
+  background: #fff; cursor: pointer; border: 2px solid transparent; opacity: .78;
+  transition: opacity .15s ease, border-color .15s ease;
+}
+.imagen-galeria img:hover { opacity: 1; }
+.imagen-galeria img[aria-current="true"] { opacity: 1; border-color: rgba(115,245,255,.75); }
 #imagenCredito { display: block; margin-top: 4px; color: rgba(140,200,225,.72); font-size: 11px; text-decoration: none; }
 #imagenCredito:hover { text-decoration: underline; }
 
@@ -256,3 +268,9 @@ button.primary { border-color: rgba(109,228,255,.45); background: linear-gradien
 .oyendo-punto { flex: none; width: 7px; height: 7px; border-radius: 50%; background: #34C759; animation: pulse 1.8s infinite; }
 .oyendo[data-estado="problema"] .oyendo-punto { background: #FF9F0A; animation: none; }
 .oyendo[data-estado="respondiendo"] .oyendo-punto { background: #73f5ff; }
+
+.referencias-controles { display: flex; align-items: center; gap: 6px; }
+.referencias-ampliar { min-height: 24px; padding: 2px 9px; border-radius: 8px; border: 1px solid rgba(169,216,236,.35); background: transparent; color: #a9d8ec; font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; cursor: pointer; }
+.referencias-ampliar:hover { background: rgba(169,216,236,.12); }
+.referencias[data-expandido="si"] { max-height: 72dvh; }
+.referencia-impacto { color: #8fd0b0; }

@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Catalina — diagnóstico</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    margin: 0; padding: 2rem 1.25rem 4rem;
+    font: 16px/1.6 ui-sans-serif, system-ui, -apple-system, sans-serif;
+    background: #0F1116; color: #E4E7ED;
+  }
+  main { max-width: 44rem; margin: 0 auto; }
+  h1 { font-size: 1.5rem; margin: 0 0 .3rem; }
+  .sub { color: #8B93A3; margin: 0 0 2rem; }
+  .paso {
+    border: 1px solid #262A33; border-radius: 10px;
+    padding: 1rem 1.15rem; margin-bottom: .85rem; background: #171A21;
+  }
+  .paso h2 { font-size: 1rem; margin: 0 0 .5rem; display: flex; gap: .55rem; align-items: baseline; }
+  .marca { font-size: 1.05rem; }
+  .bien { color: #6FD08C; } .mal { color: #FF7A6B; } .espera { color: #F5BD4F; }
+  .detalle { margin: 0; color: #A8B0BE; font-size: .93rem; }
+  .detalle + .detalle { margin-top: .4rem; }
+  code {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: .86em;
+    background: #22262F; padding: .12em .4em; border-radius: 4px; color: #D6DBE4;
+  }
+  #veredicto {
+    margin-top: 1.75rem; padding: 1.2rem 1.35rem; border-radius: 10px;
+    border: 1px solid #3A2A22; background: #241A15; font-size: 1.02rem;
+  }
+  #veredicto.ok { border-color: #1E4030; background: #14251C; }
+  #veredicto h2 { margin: 0 0 .5rem; font-size: 1.05rem; }
+  #veredicto p { margin: 0 0 .6rem; } #veredicto p:last-child { margin: 0; }
+  button {
+    font: inherit; font-weight: 600; margin-top: 2rem;
+    background: #2C6E72; color: #fff; border: 0; border-radius: 8px;
+    padding: .6rem 1.1rem; cursor: pointer;
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>Diagnóstico de Catalina</h1>
+  <p class="sub">Comprueba el camino entero hasta ElevenLabs y dice dónde se corta. Hazle una captura y mándala.</p>
+  <p class="sub" style="font-size:.85rem;opacity:.7">Página del <b>2026-08-24.24</b>. El paso 1 debe decir esta misma fecha; si dice otra, el despliegue no tomó.</p>
+
+  <section class="paso" id="p1"><h2><span class="marca espera">•</span> 1. El servidor responde</h2><p class="detalle">Comprobando…</p></section>
+  <section class="paso" id="p2"><h2><span class="marca espera">•</span> 2. Las claves están puestas</h2><p class="detalle">Esperando…</p></section>
+  <section class="paso" id="p3"><h2><span class="marca espera">•</span> 3. ElevenLabs firma la sesión</h2><p class="detalle">Esperando…</p></section>
+  <section class="paso" id="p4"><h2><span class="marca espera">•</span> 4. La conversación abre</h2><p class="detalle">Esperando…</p></section>
+
+  <div id="veredicto"><h2>Diagnóstico</h2><p>Ejecutando las comprobaciones…</p></div>
+  <button onclick="location.reload()">Volver a comprobar</button>
+  <p class="sub" style="margin-top:1.5rem;font-size:.9rem">¿Imágenes y videos? Pruébalos directo en <a href="/medios.html" style="color:#7FC8CC">/medios.html</a>.</p>
+</main>
+
+<script type="module">
+// Cada paso depende del anterior, así que en cuanto uno falla se para: seguir
+// comprobando sobre una base rota sólo produce errores que despistan.
+const pasos = { 1: "#p1", 2: "#p2", 3: "#p3", 4: "#p4" };
+
+function marcar(n, estado, ...lineas) {
+  const caja = document.querySelector(pasos[n]);
+  const marca = caja.querySelector(".marca");
+  marca.className = "marca " + (estado === "bien" ? "bien" : estado === "mal" ? "mal" : "espera");
+  marca.textContent = estado === "bien" ? "✓" : estado === "mal" ? "✕" : "•";
+  caja.querySelectorAll(".detalle").forEach(n => n.remove());
+  for (const linea of lineas) {
+    const p = document.createElement("p");
+    p.className = "detalle";
+    p.innerHTML = linea;
+    caja.append(p);
+  }
+}
+
+function veredicto(ok, titulo, ...parrafos) {
+  const caja = document.querySelector("#veredicto");
+  caja.className = ok ? "ok" : "";
+  caja.innerHTML = `<h2>${titulo}</h2>` + parrafos.map(p => `<p>${p}</p>`).join("");
+}
+
+function saltar(desde) {
+  for (let n = desde; n <= 4; n += 1) marcar(n, "espera", "No se llegó a comprobar.");
+}
+
+// 1 y 2 — el servidor y las claves.
+//
+// La petición se envuelve, pero el análisis de la respuesta no: un `throw`
+// dentro del mismo try lo atrapaba el catch de la red y lo pisaba con «el
+// servidor no responde», tapando justo el rastro que hace falta.
+let respuesta;
+let crudo;
+try {
+  respuesta = await fetch("/health");
+  crudo = await respuesta.text();
+} catch (error) {
+  marcar(1, "mal", "No se pudo llegar al servidor.", `<code>${error.message}</code>`);
+  saltar(2);
+  veredicto(false, "No hay servidor",
+    "La página se ve pero la parte que atiende peticiones no contesta.",
+    "En Vercel esto pasa cuando la función no llegó a desplegarse. En local, cuando cerraste la ventana del Terminal.");
+  throw error;
+}
+
+let salud = null;
+try { salud = JSON.parse(crudo); } catch {}
+
+// El caso más útil: la función arrancó mal y lo cuenta ella misma.
+if (salud?.code === "ARRANQUE_FALLIDO") {
+  marcar(1, "mal", "El servidor arrancó mal, y dijo por qué:",
+    `<code style="white-space:pre-wrap;display:block;padding:.7rem .8rem;line-height:1.55">${(salud.detalle ?? "").replace(/</g, "&lt;")}</code>`);
+  saltar(2);
+  veredicto(false, "El servidor no pudo arrancar",
+    "El rastro de arriba dice qué falló y en qué archivo. Mándamelo tal cual: con eso se arregla.");
+  throw new Error("arranque fallido");
+}
+
+// Ni JSON ni nada reconocible: la página de error de la plataforma.
+if (!salud) {
+  marcar(1, "mal",
+    `El servidor contestó ${respuesta.status}, pero no con datos: devolvió una página de error.`,
+    `<code>${crudo.slice(0, 160).replace(/</g, "&lt;")}</code>`);
+  saltar(2);
+  veredicto(false, "La función del servidor se está cayendo",
+    "La página se sirve bien, pero la parte que atiende peticiones muere al arrancar.",
+    "En Vercel el detalle está en el despliegue → pestaña <b>Logs</b> (o <b>Runtime Logs</b>).");
+  throw new Error("respuesta no reconocible");
+}
+
+marcar(1, "bien",
+  `Responde. Versión del código: <code>${salud.version ?? "(sin versión — es una copia anterior al 2026-08-23.4)"}</code>`);
+
+if (salud.proveedores?.elevenlabs) {
+  marcar(2, "bien", "La clave y el identificador del agente están puestos en el servidor.");
+} else {
+  marcar(2, "mal", "El servidor no ve <code>ELEVENLABS_API_KEY</code> o <code>ELEVENLABS_AGENT_ID</code>.");
+  saltar(3);
+  veredicto(false, "Faltan las claves en el servidor",
+    "En Vercel: <b>Settings → Environment Variables</b>, añade las dos, y después <b>Deployments → ⋯ → Redeploy</b>. Guardarlas no basta: sólo entran en el despliegue siguiente.",
+    "En local: borra el archivo <code>.env</code> y vuelve a abrir <code>start.command</code>.");
+  throw new Error("sin claves");
+}
+
+// 3 — la firma.
+let sesion;
+try {
+  const r = await fetch("/elevenlabs/sesion", { method: "POST" });
+  const cuerpo = await r.json();
+  if (!r.ok) {
+    marcar(3, "mal", `ElevenLabs o el servidor rechazaron la petición (${r.status}).`,
+      `<code>${cuerpo.error ?? "sin detalle"}</code>`);
+    saltar(4);
+    // La pista sólo se da cuando encaja. Repetir lo del identificador ante un
+    // fallo de red manda a arreglar lo que no está roto.
+    const sobreLaClave = /clave|sk_|key/i.test(cuerpo.error ?? "");
+    veredicto(false, "ElevenLabs no firmó la sesión", cuerpo.error ?? "",
+      sobreLaClave
+        ? "Lo más común: se copió el identificador de la clave, el que aparece en la lista de API Keys, en vez de la clave, que empieza por <code>sk_</code> y sólo se ve al crearla."
+        : "Ese texto de arriba, tal cual, es lo que hay que arreglar.");
+    throw new Error(cuerpo.error);
+  }
+  sesion = cuerpo;
+  const dominio = new URL(sesion.url).host;
+  marcar(3, "bien", `Firmada. La conversación se abrirá contra <code>${dominio}</code>.`);
+} catch (error) {
+  if (!document.querySelector("#p3 .mal")) {
+    marcar(3, "mal", "No se pudo pedir la sesión.", `<code>${error.message}</code>`);
+    saltar(4);
+    veredicto(false, "No se pudo pedir la sesión al servidor", error.message);
+  }
+  throw error;
+}
+
+// 4 — el socket, que es donde se cortaba sin decir nada.
+const resultado = await new Promise(resolver => {
+  const socket = new WebSocket(sesion.url);
+  let confirmada = false;
+  const corte = setTimeout(() => { try { socket.close(); } catch {} ; resolver({ tipo: "tiempo" }); }, 12000);
+
+  socket.addEventListener("open", () => socket.send(JSON.stringify(sesion.inicio)));
+  socket.addEventListener("message", evento => {
+    let mensaje = {};
+    try { mensaje = JSON.parse(evento.data); } catch { return; }
+    if (mensaje.type === "conversation_initiation_metadata") {
+      confirmada = true;
+      clearTimeout(corte);
+      try { socket.close(1000, "diagnóstico terminado"); } catch {}
+      resolver({ tipo: "ok", meta: mensaje.conversation_initiation_metadata_event ?? {} });
+    }
+  });
+  socket.addEventListener("close", evento => {
+    if (confirmada) return;
+    clearTimeout(corte);
+    resolver({ tipo: "cerrado", codigo: evento.code, motivo: evento.reason });
+  });
+  socket.addEventListener("error", () => {});
+});
+
+if (resultado.tipo === "ok") {
+  marcar(4, "bien",
+    `ElevenLabs aceptó la conversación.`,
+    `Audio a <code>${resultado.meta.agent_output_audio_format ?? "?"}</code>, micrófono a <code>${resultado.meta.user_input_audio_format ?? "?"}</code>.`);
+  veredicto(true, "Todo bien",
+    "El camino entero funciona: servidor, claves, firma y conversación.",
+    "Esta comprobación cuenta como una conversación, así que ya debería aparecer en <b>elevenlabs.io → Agents → tu agente → Conversations</b>.");
+} else if (resultado.tipo === "tiempo") {
+  marcar(4, "mal", "Se abrió pero ElevenLabs no confirmó en 12 segundos.");
+  veredicto(false, "ElevenLabs no contesta",
+    "La conexión se abre pero no llega la confirmación. Suele ser un problema momentáneo de su servicio, o una red que bloquea WebSockets.");
+} else {
+  marcar(4, "mal",
+    `ElevenLabs cerró la conexión. Código <code>${resultado.codigo}</code>.`,
+    resultado.motivo ? `Motivo: <code>${resultado.motivo}</code>` : "No dio ningún motivo.");
+  veredicto(false, "ElevenLabs corta la conversación al abrirla",
+    resultado.motivo ? `Su motivo: <b>${resultado.motivo}</b>` : "Cerró sin decir por qué.",
+    "Las tres causas habituales: el agente no permite sobrescribir su configuración —se activa en tu agente → <b>Security</b>, los interruptores de prompt, idioma y voz—; la cuenta no tiene crédito o minutos; o el agente está sin publicar.");
+}
+</script>
+</body>
+</html>
