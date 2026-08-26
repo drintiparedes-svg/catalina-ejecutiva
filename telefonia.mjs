@@ -52,6 +52,19 @@ export function revisarNumero(numero) {
   if (!E164.test(limpio)) {
     return { ok: false, error: "El número debe ir en formato internacional, por ejemplo +56912345678." };
   }
+  // Chequeo específico para Chile: un número nacional tiene 9 dígitos después de
+  // +56 (los móviles son +569 y ocho más). Atrapa el dígito perdido —típico al
+  // dictar por voz, como +5668343565 en vez de +56968343565— ANTES de marcar y
+  // gastar la llamada. Sólo afecta a +56; el resto pasa como antes.
+  if (limpio.startsWith("+56")) {
+    const nacional = limpio.slice(3);
+    if (nacional.length !== 9) {
+      return {
+        ok: false,
+        error: "Ese número chileno parece incompleto: después de +56 deben ir 9 dígitos (los móviles son +569 y ocho más). Confírmalo y vuelve a intentar."
+      };
+    }
+  }
   const { permitidos } = config();
   if (permitidos.length && !permitidos.includes(limpio)) {
     return {
