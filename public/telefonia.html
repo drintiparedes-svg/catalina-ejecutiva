@@ -27,7 +27,7 @@
 <main>
   <h1>Telefonía de Catalina</h1>
   <p class="sub">Comprueba que ElevenLabs reconoce tu número —sin gastar una llamada— y deja hacer una llamada de prueba a tu propio teléfono.</p>
-  <p class="sub" style="font-size:.85rem;opacity:.7">Página del <b>2026-08-24.19</b>.</p>
+  <p class="sub" style="font-size:.85rem;opacity:.7">Página del <b>2026-08-24.20</b>.</p>
 
   <section class="paso" id="p0"><h2><span class="marca espera">•</span> 1. Configuración y número</h2><p class="detalle">Comprobando…</p></section>
 
@@ -66,8 +66,12 @@ try {
   } else if (!d.ok) {
     marcar("mal", "La configuración está, pero ElevenLabs rechazó la consulta:", `<code>${esc(d.error)}</code>`);
   } else if (!d.numeroReconocido) {
-    marcar("mal", `ElevenLabs respondió (${d.cuantosNumeros} número(s) en la cuenta), pero ninguno coincide con tu <code>ELEVENLABS_PHONE_NUMBER_ID</code>.`,
-      "Revisa que copiaste el id correcto del número importado.");
+    const reales = (d.numeros || []).filter(n => n.id).map(n =>
+      `<code>${esc(n.id)}</code>${n.numero ? " (" + esc(n.numero) + ")" : ""}`).join("<br>");
+    marcar("mal",
+      `ElevenLabs ve ${d.cuantosNumeros} número(s), pero el id que pusiste (<code>${esc(d.idConfigurado)}</code>) no coincide con ninguno.`,
+      reales ? `El id que <b>sí</b> debes poner en <code>ELEVENLABS_PHONE_NUMBER_ID</code> es:<br>${reales}` : "No pude leer el id real del número; mándame la respuesta del diagnóstico.",
+      "Cámbialo en Vercel → Environment Variables, haz Redeploy, y vuelve a probar aquí.");
   } else {
     const lineas = [
       `Número reconocido por ElevenLabs: <b class="bien">${esc(d.numero || "sí")}</b>.`,

@@ -166,9 +166,20 @@ export async function diagnosticoElevenLabs() {
   }
 
   const lista = Array.isArray(datos) ? datos : (datos.phone_numbers || datos.items || []);
+  // El id puede venir con distintos nombres según la versión de la API.
+  const idDe = n => n?.phone_number_id ?? n?.phoneNumberId ?? n?.id ?? n?.phone_id ?? null;
+  const agenteDe = n => n?.assigned_agent?.agent_id ?? n?.assignedAgent?.agentId ?? n?.agent_id ?? null;
+
+  // Se listan los números REALES con su id, para poder copiar el correcto.
+  const numeros = lista.map(n => ({
+    id: idDe(n),
+    numero: n?.phone_number ?? n?.phoneNumber ?? n?.label ?? null,
+    agente: agenteDe(n)
+  }));
+
   const id = numeroId();
-  const hallado = lista.find(n => (n.phone_number_id || n.id) === id);
-  const asignado = hallado?.assigned_agent?.agent_id || hallado?.agent_id || null;
+  const hallado = lista.find(n => idDe(n) === id);
+  const asignado = hallado ? agenteDe(hallado) : null;
   return {
     ok: true,
     configurado: true,
@@ -178,6 +189,10 @@ export async function diagnosticoElevenLabs() {
     // null = el número no tiene agente asignado; conviene asignarlo en el panel.
     agenteCoincide: asignado ? asignado === agente() : null,
     cuantosNumeros: lista.length,
+    // La lista real: si el id no coincide, aquí está el que SÍ hay que usar.
+    numeros,
+    // El id que el servidor tiene puesto ahora, para compararlo de un vistazo.
+    idConfigurado: id,
     listaBlanca: (process.env.TELEFONO_PERMITIDOS || "").split(",").map(s => s.trim()).filter(Boolean)
   };
 }
