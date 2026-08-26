@@ -747,6 +747,8 @@ async function llamarPorTelefono(argumentos) {
       body: JSON.stringify({
         numero: argumentos.numero,
         objetivo: argumentos.objetivo,
+        a_quien: argumentos.a_quien,
+        restricciones: argumentos.restricciones,
         confirmado: argumentos.confirmado === true
       })
     });

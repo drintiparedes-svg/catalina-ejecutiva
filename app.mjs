@@ -19,7 +19,7 @@ import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // Se sube a mano con cada arreglo que el usuario tiene que descargar.
-export const VERSION = "2026-08-24.17";
+export const VERSION = "2026-08-24.18";
 
 const root = fileURLToPath(new URL("./public", import.meta.url));
 // El .env se lee de forma síncrona a propósito. Con `await` aquí arriba, en el
@@ -571,6 +571,14 @@ const PARAMETROS_LLAMADA = {
         + "«pedir hora con el traumatólogo para la próxima semana», "
         + "«preguntar si tienen metformina de 850 miligramos»."
     },
+    a_quien: {
+      type: "string",
+      description: "A quién o dónde se llama: «la clínica Dávila», «la farmacia Cruz Verde de Ñuñoa». Opcional pero útil."
+    },
+    restricciones: {
+      type: "string",
+      description: "Preferencias o restricciones relevantes: «sólo por la mañana», «que sea con la doctora Soto», «presupuesto máximo 30 mil». Opcional."
+    },
     confirmado: {
       type: "boolean",
       description: "Verdadero sólo después de haber repetido en voz alta el número y el objetivo "
@@ -580,9 +588,12 @@ const PARAMETROS_LLAMADA = {
   required: ["numero", "objetivo", "confirmado"]
 };
 
-const DESCRIPCION_LLAMADA = "Llama por teléfono en nombre de la persona para gestionar algo concreto. "
-  + "Antes de usarla, repite en voz alta a quién vas a llamar y para qué, y espera que te lo confirmen. "
-  + "Devuelve un identificador; consulta después consultar_llamada para saber cómo terminó.";
+const DESCRIPCION_LLAMADA = "Llama por teléfono en representación de la persona para resolver una gestión concreta "
+  + "—agendar, pedir información, hacer seguimiento, coordinar o resolver un trámite—. "
+  + "Antes de usarla reúne y confirma lo necesario: a quién o dónde llamar, el número, qué resultado se busca y las restricciones; "
+  + "repite en voz alta el número y el objetivo y espera un sí. El agente que llama se presenta como asistente, nunca suplanta a la persona, "
+  + "y no autoriza pagos, contratos ni entrega datos sensibles. Devuelve un identificador; consulta después consultar_llamada, "
+  + "y al terminar informa el resultado (estado, objetivo, resultado, datos y próximo paso).";
 
 const PARAMETROS_ESTADO_LLAMADA = {
   type: "object",
@@ -1586,7 +1597,14 @@ async function pedirLlamada(req, res) {
   if (porElevenLabs) {
     return json(res, 200, await originarLlamadaElevenLabs({
       numero: peticion.numero,
-      objetivo: peticion.objetivo
+      objetivo: peticion.objetivo,
+      aQuien: peticion.a_quien,
+      restricciones: peticion.restricciones,
+      // El contexto de la persona y el guion salen de la configuración, no del
+      // modelo: es lo que separa una herramienta que ejecuta de una que decide.
+      dePartede: telefono.dePartede,
+      guion: telefono.guion,
+      enviarGuion: telefono.enviarGuion === true
     }));
   }
 

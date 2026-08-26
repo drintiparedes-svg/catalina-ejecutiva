@@ -33,7 +33,9 @@ function recordar(id, datos) {
 }
 
 const clave = () => process.env.ELEVENLABS_API_KEY?.trim();
-const agente = () => process.env.ELEVENLABS_AGENT_ID?.trim();
+// Se puede dedicar un agente sólo para las llamadas (con el guion de gestión) y
+// dejar el del navegador para conversar. Si no se define, se usa el mismo.
+const agente = () => process.env.ELEVENLABS_CALL_AGENT_ID?.trim() || process.env.ELEVENLABS_AGENT_ID?.trim();
 const numeroId = () => process.env.ELEVENLABS_PHONE_NUMBER_ID?.trim();
 
 // Lista si están la clave, el agente y el número importado. Sin el número no se
@@ -51,23 +53,37 @@ function normalizarEstado(bruto) {
   return s || "desconocido";
 }
 
-// Lanza la llamada. El objetivo viaja como variable dinámica para que el agente
-// sepa qué conseguir; requiere que el prompt del agente use {{objetivo}} o que
-// ElevenLabs lo inyecte como contexto de la conversación.
-export async function originarLlamadaElevenLabs({ numero, objetivo }) {
+// Lanza la llamada. El objetivo y el contexto viajan como VARIABLES DINÁMICAS
+// —objetivo, a_quien, de_parte_de, restricciones—: el prompt del agente de
+// llamadas las usa como {{objetivo}}, {{a_quien}}, etc. Este mecanismo no
+// depende de que el agente permita sobrescribir el prompt, así que es fiable.
+// Si además se pasa `guion` con `enviarGuion` en verdadero, se manda como
+// override del prompt (sólo funciona si el agente lo permite en su Security).
+export async function originarLlamadaElevenLabs({ numero, objetivo, aQuien, restricciones, dePartede, guion, enviarGuion }) {
   if (!telefoniaElevenLabsLista()) {
     return { ok: false, error: "Falta ELEVENLABS_PHONE_NUMBER_ID (o la clave/el agente): no hay número para marcar.", code: "SIN_NUMERO" };
   }
   const revisado = revisarNumero(numero);
   if (!revisado.ok) return { ok: false, error: revisado.error, code: "NUMERO_INVALIDO" };
 
+  const inicio = {
+    dynamic_variables: {
+      objetivo: String(objetivo || "").trim(),
+      a_quien: String(aQuien || "").trim(),
+      de_parte_de: String(dePartede || "").trim(),
+      restricciones: String(restricciones || "").trim()
+    }
+  };
+  // Override del guion, sólo si se pide expresamente (el agente debe permitirlo).
+  if (enviarGuion && guion) {
+    inicio.conversation_config_override = { agent: { prompt: { prompt: String(guion) } } };
+  }
+
   const cuerpo = {
     agent_id: agente(),
     agent_phone_number_id: numeroId(),
     to_number: revisado.numero,
-    conversation_initiation_client_data: {
-      dynamic_variables: { objetivo: String(objetivo || "").trim() }
-    }
+    conversation_initiation_client_data: inicio
   };
 
   let respuesta, crudo;
