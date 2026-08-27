@@ -203,6 +203,13 @@ export async function diagnosticoElevenLabs() {
     numeros,
     // El id que el servidor tiene puesto ahora, para compararlo de un vistazo.
     idConfigurado: id,
+    // Qué agente HABLA por teléfono, y si es uno dedicado y liviano (recomendado
+    // para que la voz no se entrecorte) o el mismo del navegador cargado de
+    // herramientas. `agenteDedicado` es true sólo si hay un ELEVENLABS_CALL_AGENT_ID
+    // propio y distinto del agente del navegador.
+    agenteLlamadas: agente(),
+    agenteDedicado: Boolean(process.env.ELEVENLABS_CALL_AGENT_ID?.trim()
+      && process.env.ELEVENLABS_CALL_AGENT_ID.trim() !== process.env.ELEVENLABS_AGENT_ID?.trim()),
     listaBlanca: (process.env.TELEFONO_PERMITIDOS || "").split(",").map(s => s.trim()).filter(Boolean)
   };
 }
