@@ -81,8 +81,8 @@ try {
       d.listaBlanca.length ? `Lista blanca activa: sólo se puede llamar a <code>${esc(d.listaBlanca.join(", "))}</code>.`
         : `<b class="espera">Sin lista blanca</b> (TELEFONO_PERMITIDOS vacío): puede marcar a cualquier número. Pon tu móvil para las pruebas.`,
       d.agenteDedicado
-        ? `Agente de llamadas: <b class="bien">dedicado</b> (<code>${esc(d.agenteLlamadas)}</code>). Bien: uno liviano habla más fluido por teléfono.`
-        : `<b class="espera">El agente de llamadas es el del navegador</b> (<code>${esc(d.agenteLlamadas)}</code>). Para que la voz no se entrecorte, crea un agente aparte (voz Flash v2.5, sin herramientas) y ponlo en <code>ELEVENLABS_CALL_AGENT_ID</code>.`
+        ? `Agente de llamadas: <b class="bien">dedicado</b> (<code>${esc(d.agenteLlamadas)}</code>).`
+        : `Agente de llamadas: <b class="bien">el mismo del navegador</b> (<code>${esc(d.agenteLlamadas)}</code>), con el guion de llamada aplicado por override en cada llamada. Correcto. (Un agente aparte en <code>ELEVENLABS_CALL_AGENT_ID</code> es opcional, sólo si más adelante quieres afinar la voz por separado.)`
     ];
     marcar(d.agenteCoincide === true ? "bien" : "espera", ...lineas);
   }

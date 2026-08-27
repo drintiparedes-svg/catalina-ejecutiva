@@ -20,7 +20,7 @@ import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // Se sube a mano con cada arreglo que el usuario tiene que descargar.
-export const VERSION = "2026-08-27.4";
+export const VERSION = "2026-08-27.5";
 
 const root = fileURLToPath(new URL("./public", import.meta.url));
 // El .env se lee de forma síncrona a propósito. Con `await` aquí arriba, en el
@@ -1637,11 +1637,13 @@ async function pedirLlamada(req, res) {
       objetivo: peticion.objetivo,
       aQuien: peticion.a_quien,
       restricciones: peticion.restricciones,
-      // El contexto de la persona y el guion salen de la configuración, no del
-      // modelo: es lo que separa una herramienta que ejecuta de una que decide.
+      // El contexto de la persona, el guion y el saludo salen de la
+      // configuración, no del modelo: es lo que separa una herramienta que
+      // ejecuta de una que decide.
       dePartede: telefono.dePartede,
       guion: telefono.guion,
-      enviarGuion: telefono.enviarGuion === true
+      enviarGuion: telefono.enviarGuion === true,
+      saludo: telefono.saludoLlamada
     }));
   }
 

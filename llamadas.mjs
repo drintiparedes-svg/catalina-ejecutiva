@@ -80,7 +80,7 @@ function normalizarEstado(bruto) {
 // depende de que el agente permita sobrescribir el prompt, así que es fiable.
 // Si además se pasa `guion` con `enviarGuion` en verdadero, se manda como
 // override del prompt (sólo funciona si el agente lo permite en su Security).
-export async function originarLlamadaElevenLabs({ numero, objetivo, aQuien, restricciones, dePartede, guion, enviarGuion }) {
+export async function originarLlamadaElevenLabs({ numero, objetivo, aQuien, restricciones, dePartede, guion, enviarGuion, saludo }) {
   if (!telefoniaElevenLabsLista()) {
     return { ok: false, error: "Falta ELEVENLABS_PHONE_NUMBER_ID (o la clave/el agente): no hay número para marcar.", code: "SIN_NUMERO" };
   }
@@ -95,9 +95,14 @@ export async function originarLlamadaElevenLabs({ numero, objetivo, aQuien, rest
       restricciones: String(restricciones || "").trim()
     }
   };
-  // Override del guion, sólo si se pide expresamente (el agente debe permitirlo).
-  if (enviarGuion && guion) {
-    inicio.conversation_config_override = { agent: { prompt: { prompt: String(guion) } } };
+  // Override sólo para esta llamada (no toca la sesión del navegador): el guion
+  // como prompt y, si hay, el saludo como primera frase. El agente ya permite
+  // override —la sesión del navegador lo usa igual—.
+  if ((enviarGuion && guion) || saludo) {
+    const agent = {};
+    if (enviarGuion && guion) agent.prompt = { prompt: String(guion) };
+    if (saludo) agent.first_message = String(saludo);
+    inicio.conversation_config_override = { agent };
   }
 
   const cuerpo = {
