@@ -13,13 +13,14 @@ import {
   firmaValida, atenderLlamadaEntrante, anotarEstadoTwilio
 } from "./telefonia.mjs";
 import {
-  telefoniaElevenLabsLista, originarLlamadaElevenLabs, estadoLlamadaElevenLabs, diagnosticoElevenLabs
+  telefoniaElevenLabsLista, originarLlamadaElevenLabs, estadoLlamadaElevenLabs,
+  terminarLlamadaElevenLabs, diagnosticoElevenLabs
 } from "./llamadas.mjs";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // Se sube a mano con cada arreglo que el usuario tiene que descargar.
-export const VERSION = "2026-08-27.1";
+export const VERSION = "2026-08-27.2";
 
 const root = fileURLToPath(new URL("./public", import.meta.url));
 // El .env se lee de forma síncrona a propósito. Con `await` aquí arriba, en el
@@ -199,6 +200,18 @@ export async function atender(req, res) {
 
     if (req.method === "POST" && req.url === "/llamada") {
       return await pedirLlamada(req, res);
+    }
+
+    // Colgar una llamada en curso de verdad (el botón rojo de la botonera).
+    if (req.method === "POST" && req.url === "/llamada/colgar") {
+      let cuerpo = {};
+      try { cuerpo = JSON.parse(await readBody(req) || "{}"); } catch {}
+      const id = String(cuerpo.id || "").trim();
+      if (!id) return json(res, 400, { ok: false, error: "Falta el identificador de la llamada." });
+      if (telefoniaElevenLabsLista()) {
+        return json(res, 200, await terminarLlamadaElevenLabs(id));
+      }
+      return json(res, 400, { ok: false, error: "Colgar desde aquí sólo está disponible con la telefonía de ElevenLabs." });
     }
 
     if (req.method === "GET" && req.url.startsWith("/llamada/")) {

@@ -331,13 +331,7 @@ ui.marcadorBorrar.addEventListener("click", () => {
 });
 ui.marcadorNumero.addEventListener("input", limpiarNumeroMarcador);
 ui.marcadorLlamar.addEventListener("click", () => lanzarLlamadaDesdeBotonera());
-ui.marcadorColgar.addEventListener("click", () => {
-  // No hay corte remoto de la llamada saliente desde aquí: se deja de seguir y
-  // se cierra la vista. La llamada la termina quien contesta o el propio agente.
-  detenerSondeo();
-  fijarFaseMarcador("fin", "Seguimiento detenido");
-  marcadorEnCurso(false);
-});
+ui.marcadorColgar.addEventListener("click", () => colgarLlamada());
 document.addEventListener("keydown", event => {
   if (event.target.matches("input, textarea")) return;
   const tecla = event.key.toLowerCase();
@@ -889,6 +883,7 @@ const FASES_LLAMADA = {
 };
 const EN_CURSO = new Set(["marcando", "conectando", "sonando", "en_curso", "contestada", "hablando"]);
 let sondeoLlamada = null;   // temporizador del sondeo en curso, para no solapar dos
+let llamadaActualId = null; // id de la llamada viva, para poder colgarla
 
 function abrirMarcador(numero = "", { objetivo } = {}) {
   detenerSondeo();
@@ -933,6 +928,7 @@ function detenerSondeo() {
 function seguirEstadoLlamada(id, objetivo, intento = 0) {
   detenerSondeo();
   if (!id || intento > 40) return;
+  llamadaActualId = id;
   sondeoLlamada = setTimeout(async () => {
     let datos = {};
     try { datos = await (await fetch(`/llamada/${encodeURIComponent(id)}`)).json(); } catch {}
@@ -940,6 +936,7 @@ function seguirEstadoLlamada(id, objetivo, intento = 0) {
       reflejarEstadoLlamada(datos.estado);
       if (!EN_CURSO.has(datos.estado)) {
         // Llegó a un estado final: se registra el desenlace y se deja de sondear.
+        llamadaActualId = null;
         mostrarLlamada({ estado: datos.estado, numero: ui.marcadorNumero.value, objetivo,
           resultado: datos.resumen ? { logrado: datos.estado === "terminada", detalle: datos.resumen } : undefined });
         return;
@@ -965,6 +962,32 @@ async function lanzarLlamadaDesdeBotonera() {
     seguirEstadoLlamada(datos.id, ui.marcador.dataset.objetivo);
   } catch {
     fijarFaseMarcador("error", "No se pudo llamar"); marcadorEnCurso(false);
+  }
+}
+
+// Cuelga la llamada en curso de verdad, pidiéndole al servidor que la termine.
+async function colgarLlamada() {
+  const id = llamadaActualId;
+  if (!id) { detenerSondeo(); fijarFaseMarcador("fin", "Sin llamada activa"); marcadorEnCurso(false); return; }
+  fijarFaseMarcador("conectando", "Colgando…");
+  try {
+    const r = await fetch("/llamada/colgar", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id })
+    });
+    const datos = await r.json().catch(() => ({}));
+    if (datos.ok) {
+      detenerSondeo();
+      llamadaActualId = null;
+      fijarFaseMarcador("fin", "Llamada terminada");
+      marcadorEnCurso(false);
+    } else {
+      // No se pudo colgar en el servidor: se dice por qué y se sigue el estado,
+      // que es la verdad de si la llamada sigue viva o no.
+      fijarFaseMarcador("error", datos.error || "No se pudo colgar");
+    }
+  } catch {
+    fijarFaseMarcador("error", "No se pudo colgar");
   }
 }
 

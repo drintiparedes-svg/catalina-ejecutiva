@@ -33,6 +33,16 @@ const RUTAS_LLAMADA = [
 ].filter(Boolean);
 const RUTAS_NUMEROS = ["/phone-numbers", "/phone_numbers"];
 
+// Rutas para COLGAR/terminar una conversación en curso. El nombre exacto puede
+// variar entre versiones de la API; se prueban en orden (env primero) y se usa
+// la primera que no devuelva 404. `{id}` se reemplaza por el id de la llamada.
+const RUTAS_COLGAR = [
+  process.env.ELEVENLABS_HANGUP_PATH?.trim(),
+  "/conversations/{id}/end",
+  "/twilio/outbound-call/{id}/end",
+  "/conversations/{id}/cancel"
+].filter(Boolean);
+
 // Seguimiento en memoria: id de la llamada → lo último que sabemos. Basta: una
 // llamada dura minutos y el navegador la consulta mientras tanto.
 const llamadas = new Map();
@@ -232,4 +242,50 @@ export async function estadoLlamadaElevenLabs(id) {
     || meta.phone_call?.error || meta.twilio?.error || "";
   recordar(id, { estado });
   return { ok: true, id, estado, resumen: resumen || undefined, motivo: motivo || undefined, enVivo: true };
+}
+
+// Cuelga una llamada en curso de verdad. Le pide a ElevenLabs que termine la
+// conversación; si su API no expone ninguna ruta conocida (todas dan 404), lo
+// dice claro para poder fijar la correcta en ELEVENLABS_HANGUP_PATH sin adivinar.
+export async function terminarLlamadaElevenLabs(id) {
+  if (!id) return { ok: false, error: "Falta el identificador de la llamada." };
+  if (!clave()) return { ok: false, error: "Falta ELEVENLABS_API_KEY.", code: "SIN_CLAVE" };
+  if (!RUTAS_COLGAR.length) {
+    return { ok: false, code: "SIN_RUTA_COLGAR",
+      error: "No hay ninguna ruta para colgar configurada. Pon la de tu API en ELEVENLABS_HANGUP_PATH (usa {id} donde va el identificador)." };
+  }
+
+  let respuesta, crudo = "", datos = {}, ruta;
+  for (ruta of RUTAS_COLGAR) {
+    const url = `${BASE}${ruta.replace("{id}", encodeURIComponent(id))}`;
+    try {
+      respuesta = await fetch(url, {
+        method: "POST",
+        headers: { "xi-api-key": clave(), "Content-Type": "application/json" },
+        body: "{}",
+        signal: AbortSignal.timeout(TIEMPO)
+      });
+      crudo = await respuesta.text();
+    } catch (error) {
+      return { ok: false, code: "SIN_RED",
+        error: error.name === "TimeoutError" ? "ElevenLabs tardó demasiado en colgar." : "No se pudo contactar a ElevenLabs para colgar." };
+    }
+    if (respuesta.status !== 404) break;   // 404 → probar la siguiente ruta
+  }
+
+  try { datos = JSON.parse(crudo); } catch {}
+
+  if (!respuesta.ok) {
+    const detalle = datos?.detail?.message || datos?.detail || datos?.message || crudo.slice(0, 200);
+    return {
+      ok: false,
+      code: respuesta.status === 404 ? "SIN_RUTA_COLGAR" : "ELEVENLABS_RECHAZO",
+      error: respuesta.status === 404
+        ? `ElevenLabs no reconoció ninguna ruta para colgar (probé: ${RUTAS_COLGAR.join(", ")}). Confirma el endpoint en el panel y ponlo en ELEVENLABS_HANGUP_PATH.`
+        : `ElevenLabs no pudo colgar (${respuesta.status})${detalle ? ": " + detalle : ""}.`
+    };
+  }
+
+  recordar(id, { estado: "terminada" });
+  return { ok: true, id, estado: "terminada" };
 }
