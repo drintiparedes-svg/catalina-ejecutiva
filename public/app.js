@@ -45,7 +45,17 @@ const ui = {
   mute: document.querySelector("#mute"),
   meetMode: document.querySelector("#meetMode"),
   exitMeet: document.querySelector("#exitMeet"),
-  audio: document.querySelector("#remoteAudio")
+  audio: document.querySelector("#remoteAudio"),
+  marcador: document.querySelector("#marcador"),
+  marcadorNumero: document.querySelector("#marcadorNumero"),
+  marcadorEstado: document.querySelector("#marcadorEstado"),
+  marcadorEstadoTexto: document.querySelector("#marcadorEstadoTexto"),
+  marcadorTeclas: document.querySelector("#marcadorTeclas"),
+  marcadorBorrar: document.querySelector("#marcadorBorrar"),
+  marcadorLlamar: document.querySelector("#marcadorLlamar"),
+  marcadorColgar: document.querySelector("#marcadorColgar"),
+  marcadorCerrar: document.querySelector("#marcadorCerrar"),
+  abrirMarcador: document.querySelector("#abrirMarcador")
 };
 
 const director = new PerformanceDirector();
@@ -304,6 +314,29 @@ ui.referenciasCerrar.addEventListener("click", () => {
 ui.referenciasAmpliar.addEventListener("click", () => {
   referenciasExpandido = !referenciasExpandido;
   pintarReferencias();
+});
+
+// Botonera de teléfono.
+ui.abrirMarcador.addEventListener("click", () => {
+  ui.marcador.dataset.estado === "visible" ? cerrarMarcador() : abrirMarcador("");
+});
+ui.marcadorCerrar.addEventListener("click", () => cerrarMarcador());
+ui.marcadorTeclas.addEventListener("click", event => {
+  const tecla = event.target.closest(".tecla");
+  if (tecla) pulsarTecla(tecla.dataset.d);
+});
+ui.marcadorBorrar.addEventListener("click", () => {
+  ui.marcadorNumero.value = ui.marcadorNumero.value.slice(0, -1);
+  ui.marcadorNumero.focus();
+});
+ui.marcadorNumero.addEventListener("input", limpiarNumeroMarcador);
+ui.marcadorLlamar.addEventListener("click", () => lanzarLlamadaDesdeBotonera());
+ui.marcadorColgar.addEventListener("click", () => {
+  // No hay corte remoto de la llamada saliente desde aquí: se deja de seguir y
+  // se cierra la vista. La llamada la termina quien contesta o el propio agente.
+  detenerSondeo();
+  fijarFaseMarcador("fin", "Seguimiento detenido");
+  marcadorEnCurso(false);
 });
 document.addEventListener("keydown", event => {
   if (event.target.matches("input, textarea")) return;
@@ -741,6 +774,10 @@ function mostrarLugares(datos) {
 // consulta, y se refleja en pantalla en qué va.
 async function llamarPorTelefono(argumentos) {
   setStatus("Llamando…");
+  // Se abre la botonera con el número pedido a la vista: así se ve a quién se
+  // está llamando y, enseguida, si la llamada se conecta.
+  abrirMarcador(argumentos.numero || "", { objetivo: argumentos.objetivo });
+  fijarFaseMarcador("conectando", "Marcando…");
   try {
     const respuesta = await fetch("/llamada", {
       method: "POST",
@@ -755,13 +792,18 @@ async function llamarPorTelefono(argumentos) {
     });
     const datos = await respuesta.json().catch(() => ({}));
     if (!datos.ok) {
+      fijarFaseMarcador("error", datos.error || "No se pudo iniciar la llamada");
+      marcadorEnCurso(false);
       setStatus("Te escucho");
       return datos;
     }
     mostrarLlamada({ estado: "marcando", numero: argumentos.numero, objetivo: argumentos.objetivo });
+    seguirEstadoLlamada(datos.id, argumentos.objetivo);   // sigue la conexión en vivo
     return datos;
   } catch (error) {
     console.error(error);
+    fijarFaseMarcador("error", "No se pudo iniciar la llamada");
+    marcadorEnCurso(false);
     setStatus("Te escucho");
     return { ok: false, error: "No se pudo iniciar la llamada" };
   }
@@ -823,6 +865,122 @@ function mostrarLlamada(datos) {
   ui.referencias.dataset.estado = "visible";
   referenciasEnPantalla = [];
   setStatus(ESTADOS_LLAMADA[datos.estado] || "Te escucho");
+}
+
+// ─── Botonera de teléfono ──────────────────────────────────────────────────
+//
+// Cada estado que devuelve el servidor —ya sea el vocabulario de ElevenLabs
+// (en_curso / terminada / fallo) o el del puente Twilio (marcando, sonando,
+// contestada…)— se traduce a una de cuatro FASES visibles, con su color y su
+// texto. Así el punto de arriba cuenta de un vistazo si se está conectando.
+const FASES_LLAMADA = {
+  marcando:        { fase: "conectando", txt: "Marcando…" },
+  conectando:      { fase: "conectando", txt: "Conectando…" },
+  sonando:         { fase: "conectando", txt: "Sonando…" },
+  en_curso:        { fase: "activa",     txt: "En llamada" },
+  contestada:      { fase: "activa",     txt: "Contestaron" },
+  hablando:        { fase: "activa",     txt: "En llamada" },
+  terminada:       { fase: "fin",        txt: "Llamada terminada" },
+  ocupado:         { fase: "error",      txt: "Comunica" },
+  "sin respuesta": { fase: "error",      txt: "No contestaron" },
+  fallo:           { fase: "error",      txt: "La llamada falló" },
+  fallida:         { fase: "error",      txt: "La llamada falló" },
+  cancelada:       { fase: "error",      txt: "Llamada cancelada" }
+};
+const EN_CURSO = new Set(["marcando", "conectando", "sonando", "en_curso", "contestada", "hablando"]);
+let sondeoLlamada = null;   // temporizador del sondeo en curso, para no solapar dos
+
+function abrirMarcador(numero = "", { objetivo } = {}) {
+  detenerSondeo();
+  if (numero) ui.marcadorNumero.value = numero;
+  ui.marcador.dataset.objetivo = objetivo || "";
+  ui.marcador.dataset.estado = "visible";
+  marcadorEnCurso(false);
+  fijarFaseMarcador("idle", numero ? "Listo para llamar" : "Listo para marcar");
+}
+
+function cerrarMarcador() {
+  detenerSondeo();
+  ui.marcador.dataset.estado = "oculto";
+  marcadorEnCurso(false);
+}
+
+// El punto y el texto del indicador. `fase` ∈ idle|conectando|activa|fin|error.
+function fijarFaseMarcador(fase, texto) {
+  ui.marcadorEstado.dataset.fase = fase;
+  ui.marcadorEstadoTexto.textContent = texto;
+}
+
+// Traduce un estado del servidor a fase visible.
+function reflejarEstadoLlamada(estado) {
+  const m = FASES_LLAMADA[estado] || { fase: "activa", txt: estado || "En llamada" };
+  fijarFaseMarcador(m.fase, m.txt);
+  marcadorEnCurso(EN_CURSO.has(estado));
+  return m;
+}
+
+// Cambia la botonera entre «puede llamar» y «en llamada» (botón colgar).
+function marcadorEnCurso(si) {
+  ui.marcador.dataset.encurso = si ? "si" : "no";
+}
+
+function detenerSondeo() {
+  if (sondeoLlamada) { clearTimeout(sondeoLlamada); sondeoLlamada = null; }
+}
+
+// Sondea /llamada/:id hasta que la llamada termina o falla, refrescando el
+// indicador. No usa el modelo: es la vista la que sigue la conexión en vivo.
+function seguirEstadoLlamada(id, objetivo, intento = 0) {
+  detenerSondeo();
+  if (!id || intento > 40) return;
+  sondeoLlamada = setTimeout(async () => {
+    let datos = {};
+    try { datos = await (await fetch(`/llamada/${encodeURIComponent(id)}`)).json(); } catch {}
+    if (datos.ok && datos.estado) {
+      reflejarEstadoLlamada(datos.estado);
+      if (!EN_CURSO.has(datos.estado)) {
+        // Llegó a un estado final: se registra el desenlace y se deja de sondear.
+        mostrarLlamada({ estado: datos.estado, numero: ui.marcadorNumero.value, objetivo,
+          resultado: datos.resumen ? { logrado: datos.estado === "terminada", detalle: datos.resumen } : undefined });
+        return;
+      }
+    }
+    seguirEstadoLlamada(id, objetivo, intento + 1);
+  }, intento === 0 ? 1500 : 3000);
+}
+
+// Llamada iniciada a mano desde la botonera (botón verde).
+async function lanzarLlamadaDesdeBotonera() {
+  const numero = ui.marcadorNumero.value.trim();
+  if (!numero) { fijarFaseMarcador("error", "Escribe un número primero"); return; }
+  fijarFaseMarcador("conectando", "Marcando…");
+  marcadorEnCurso(true);
+  try {
+    const r = await fetch("/llamada", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ numero, objetivo: ui.marcador.dataset.objetivo || "Llamada desde la botonera", confirmado: true })
+    });
+    const datos = await r.json().catch(() => ({}));
+    if (!datos.ok) { fijarFaseMarcador("error", datos.error || "No se pudo llamar"); marcadorEnCurso(false); return; }
+    seguirEstadoLlamada(datos.id, ui.marcador.dataset.objetivo);
+  } catch {
+    fijarFaseMarcador("error", "No se pudo llamar"); marcadorEnCurso(false);
+  }
+}
+
+// Deja el número sólo con lo válido en E.164: un «+» al inicio y dígitos.
+function limpiarNumeroMarcador() {
+  const v = ui.marcadorNumero.value;
+  const limpio = (v[0] === "+" ? "+" : "") + v.replace(/[^\d]/g, "");
+  if (limpio !== v) ui.marcadorNumero.value = limpio;
+}
+
+function pulsarTecla(d) {
+  // El 0 mantenido, o su etiqueta «+», mete el prefijo internacional si el
+  // campo está vacío; el resto se anexa tal cual.
+  if (d === "0" && ui.marcadorNumero.value === "") ui.marcadorNumero.value = "+";
+  else ui.marcadorNumero.value += d;
+  ui.marcadorNumero.focus();
 }
 
 async function usarConector(nombre, argumentos) {

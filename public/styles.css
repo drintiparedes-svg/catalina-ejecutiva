@@ -274,3 +274,73 @@ button.primary { border-color: rgba(109,228,255,.45); background: linear-gradien
 .referencias-ampliar:hover { background: rgba(169,216,236,.12); }
 .referencias[data-expandido="si"] { max-height: 72dvh; }
 .referencia-impacto { color: #8fd0b0; }
+
+/* ─── Botonera de teléfono ────────────────────────────────────────────────
+   Panel de vidrio, centrado en la parte inferior, con la misma piel que el
+   resto de la interfaz. Se oculta con opacidad + visibility para que la
+   transición entre y salga suave, igual que .referencias. */
+.marcador {
+  position: absolute; left: 50%; bottom: calc(var(--controles, 90px) + 18px);
+  transform: translate(-50%, 10px); width: min(304px, calc(100vw - 32px));
+  padding: 14px 16px 16px; border: 1px solid rgba(180,225,245,.18); border-radius: 22px;
+  background: rgba(5,14,23,.74); backdrop-filter: blur(24px) saturate(1.2);
+  box-shadow: 0 22px 60px rgba(0,0,0,.5); z-index: 6;
+  opacity: 0; visibility: hidden;
+  transition: opacity .28s ease, transform .28s ease, visibility .28s;
+}
+.marcador[data-estado="visible"] { opacity: 1; visibility: visible; transform: translate(-50%, 0); }
+.meet .marcador { display: none; }
+
+.marcador-cabecera { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.marcador-titulo { color: #a9d8ec; font-size: 10px; font-weight: 700; letter-spacing: .2em; text-transform: uppercase; }
+.marcador-cerrar { min-height: 24px; padding: 0 7px; border-radius: 8px; border-color: transparent; background: transparent; color: #a9d8ec; font-size: 17px; line-height: 1; }
+
+/* Indicador de conexión: punto de color + texto. El color y el latido cuentan
+   la fase de un vistazo sin tener que leer. */
+.marcador-estado { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; min-height: 18px; color: rgba(233,246,252,.9); font-size: 12.5px; }
+.marcador-punto { flex: none; width: 9px; height: 9px; border-radius: 50%; background: rgba(180,225,245,.4); }
+.marcador-estado[data-fase="conectando"] .marcador-punto { background: #FFB020; animation: pulse 1.2s infinite; }
+.marcador-estado[data-fase="conectando"] { color: #ffd591; }
+.marcador-estado[data-fase="activa"] .marcador-punto { background: #34C759; animation: pulse 1.8s infinite; }
+.marcador-estado[data-fase="activa"] { color: #a7f0bf; }
+.marcador-estado[data-fase="fin"] .marcador-punto { background: rgba(180,225,245,.5); }
+.marcador-estado[data-fase="error"] .marcador-punto { background: #FF6B5B; }
+.marcador-estado[data-fase="error"] { color: #ffb3aa; }
+
+.marcador-numero {
+  width: 100%; box-sizing: border-box; margin-bottom: 12px; padding: 10px 12px;
+  border: 1px solid rgba(184,226,246,.2); border-radius: 12px; background: rgba(3,10,17,.6);
+  color: #eaf8ff; font: 600 21px/1.2 ui-monospace, "SF Mono", Menlo, monospace;
+  letter-spacing: .04em; text-align: center;
+}
+.marcador-numero::placeholder { color: rgba(180,225,245,.35); font-weight: 500; letter-spacing: .02em; }
+.marcador-numero:focus { outline: none; border-color: rgba(109,228,255,.5); box-shadow: 0 0 0 3px rgba(109,228,255,.14); }
+
+.marcador-teclas { display: grid; grid-template-columns: repeat(3, 1fr); gap: 9px; }
+.tecla {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
+  min-height: 52px; padding: 0; border: 1px solid rgba(184,226,246,.16); border-radius: 14px;
+  background: rgba(255,255,255,.055); color: #eaf8ff; cursor: pointer; transition: .12s ease;
+}
+.tecla b { font-size: 21px; font-weight: 600; line-height: 1; }
+.tecla i { font-size: 8.5px; font-style: normal; letter-spacing: .14em; color: rgba(180,225,245,.5); min-height: 9px; }
+.tecla:active { background: rgba(109,228,255,.22); border-color: rgba(109,228,255,.45); transform: scale(.96); }
+
+.marcador-acciones { display: grid; grid-template-columns: 52px 1fr; gap: 9px; align-items: stretch; margin-top: 12px; }
+.marcador-borrar { border-radius: 14px; font-size: 18px; color: #d6eefb; background: rgba(255,255,255,.05); }
+.marcador-llamar, .marcador-colgar {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  border: 0; border-radius: 14px; font-size: 15px; font-weight: 600; color: #04140b; cursor: pointer;
+}
+.marcador-llamar { background: linear-gradient(180deg, #4BE07E, #1FB458); box-shadow: 0 6px 18px rgba(31,180,88,.35); }
+.marcador-llamar:active { transform: scale(.98); }
+.marcador-colgar { display: none; background: linear-gradient(180deg, #FF7A6B, #E0453A); color: #2a0805; box-shadow: 0 6px 18px rgba(224,69,58,.35); }
+.marcador-llamar svg, .marcador-colgar svg { width: 20px; height: 20px; fill: currentColor; }
+/* En llamada, el botón de llamar cede el sitio al de colgar. */
+.marcador[data-encurso="si"] .marcador-llamar { display: none; }
+.marcador[data-encurso="si"] .marcador-colgar { display: flex; }
+
+@media (max-width: 650px) {
+  .marcador { bottom: auto; top: 50%; transform: translate(-50%, calc(-50% + 10px)); }
+  .marcador[data-estado="visible"] { transform: translate(-50%, -50%); }
+}

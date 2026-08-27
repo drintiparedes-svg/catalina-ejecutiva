@@ -56,9 +56,51 @@
       <ol id="referenciasLista"></ol>
     </aside>
 
+    <!-- Botonera de teléfono. Aparece cuando se pide una llamada (con el número
+         ya escrito) o al pulsar «Teléfono» para marcar a mano. El indicador de
+         arriba muestra en vivo si la llamada se está conectando. -->
+    <aside class="marcador" id="marcador" data-estado="oculto" aria-label="Botonera de teléfono">
+      <header class="marcador-cabecera">
+        <span class="marcador-titulo">Teléfono</span>
+        <button class="marcador-cerrar" id="marcadorCerrar" aria-label="Cerrar la botonera">&times;</button>
+      </header>
+      <div class="marcador-estado" id="marcadorEstado" data-fase="idle">
+        <span class="marcador-punto" id="marcadorPunto"></span>
+        <span id="marcadorEstadoTexto">Listo para marcar</span>
+      </div>
+      <input class="marcador-numero" id="marcadorNumero" inputmode="tel" autocomplete="off"
+             spellcheck="false" placeholder="+56 9 1234 5678" aria-label="Número de teléfono">
+      <div class="marcador-teclas" id="marcadorTeclas">
+        <button class="tecla" data-d="1"><b>1</b><i></i></button>
+        <button class="tecla" data-d="2"><b>2</b><i>ABC</i></button>
+        <button class="tecla" data-d="3"><b>3</b><i>DEF</i></button>
+        <button class="tecla" data-d="4"><b>4</b><i>GHI</i></button>
+        <button class="tecla" data-d="5"><b>5</b><i>JKL</i></button>
+        <button class="tecla" data-d="6"><b>6</b><i>MNO</i></button>
+        <button class="tecla" data-d="7"><b>7</b><i>PQRS</i></button>
+        <button class="tecla" data-d="8"><b>8</b><i>TUV</i></button>
+        <button class="tecla" data-d="9"><b>9</b><i>WXYZ</i></button>
+        <button class="tecla" data-d="*"><b>&lowast;</b><i></i></button>
+        <button class="tecla" data-d="0"><b>0</b><i>+</i></button>
+        <button class="tecla" data-d="#"><b>#</b><i></i></button>
+      </div>
+      <div class="marcador-acciones">
+        <button class="marcador-borrar" id="marcadorBorrar" aria-label="Borrar un dígito">&#9003;</button>
+        <button class="marcador-llamar" id="marcadorLlamar" aria-label="Llamar">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1C10.6 21 3 13.4 3 4c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.4 0 .8-.3 1l-2.2 2.2z"/></svg>
+          <span>Llamar</span>
+        </button>
+        <button class="marcador-colgar" id="marcadorColgar" aria-label="Colgar" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5c3 0 5.9.7 8.4 2 .6.3 1 .9 1 1.6v2.3c0 .8-.7 1.5-1.5 1.4l-3-.3c-.7-.1-1.2-.6-1.3-1.3l-.3-1.8c-2.1-.7-4.4-.7-6.5 0l-.3 1.8c-.1.7-.6 1.2-1.3 1.3l-3 .3C2.7 12.7 2 12 2 11.2V8.9c0-.7.4-1.3 1-1.6C5.6 5.7 8.5 5 12 5z"/></svg>
+          <span>Colgar</span>
+        </button>
+      </div>
+    </aside>
+
     <nav class="controls" aria-label="Controles">
       <button class="primary" id="connect">Iniciar conversación</button>
       <button id="mute" disabled>Silenciar micrófono</button>
+      <button id="abrirMarcador" title="Abre la botonera para marcar a mano">Teléfono</button>
       <button id="toggleCaption" aria-pressed="false" title="Muestra lo que dice Catalina sobre el vídeo">Subtítulos</button>
       <button id="togglePanel" aria-pressed="false" title="Abre el historial de la conversación">Historial</button>
       <button id="meetMode" title="Oculta los controles para capturar la ventana">Modo Meet</button>
@@ -73,6 +115,6 @@
     <button class="exit-meet" id="exitMeet" aria-label="Salir del modo Meet">Mostrar controles</button>
   </main>
   <audio id="remoteAudio" autoplay></audio>
-  <script type="module" src="app.js?v=25"></script>
+  <script type="module" src="app.js?v=26"></script>
 </body>
 </html>
