@@ -316,22 +316,25 @@ ui.referenciasAmpliar.addEventListener("click", () => {
   pintarReferencias();
 });
 
-// Botonera de teléfono.
-ui.abrirMarcador.addEventListener("click", () => {
-  ui.marcador.dataset.estado === "visible" ? cerrarMarcador() : abrirMarcador("");
-});
-ui.marcadorCerrar.addEventListener("click", () => cerrarMarcador());
-ui.marcadorTeclas.addEventListener("click", event => {
-  const tecla = event.target.closest(".tecla");
-  if (tecla) pulsarTecla(tecla.dataset.d);
-});
-ui.marcadorBorrar.addEventListener("click", () => {
-  ui.marcadorNumero.value = ui.marcadorNumero.value.slice(0, -1);
-  ui.marcadorNumero.focus();
-});
-ui.marcadorNumero.addEventListener("input", limpiarNumeroMarcador);
-ui.marcadorLlamar.addEventListener("click", () => lanzarLlamadaDesdeBotonera());
-ui.marcadorColgar.addEventListener("click", () => colgarLlamada());
+// Botonera de teléfono. Envuelto en una guarda: si por un caché viejo del HTML
+// faltaran estos elementos, que no rompa el resto de la app (voz incluida).
+if (ui.abrirMarcador && ui.marcador) {
+  ui.abrirMarcador.addEventListener("click", () => {
+    ui.marcador.dataset.estado === "visible" ? cerrarMarcador() : abrirMarcador("");
+  });
+  ui.marcadorCerrar.addEventListener("click", () => cerrarMarcador());
+  ui.marcadorTeclas.addEventListener("click", event => {
+    const tecla = event.target.closest(".tecla");
+    if (tecla) pulsarTecla(tecla.dataset.d);
+  });
+  ui.marcadorBorrar.addEventListener("click", () => {
+    ui.marcadorNumero.value = ui.marcadorNumero.value.slice(0, -1);
+    ui.marcadorNumero.focus();
+  });
+  ui.marcadorNumero.addEventListener("input", limpiarNumeroMarcador);
+  ui.marcadorLlamar.addEventListener("click", () => lanzarLlamadaDesdeBotonera());
+  ui.marcadorColgar.addEventListener("click", () => colgarLlamada());
+}
 document.addEventListener("keydown", event => {
   if (event.target.matches("input, textarea")) return;
   const tecla = event.key.toLowerCase();
@@ -886,6 +889,7 @@ let sondeoLlamada = null;   // temporizador del sondeo en curso, para no solapar
 let llamadaActualId = null; // id de la llamada viva, para poder colgarla
 
 function abrirMarcador(numero = "", { objetivo } = {}) {
+  if (!ui.marcador) return;   // sin botonera (caché viejo), no estorbes la llamada
   detenerSondeo();
   if (numero) ui.marcadorNumero.value = numero;
   ui.marcador.dataset.objetivo = objetivo || "";
@@ -902,6 +906,7 @@ function cerrarMarcador() {
 
 // El punto y el texto del indicador. `fase` ∈ idle|conectando|activa|fin|error.
 function fijarFaseMarcador(fase, texto) {
+  if (!ui.marcadorEstado) return;
   ui.marcadorEstado.dataset.fase = fase;
   ui.marcadorEstadoTexto.textContent = texto;
 }
@@ -916,6 +921,7 @@ function reflejarEstadoLlamada(estado) {
 
 // Cambia la botonera entre «puede llamar» y «en llamada» (botón colgar).
 function marcadorEnCurso(si) {
+  if (!ui.marcador) return;
   ui.marcador.dataset.encurso = si ? "si" : "no";
 }
 
