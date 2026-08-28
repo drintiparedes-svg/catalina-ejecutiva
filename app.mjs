@@ -20,7 +20,7 @@ import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // Se sube a mano con cada arreglo que el usuario tiene que descargar.
-export const VERSION = "2026-08-28.1";
+export const VERSION = "2026-08-28.2";
 
 const root = fileURLToPath(new URL("./public", import.meta.url));
 // El .env se lee de forma síncrona a propósito. Con `await` aquí arriba, en el
@@ -914,6 +914,13 @@ async function createElevenLabsSession(res) {
       code: "ELEVENLABS_KEY_MISSING"
     });
   }
+
+  // Antes de abrir la conversación se comprueba que el agente TENGA las
+  // herramientas. Si no las tiene, Catalina dice «no tengo esa configuración
+  // disponible» y no puede llamar por mucho que la telefonía esté lista. Antes
+  // esto sólo pasaba entrando a mano a /registrar, y se perdía en cuanto el
+  // agente se tocaba en el panel. Ahora se repara solo.
+  await asegurarHerramientas(agente, clave);
 
   let upstream;
   let cuerpo;
@@ -1883,4 +1890,37 @@ async function herramientasDelAgente(res) {
     faltan: esperadas.filter(n => !nombres.includes(n)),
     puedeLlamar: nombres.includes("llamar_por_telefono")
   });
+}
+
+// Comprueba que el agente tenga registradas nuestras herramientas y, si falta
+// alguna, las registra. Se recuerda por instancia para no consultar en cada
+// conversación; ante cualquier fallo NO se interrumpe la sesión: es mejor
+// hablar sin una herramienta que no poder hablar.
+let herramientasAlDia = false;
+async function asegurarHerramientas(agente, clave) {
+  if (herramientasAlDia) return;
+  try {
+    const cabeceras = { "xi-api-key": clave, "Content-Type": "application/json" };
+    const leer = await fetch(`${ELEVENLABS_API}/v1/convai/agents/${encodeURIComponent(agente)}`, { headers: cabeceras });
+    if (!leer.ok) return;
+    const actual = JSON.parse(await leer.text());
+
+    const nuestras = herramientasClienteElevenLabs(await cargarConfig());
+    const previas = actual?.conversation_config?.agent?.prompt?.tools ?? [];
+    const puestas = new Set((Array.isArray(previas) ? previas : []).map(t => t?.name).filter(Boolean));
+    // Si ya están todas, no se toca el agente.
+    if (nuestras.every(t => puestas.has(t.name))) { herramientasAlDia = true; return; }
+
+    const nombres = new Set(nuestras.map(t => t.name));
+    const ajenas = (Array.isArray(previas) ? previas : []).filter(t => !nombres.has(t?.name));
+    const guardar = await fetch(`${ELEVENLABS_API}/v1/convai/agents/${encodeURIComponent(agente)}`, {
+      method: "PATCH",
+      headers: cabeceras,
+      body: JSON.stringify({ conversation_config: { agent: { prompt: { tools: [...ajenas, ...nuestras] } } } })
+    });
+    if (guardar.ok) herramientasAlDia = true;
+    else console.error("No se pudieron registrar las herramientas:", guardar.status, (await guardar.text()).slice(0, 200));
+  } catch (error) {
+    console.error("asegurarHerramientas:", error?.message || error);
+  }
 }

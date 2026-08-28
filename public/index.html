@@ -70,6 +70,16 @@
       </div>
       <input class="marcador-numero" id="marcadorNumero" inputmode="tel" autocomplete="off"
              spellcheck="false" placeholder="+56 9 1234 5678" aria-label="Número de teléfono">
+      <label class="marcador-campo" for="marcadorObjetivo">Objetivo de la llamada</label>
+      <input class="marcador-texto" id="marcadorObjetivo" autocomplete="off"
+             placeholder="Agendar hora con el dentista" aria-label="Objetivo de la llamada">
+      <label class="marcador-campo" for="marcadorAQuien">A quién llamas <span>(opcional)</span></label>
+      <input class="marcador-texto" id="marcadorAQuien" autocomplete="off"
+             placeholder="Clínica dental Los Andes" aria-label="A quién llamas">
+      <label class="marcador-campo" for="marcadorRestricciones">Preferencias <span>(opcional)</span></label>
+      <input class="marcador-texto" id="marcadorRestricciones" autocomplete="off"
+             placeholder="Por la tarde, esta semana" aria-label="Preferencias o restricciones">
+
       <div class="marcador-teclas" id="marcadorTeclas">
         <button class="tecla" data-d="1"><b>1</b><i></i></button>
         <button class="tecla" data-d="2"><b>2</b><i>ABC</i></button>
@@ -114,6 +124,6 @@
     <button class="exit-meet" id="exitMeet" aria-label="Salir del modo Meet">Mostrar controles</button>
   </main>
   <audio id="remoteAudio" autoplay></audio>
-  <script type="module" src="app.js?v=29"></script>
+  <script type="module" src="app.js?v=30"></script>
 </body>
 </html>

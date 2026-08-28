@@ -47,6 +47,9 @@ const ui = {
   audio: document.querySelector("#remoteAudio"),
   marcador: document.querySelector("#marcador"),
   marcadorNumero: document.querySelector("#marcadorNumero"),
+  marcadorObjetivo: document.querySelector("#marcadorObjetivo"),
+  marcadorAQuien: document.querySelector("#marcadorAQuien"),
+  marcadorRestricciones: document.querySelector("#marcadorRestricciones"),
   marcadorEstado: document.querySelector("#marcadorEstado"),
   marcadorEstadoTexto: document.querySelector("#marcadorEstadoTexto"),
   marcadorTeclas: document.querySelector("#marcadorTeclas"),
@@ -770,7 +773,7 @@ async function llamarPorTelefono(argumentos) {
   setStatus("Llamando…");
   // Se abre la botonera con el número pedido a la vista: así se ve a quién se
   // está llamando y, enseguida, si la llamada se conecta.
-  abrirMarcador(argumentos.numero || "", { objetivo: argumentos.objetivo });
+  abrirMarcador(argumentos.numero || "", { objetivo: argumentos.objetivo, aQuien: argumentos.a_quien, restricciones: argumentos.restricciones });
   fijarFaseMarcador("conectando", "Marcando…");
   try {
     const respuesta = await fetch("/llamada", {
@@ -885,11 +888,15 @@ const EN_CURSO = new Set(["marcando", "conectando", "sonando", "en_curso", "cont
 let sondeoLlamada = null;   // temporizador del sondeo en curso, para no solapar dos
 let llamadaActualId = null; // id de la llamada viva, para poder colgarla
 
-function abrirMarcador(numero = "", { objetivo } = {}) {
+function abrirMarcador(numero = "", { objetivo, aQuien, restricciones } = {}) {
   if (!ui.marcador) return;   // sin botonera (caché viejo), no estorbes la llamada
   detenerSondeo();
   if (numero) ui.marcadorNumero.value = numero;
-  ui.marcador.dataset.objetivo = objetivo || "";
+  // Se rellenan a la vista los datos de la gestión: así se ve a qué va la
+  // llamada y se puede corregir antes de marcar.
+  if (objetivo) ui.marcadorObjetivo.value = objetivo;
+  if (aQuien) ui.marcadorAQuien.value = aQuien;
+  if (restricciones) ui.marcadorRestricciones.value = restricciones;
   ui.marcador.dataset.estado = "visible";
   marcadorEnCurso(false);
   fijarFaseMarcador("idle", numero ? "Listo para llamar" : "Listo para marcar");
@@ -953,16 +960,25 @@ function seguirEstadoLlamada(id, objetivo, intento = 0) {
 async function lanzarLlamadaDesdeBotonera() {
   const numero = ui.marcadorNumero.value.trim();
   if (!numero) { fijarFaseMarcador("error", "Escribe un número primero"); return; }
+  const objetivo = ui.marcadorObjetivo.value.trim();
+  // Sin objetivo la llamada sale sin saber a qué va y la persona que contesta
+  // se encuentra con alguien que no sabe qué pedir. Se exige antes de marcar.
+  if (!objetivo) { fijarFaseMarcador("error", "Escribe el objetivo de la llamada"); ui.marcadorObjetivo.focus(); return; }
   fijarFaseMarcador("conectando", "Marcando…");
   marcadorEnCurso(true);
   try {
     const r = await fetch("/llamada", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ numero, objetivo: ui.marcador.dataset.objetivo || "Llamada desde la botonera", confirmado: true })
+      body: JSON.stringify({
+        numero, objetivo,
+        a_quien: ui.marcadorAQuien.value.trim(),
+        restricciones: ui.marcadorRestricciones.value.trim(),
+        confirmado: true
+      })
     });
     const datos = await r.json().catch(() => ({}));
     if (!datos.ok) { fijarFaseMarcador("error", datos.error || "No se pudo llamar"); marcadorEnCurso(false); return; }
-    seguirEstadoLlamada(datos.id, ui.marcador.dataset.objetivo);
+    seguirEstadoLlamada(datos.id, objetivo);
   } catch {
     fijarFaseMarcador("error", "No se pudo llamar"); marcadorEnCurso(false);
   }
