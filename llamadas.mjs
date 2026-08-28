@@ -80,7 +80,7 @@ function normalizarEstado(bruto) {
 // depende de que el agente permita sobrescribir el prompt, así que es fiable.
 // Si además se pasa `guion` con `enviarGuion` en verdadero, se manda como
 // override del prompt (sólo funciona si el agente lo permite en su Security).
-export async function originarLlamadaElevenLabs({ numero, objetivo, aQuien, restricciones, dePartede, guion, enviarGuion, saludo }) {
+export async function originarLlamadaElevenLabs({ numero, objetivo, aQuien, restricciones, dePartede, guion, enviarGuion }) {
   if (!telefoniaElevenLabsLista()) {
     return { ok: false, error: "Falta ELEVENLABS_PHONE_NUMBER_ID (o la clave/el agente): no hay número para marcar.", code: "SIN_NUMERO" };
   }

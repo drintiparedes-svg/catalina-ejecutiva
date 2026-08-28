@@ -20,7 +20,7 @@ import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // Se sube a mano con cada arreglo que el usuario tiene que descargar.
-export const VERSION = "2026-08-27.9";
+export const VERSION = "2026-08-28.1";
 
 const root = fileURLToPath(new URL("./public", import.meta.url));
 // El .env se lee de forma síncrona a propósito. Con `await` aquí arriba, en el
@@ -1045,7 +1045,9 @@ async function inicioDeElevenLabs(config) {
     // durante la conversación si quien habla lo hace.
     language: ajustes.idioma || "es"
   };
-  if (ajustes.saludo) agent.first_message = ajustes.saludo;
+  // OJO: no se manda `first_message` como override. ElevenLabs lo rechaza
+  // —«Override for field 'first_message' is not allowed by config»— y tumba
+  // la conversación entera. El primer mensaje lo pone el agente.
 
   const tts = {};
   if (voz) tts.voice_id = voz;
@@ -1665,8 +1667,7 @@ async function pedirLlamada(req, res) {
       // ejecuta de una que decide.
       dePartede: telefono.dePartede,
       guion: telefono.guion,
-      enviarGuion: telefono.enviarGuion === true,
-      saludo: telefono.saludoLlamada
+      enviarGuion: telefono.enviarGuion === true
     }));
   }
 

@@ -167,9 +167,6 @@ export const CONFIG_POR_DEFECTO = {
     // El override ya está permitido en el agente (la sesión del navegador
     // también lo usa), así que no hace falta tocar el panel.
     enviarGuion: true,
-    // Primera frase de la llamada (override de first_message): fija la
-    // presentación de parte del doctor antes que nada.
-    saludoLlamada: "Hola, muy buenas. Le llamo de parte del doctor Inti Paredes.",
     guion: [
       "Estás hablando por teléfono en representación de {{de_parte_de}}. Empieza SIEMPRE presentándote así —«le llamo de parte del doctor Inti Paredes»—, con transparencia y sin hacerte pasar por él.",
       "Di enseguida, en una frase corta y simple, a qué llamas: {{objetivo}}.",
