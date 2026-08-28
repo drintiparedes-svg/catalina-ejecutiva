@@ -38,7 +38,6 @@ const ui = {
   panel: document.querySelector("#panel"),
   panelBody: document.querySelector("#panelBody"),
   panelClose: document.querySelector("#panelClose"),
-  toggleCaption: document.querySelector("#toggleCaption"),
   togglePanel: document.querySelector("#togglePanel"),
   controls: document.querySelector(".controls"),
   connect: document.querySelector("#connect"),
@@ -299,7 +298,6 @@ ui.mute.addEventListener("click", () => {
 });
 ui.meetMode.addEventListener("click", () => entrarEnModoMeet());
 ui.exitMeet.addEventListener("click", () => salirDeModoMeet());
-ui.toggleCaption.addEventListener("click", () => fijarSubtitulos(!verSubtitulos));
 ui.togglePanel.addEventListener("click", () => fijarPanel(!verPanel));
 ui.panelClose.addEventListener("click", () => fijarPanel(false));
 ui.imagenCerrar.addEventListener("click", () => {
@@ -341,7 +339,6 @@ document.addEventListener("keydown", event => {
   if (tecla === "h") {
     ui.stage.classList.contains("meet") ? salirDeModoMeet() : entrarEnModoMeet();
   }
-  if (tecla === "s") fijarSubtitulos(!verSubtitulos);
   if (event.key === "Escape") {
     if (verPanel) fijarPanel(false);
     else salirDeModoMeet();
@@ -1542,7 +1539,6 @@ function guardarPreferencias() {
 
 function fijarSubtitulos(activo) {
   verSubtitulos = activo;
-  ui.toggleCaption.setAttribute("aria-pressed", String(activo));
   // Un aviso del sistema manda sobre la preferencia: si hay algo que leer, se
   // lee, y al apagarse el aviso vuelve a mandar la preferencia.
   if (!activo && !avisoActivo) ui.caption.dataset.visible = "false";
