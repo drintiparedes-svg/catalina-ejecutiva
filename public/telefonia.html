@@ -30,6 +30,7 @@
   <p class="sub" style="font-size:.85rem;opacity:.7">Página del <b>2026-08-24.26</b>.</p>
 
   <section class="paso" id="p0"><h2><span class="marca espera">•</span> 1. Configuración y número</h2><p class="detalle">Comprobando…</p></section>
+  <section class="paso" id="pv"><h2><span class="marca espera">•</span> 1b. La voz puede llamar</h2><p class="detalle">Comprobando…</p></section>
 
   <section class="paso">
     <h2>2. Llamada de prueba (llamada real)</h2>
@@ -89,6 +90,23 @@ try {
 } catch (e) {
   marcar("mal", "No se pudo leer el diagnóstico.", `<code>${esc(e.message)}</code>`);
 }
+
+// 1b. ¿La conversación de voz lleva la herramienta de llamar?
+try {
+  const s = await (await fetch("/health")).json();
+  const caja = document.querySelector("#pv");
+  const m = caja.querySelector(".marca");
+  caja.querySelectorAll(".detalle").forEach(n => n.remove());
+  const p = document.createElement("p"); p.className = "detalle";
+  if (s.puedeLlamarPorVoz) {
+    m.className = "marca bien"; m.textContent = "✓";
+    p.innerHTML = `Catalina tiene la herramienta <code>llamar_por_telefono</code> en la conversación: por voz puede marcar. Versión <code>${esc(s.version)}</code>.`;
+  } else {
+    m.className = "marca mal"; m.textContent = "✕";
+    p.innerHTML = `<b class="mal">La voz no tiene la herramienta de llamar.</b> Falta configurar la telefonía (o está desactivada), así que por voz no podrá marcar aunque se lo pidas.`;
+  }
+  caja.append(p);
+} catch {}
 
 // 2. Llamada de prueba.
 const btn = document.querySelector("#llamar");

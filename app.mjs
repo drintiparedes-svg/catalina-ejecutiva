@@ -20,7 +20,7 @@ import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // Se sube a mano con cada arreglo que el usuario tiene que descargar.
-export const VERSION = "2026-08-27.6";
+export const VERSION = "2026-08-27.7";
 
 const root = fileURLToPath(new URL("./public", import.meta.url));
 // El .env se lee de forma síncrona a propósito. Con `await` aquí arriba, en el
@@ -81,7 +81,12 @@ export async function atender(req, res) {
         imagenesWebAbierta: hayImagenesWebAbierta(),
         buscadorWebCompleto: hayBuscadorWebCompleto(),
         // Llamadas salientes: por ElevenLabs (preferido) o por el puente Twilio.
-        telefonia: telefoniaElevenLabsLista() ? "elevenlabs" : telefoniaLista() ? "twilio" : false
+        telefonia: telefoniaElevenLabsLista() ? "elevenlabs" : telefoniaLista() ? "twilio" : false,
+        // Si la conversación de voz lleva de verdad la herramienta de llamar.
+        // Es la comprobación que separa «no marca» de «ni siquiera puede
+        // intentarlo», y se ve sin gastar una llamada.
+        puedeLlamarPorVoz: todasLasHerramientas(await cargarConfig())
+          .some(h => h.nombre === "llamar_por_telefono")
       });
     }
 
@@ -669,6 +674,31 @@ function todasLasHerramientas(config) {
   ];
 }
 
+// Las mismas herramientas en el formato de «client tool» de ElevenLabs.
+//
+// Se usan en DOS sitios y por eso viven aquí: al registrarlas en el agente
+// (PATCH, que las deja guardadas) y en el arranque de cada conversación. Lo
+// segundo no es redundante: la sesión sobrescribe `agent.prompt` para poner las
+// instrucciones, y si ese objeto reemplaza al guardado en vez de fusionarse, la
+// conversación se queda SIN herramientas —y entonces por voz no llama ni busca
+// nada—. Mandándolas también en el arranque, la sesión las tiene siempre.
+function herramientasClienteElevenLabs(config) {
+  return todasLasHerramientas(config).map(h => ({
+    type: "client",
+    name: h.nombre,
+    description: h.descripcion,
+    parameters: h.parametros,
+    // No bloquear la conversación mientras corre: la boca sigue, y el resultado
+    // aparece en pantalla cuando llega.
+    expects_response: true,
+    response_timeout_secs: 20,
+    // Que diga algo antes de ejecutar —«déjame ver», «lo estoy buscando»— para
+    // que la espera suene humana en vez de un silencio. Lo que diga lo decide su
+    // persona; esto sólo le da el turno para decirlo.
+    pre_tool_speech: "force"
+  }));
+}
+
 async function createRealtimeSession(req, res) {
   const apiKey = process.env.OPENAI_API_KEY?.trim();
   if (!hasApiKey()) {
@@ -945,26 +975,7 @@ async function registrarHerramientas(res) {
   const clave = process.env.ELEVENLABS_API_KEY.trim();
   const cabeceras = { "xi-api-key": clave, "Content-Type": "application/json" };
 
-  // Las que se registran. El teléfono se INCLUYE si hay telefonía por ElevenLabs
-  // (que sí funciona en serverless); con el puente antiguo Twilio+OpenAI se
-  // dejaba fuera porque necesitaba una conexión sostenida. Sin esto el agente
-  // no tenía la herramienta de llamar y por voz no pasaba nada.
-  const conTelefono = telefoniaElevenLabsLista() || telefoniaLista();
-  const aRegistrar = [...HERRAMIENTAS, ...(conTelefono ? HERRAMIENTAS_TELEFONO : [])];
-  const nuestras = aRegistrar.map(h => ({
-    type: "client",
-    name: h.nombre,
-    description: h.descripcion,
-    parameters: h.parametros,
-    // No bloquear la conversación mientras corre: la boca sigue, y el resultado
-    // aparece en pantalla cuando llega.
-    expects_response: true,
-    response_timeout_secs: 20,
-    // Que diga algo antes de ejecutar —«déjame ver», «lo estoy buscando»— para
-    // que la espera suene humana en vez de un silencio. Lo que diga lo decide su
-    // persona; esto sólo le da el turno para decirlo.
-    pre_tool_speech: "force"
-  }));
+  const nuestras = herramientasClienteElevenLabs(await cargarConfig());
   const nuestrosNombres = new Set(nuestras.map(t => t.name));
 
   let agenteActual;
@@ -1017,7 +1028,14 @@ async function inicioDeElevenLabs(config) {
   const voz = (ajustes.voz || process.env.ELEVENLABS_VOICE_ID || "").trim();
 
   const agent = {
-    prompt: { prompt: await instruccionesDeSesion(config) },
+    // Las herramientas van JUNTO a las instrucciones, en el mismo objeto: este
+    // override reemplaza `agent.prompt`, así que si sólo se mandaran las
+    // instrucciones la conversación perdería las herramientas guardadas y por
+    // voz no podría llamar ni buscar nada.
+    prompt: {
+      prompt: await instruccionesDeSesion(config),
+      tools: herramientasClienteElevenLabs(config)
+    },
     // Se declara el idioma de partida, no el único: el agente cambia de idioma
     // durante la conversación si quien habla lo hace.
     language: ajustes.idioma || "es"
