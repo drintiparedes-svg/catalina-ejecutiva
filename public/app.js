@@ -85,6 +85,9 @@ const manejadores = {
     connected = true;
     ultimoFallo = null;
     hayActividad();
+    // Si una llamada terminó mientras la voz estaba caída, su desenlace quedó
+    // en cola: ahora que hay conversación, se cuenta.
+    entregarAvisos();
     calentarUbicacion();   // deja lista la zona antes de que nadie pregunte
     mostrarAviso("");   // si el intento anterior falló, su aviso ya no aplica
     ui.signal.classList.add("online");
@@ -885,6 +888,12 @@ const FASES_LLAMADA = {
   cancelada:       { fase: "error",      txt: "Llamada cancelada" }
 };
 const EN_CURSO = new Set(["marcando", "conectando", "sonando", "en_curso", "contestada", "hablando"]);
+// Los ÚNICOS estados que dan la llamada por acabada. Antes se daba por final
+// cualquier cosa que no estuviera en curso, y eso incluía «desconocido» —lo que
+// devuelve el servidor cuando no logra consultar el estado en ese instante—: un
+// parpadeo de red cerraba la llamada en falso, con un desenlace inventado. Ahora
+// lo desconocido no cierra nada: se sigue sondeando.
+const FINALES = new Set(["terminada", "fallo", "fallida", "ocupado", "sin respuesta", "cancelada"]);
 let sondeoLlamada = null;   // temporizador del sondeo en curso, para no solapar dos
 let llamadaActualId = null; // id de la llamada viva, para poder colgarla
 
@@ -951,8 +960,40 @@ function detenerSondeo() {
 // Le cuenta algo al agente para que lo diga en voz alta. Se manda como turno de
 // la persona porque es lo único que le hace tomar la palabra; el panel sólo
 // registra lo que dice Catalina, así que no ensucia el historial.
+// Cola de avisos pendientes. `enviarTexto` devuelve false —sin ruido— cuando el
+// socket no está abierto: pasa si la conversación se terminó mientras la llamada
+// seguía, si el socket parpadeó o si aún estaba conectando. Ignorar ese false era
+// justo lo que hacía que el cierre hablado funcionara unas veces sí y otras no.
+// Aquí el aviso se guarda y se reintenta hasta que la voz vuelve a estar lista.
+const avisosPendientes = [];
+let reintentoAviso = null;
+const ESPERA_AVISO = 60_000;   // hasta un minuto esperando a que vuelva la voz
+
 function avisarAlAgente(texto) {
-  try { sesion?.enviarTexto?.(texto); } catch (error) { console.error(error); }
+  avisosPendientes.push({ texto, desde: Date.now() });
+  entregarAvisos();
+}
+
+function entregarAvisos() {
+  clearTimeout(reintentoAviso);
+  while (avisosPendientes.length) {
+    const aviso = avisosPendientes[0];
+    let entregado = false;
+    try { entregado = sesion?.enviarTexto?.(aviso.texto) === true; }
+    catch (error) { console.error(error); }
+
+    if (entregado) { avisosPendientes.shift(); continue; }
+
+    // No se pudo. Si aún hay margen, se reintenta; si no, se deja de insistir
+    // pero el desenlace ya quedó escrito en pantalla, así que no se pierde.
+    if (Date.now() - aviso.desde > ESPERA_AVISO) {
+      console.warn("No se pudo contar el desenlace: la conversación no estaba activa.");
+      avisosPendientes.shift();
+      continue;
+    }
+    reintentoAviso = setTimeout(entregarAvisos, 1000);
+    return;
+  }
 }
 
 // Sondea hasta que la llamada termina. Al terminar NO se limita a pintarlo: le
@@ -979,8 +1020,10 @@ function seguirEstadoLlamada(id, objetivo, intento = 0) {
     let datos = {};
     try { datos = await (await fetch(`/llamada/${encodeURIComponent(id)}`)).json(); } catch {}
     if (datos.ok && datos.estado) {
-      reflejarEstadoLlamada(datos.estado);
-      if (!EN_CURSO.has(datos.estado)) {
+      // Un estado que no se pudo confirmar en vivo no se pinta ni cierra nada:
+      // se deja lo último que se sabía y se vuelve a preguntar.
+      if (datos.estado !== "desconocido") reflejarEstadoLlamada(datos.estado);
+      if (FINALES.has(datos.estado)) {
         // Estado final: se pinta el desenlace y se le cuenta al agente.
         llamadaActualId = null;
         marcadorEnCurso(false);
