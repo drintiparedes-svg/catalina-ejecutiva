@@ -95,28 +95,26 @@ export async function originarLlamadaElevenLabs({ numero, objetivo, aQuien, rest
       restricciones: String(restricciones || "").trim()
     }
   };
-  // Override sólo para esta llamada (no toca la sesión del navegador): el guion
-  // como prompt y, si hay, el saludo como primera frase. El agente ya permite
-  // override —la sesión del navegador lo usa igual—.
-  if ((enviarGuion && guion) || saludo) {
-    const agent = {};
-    if (enviarGuion && guion) agent.prompt = { prompt: String(guion) };
-    if (saludo) agent.first_message = String(saludo);
-    inicio.conversation_config_override = { agent };
-  }
+  // Override SÓLO para esta llamada (no toca la sesión del navegador): el guion
+  // como prompt. NO se manda first_message override: ese campo no está
+  // habilitado en el agente (la sesión del navegador no lo usa), y enviarlo hacía
+  // que ElevenLabs rechazara la llamada. El saludo de apertura va dentro del guion.
+  const overrideAgent = (enviarGuion && guion) ? { prompt: { prompt: String(guion) } } : null;
 
-  const cuerpo = {
+  const construir = (conOverride) => ({
     agent_id: agente(),
     agent_phone_number_id: numeroId(),
     to_number: revisado.numero,
-    conversation_initiation_client_data: inicio
-  };
+    conversation_initiation_client_data: conOverride && overrideAgent
+      ? { ...inicio, conversation_config_override: { agent: overrideAgent } }
+      : inicio
+  });
 
-  // Se prueban las rutas en orden; sólo se pasa a la siguiente ante un 404
-  // (endpoint que no existe). Cualquier otro código es una respuesta real.
-  let respuesta, crudo, datos = {}, ruta;
-  for (ruta of RUTAS_LLAMADA) {
-    try {
+  // Prueba las rutas en orden; sólo pasa a la siguiente ante un 404 (ruta que no
+  // existe). Cualquier otro código es una respuesta real.
+  const intentar = async (cuerpo) => {
+    let respuesta, crudo;
+    for (const ruta of RUTAS_LLAMADA) {
       respuesta = await fetch(`${BASE}${ruta}`, {
         method: "POST",
         headers: { "xi-api-key": clave(), "Content-Type": "application/json" },
@@ -124,10 +122,22 @@ export async function originarLlamadaElevenLabs({ numero, objetivo, aQuien, rest
         signal: AbortSignal.timeout(TIEMPO)
       });
       crudo = await respuesta.text();
-    } catch (error) {
-      return { ok: false, error: error.name === "TimeoutError" ? "ElevenLabs tardó demasiado en tomar la llamada." : "No se pudo contactar a ElevenLabs para llamar.", code: "SIN_RED" };
+      if (respuesta.status !== 404) break;
     }
-    if (respuesta.status !== 404) break;   // 404 → probar la siguiente ruta
+    return { respuesta, crudo };
+  };
+
+  let respuesta, crudo, datos = {};
+  try {
+    ({ respuesta, crudo } = await intentar(construir(true)));
+    // Si el override hace que la rechace (y no es el 404 de ruta), se reintenta
+    // SIN override: así el discado nunca se rompe por el guion; a lo sumo pierde
+    // el guion en esa llamada. Restaura el comportamiento previo si algo falla.
+    if (overrideAgent && !respuesta.ok && respuesta.status !== 404) {
+      ({ respuesta, crudo } = await intentar(construir(false)));
+    }
+  } catch (error) {
+    return { ok: false, error: error.name === "TimeoutError" ? "ElevenLabs tardó demasiado en tomar la llamada." : "No se pudo contactar a ElevenLabs para llamar.", code: "SIN_RED" };
   }
 
   try { datos = JSON.parse(crudo); } catch {}
