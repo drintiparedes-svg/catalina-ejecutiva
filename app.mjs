@@ -20,7 +20,7 @@ import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // Se sube a mano con cada arreglo que el usuario tiene que descargar.
-export const VERSION = "2026-08-27.7";
+export const VERSION = "2026-08-27.8";
 
 const root = fileURLToPath(new URL("./public", import.meta.url));
 // El .env se lee de forma síncrona a propósito. Con `await` aquí arriba, en el
@@ -100,6 +100,13 @@ export async function atender(req, res) {
 
     if (req.method === "POST" && req.url === "/elevenlabs/sesion") {
       return await createElevenLabsSession(res);
+    }
+
+    // Qué herramientas tiene REGISTRADAS el agente en ElevenLabs, según
+    // ElevenLabs. Es la comprobación que distingue «Catalina no quiso llamar»
+    // de «el agente no tiene la herramienta para hacerlo», sin gastar llamadas.
+    if (req.method === "GET" && req.url === "/elevenlabs/herramientas") {
+      return await herramientasDelAgente(res);
     }
 
     if (req.method === "POST" && req.url === "/elevenlabs/registrar-herramientas") {
@@ -1028,14 +1035,12 @@ async function inicioDeElevenLabs(config) {
   const voz = (ajustes.voz || process.env.ELEVENLABS_VOICE_ID || "").trim();
 
   const agent = {
-    // Las herramientas van JUNTO a las instrucciones, en el mismo objeto: este
-    // override reemplaza `agent.prompt`, así que si sólo se mandaran las
-    // instrucciones la conversación perdería las herramientas guardadas y por
-    // voz no podría llamar ni buscar nada.
-    prompt: {
-      prompt: await instruccionesDeSesion(config),
-      tools: herramientasClienteElevenLabs(config)
-    },
+    // SÓLO las instrucciones. Las herramientas NO se mandan aquí: el override
+    // de la conversación admite un puñado de campos concretos y mandar uno que
+    // no esté permitido hace que ElevenLabs rechace la sesión —es lo que pasó
+    // con first_message en la llamada—. Las herramientas viven registradas en
+    // el agente (PATCH de /elevenlabs/registrar-herramientas) y de ahí salen.
+    prompt: { prompt: await instruccionesDeSesion(config) },
     // Se declara el idioma de partida, no el único: el agente cambia de idioma
     // durante la conversación si quien habla lo hace.
     language: ajustes.idioma || "es"
@@ -1843,4 +1848,38 @@ function cargarEnv(path) {
   } catch (error) {
     if (error.code !== "ENOENT") throw error;
   }
+}
+
+// Lee el agente en ElevenLabs y cuenta qué herramientas tiene puestas. Si falta
+// la de llamar, por voz no puede marcar por mucho que la telefonía esté bien: se
+// arregla registrándolas (POST /elevenlabs/registrar-herramientas).
+async function herramientasDelAgente(res) {
+  const clave = process.env.ELEVENLABS_API_KEY?.trim();
+  const agente = process.env.ELEVENLABS_AGENT_ID?.trim();
+  if (!clave || !agente) {
+    return json(res, 503, { ok: false, error: "Faltan ELEVENLABS_API_KEY o ELEVENLABS_AGENT_ID." });
+  }
+  let datos;
+  try {
+    const r = await fetch(`${ELEVENLABS_API}/v1/convai/agents/${encodeURIComponent(agente)}`,
+      { headers: { "xi-api-key": clave } });
+    const crudo = await r.text();
+    if (!r.ok) return json(res, 502, { ok: false, error: `ElevenLabs no dejó leer el agente (${r.status}).` });
+    datos = JSON.parse(crudo);
+  } catch (error) {
+    return json(res, 502, { ok: false, error: "No se pudo consultar el agente en ElevenLabs." });
+  }
+
+  const puestas = datos?.conversation_config?.agent?.prompt?.tools ?? [];
+  const nombres = (Array.isArray(puestas) ? puestas : []).map(t => t?.name).filter(Boolean);
+  const esperadas = todasLasHerramientas(await cargarConfig()).map(h => h.nombre);
+  return json(res, 200, {
+    ok: true,
+    agente,
+    registradas: nombres,
+    // Las que el servidor ofrece pero el agente no tiene: si aquí aparece
+    // llamar_por_telefono, ese es el motivo de que por voz no llame.
+    faltan: esperadas.filter(n => !nombres.includes(n)),
+    puedeLlamar: nombres.includes("llamar_por_telefono")
+  });
 }

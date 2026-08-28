@@ -27,7 +27,7 @@
 <main>
   <h1>Telefonía de Catalina</h1>
   <p class="sub">Comprueba que ElevenLabs reconoce tu número —sin gastar una llamada— y deja hacer una llamada de prueba a tu propio teléfono.</p>
-  <p class="sub" style="font-size:.85rem;opacity:.7">Página del <b>2026-08-24.26</b>.</p>
+  <p class="sub" style="font-size:.85rem;opacity:.7">Página del <b>2026-08-27.8</b>.</p>
 
   <section class="paso" id="p0"><h2><span class="marca espera">•</span> 1. Configuración y número</h2><p class="detalle">Comprobando…</p></section>
   <section class="paso" id="pv"><h2><span class="marca espera">•</span> 1b. La voz puede llamar</h2><p class="detalle">Comprobando…</p></section>
@@ -91,22 +91,44 @@ try {
   marcar("mal", "No se pudo leer el diagnóstico.", `<code>${esc(e.message)}</code>`);
 }
 
-// 1b. ¿La conversación de voz lleva la herramienta de llamar?
-try {
-  const s = await (await fetch("/health")).json();
+// 1b. ¿El AGENTE tiene registrada la herramienta de llamar, según ElevenLabs?
+//
+// Es la comprobación que separa «Catalina no quiso» de «no tiene con qué»: si
+// falta, por voz no marcará por mucho que la telefonía esté bien configurada.
+async function revisarHerramientas() {
   const caja = document.querySelector("#pv");
   const m = caja.querySelector(".marca");
-  caja.querySelectorAll(".detalle").forEach(n => n.remove());
-  const p = document.createElement("p"); p.className = "detalle";
-  if (s.puedeLlamarPorVoz) {
-    m.className = "marca bien"; m.textContent = "✓";
-    p.innerHTML = `Catalina tiene la herramienta <code>llamar_por_telefono</code> en la conversación: por voz puede marcar. Versión <code>${esc(s.version)}</code>.`;
-  } else {
+  caja.querySelectorAll(".detalle, .arreglo").forEach(n => n.remove());
+  const poner = (html) => { const p = document.createElement("p"); p.className = "detalle"; p.innerHTML = html; caja.append(p); };
+  try {
+    const h = await (await fetch("/elevenlabs/herramientas")).json();
+    if (!h.ok) { m.className = "marca mal"; m.textContent = "✕"; poner(`No se pudo comprobar: <code>${esc(h.error)}</code>`); return; }
+    if (h.puedeLlamar) {
+      m.className = "marca bien"; m.textContent = "✓";
+      poner(`El agente tiene <code>llamar_por_telefono</code> registrada: por voz <b class="bien">sí puede marcar</b>.`);
+      poner(`Herramientas en el agente: ${h.registradas.length}.`);
+      if (h.faltan.length) poner(`<b class="espera">Faltan otras:</b> <code>${esc(h.faltan.join(", "))}</code>.`);
+    } else {
+      m.className = "marca mal"; m.textContent = "✕";
+      poner(`<b class="mal">El agente NO tiene la herramienta de llamar.</b> Por eso por voz no marca aunque se lo pidas.`);
+      poner(`Tiene ${h.registradas.length} herramienta(s); faltan: <code>${esc(h.faltan.join(", ") || "—")}</code>.`);
+      const b = document.createElement("button"); b.className = "arreglo"; b.textContent = "Registrar las herramientas ahora";
+      b.addEventListener("click", async () => {
+        b.disabled = true; b.textContent = "Registrando…";
+        try {
+          const r = await (await fetch("/elevenlabs/registrar-herramientas", { method: "POST" })).json();
+          if (!r.ok) { poner(`<b class="mal">No se pudo registrar:</b> <code>${esc(r.error)}</code>`); b.disabled = false; b.textContent = "Reintentar"; return; }
+          b.remove(); await revisarHerramientas();
+        } catch (e) { poner(`<b class="mal">Falló:</b> <code>${esc(e.message)}</code>`); b.disabled = false; b.textContent = "Reintentar"; }
+      });
+      caja.append(b);
+    }
+  } catch (e) {
     m.className = "marca mal"; m.textContent = "✕";
-    p.innerHTML = `<b class="mal">La voz no tiene la herramienta de llamar.</b> Falta configurar la telefonía (o está desactivada), así que por voz no podrá marcar aunque se lo pidas.`;
+    poner(`No se pudo comprobar: <code>${esc(e.message)}</code>`);
   }
-  caja.append(p);
-} catch {}
+}
+await revisarHerramientas();
 
 // 2. Llamada de prueba.
 const btn = document.querySelector("#llamar");
