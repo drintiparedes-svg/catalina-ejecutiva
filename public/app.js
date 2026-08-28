@@ -890,6 +890,7 @@ let llamadaActualId = null; // id de la llamada viva, para poder colgarla
 
 function abrirMarcador(numero = "", { objetivo, aQuien, restricciones } = {}) {
   if (!ui.marcador) return;   // sin botonera (caché viejo), no estorbes la llamada
+  clearTimeout(cierreMarcador);
   detenerSondeo();
   if (numero) ui.marcadorNumero.value = numero;
   // Se rellenan a la vista los datos de la gestión: así se ve a qué va la
@@ -906,6 +907,18 @@ function cerrarMarcador() {
   detenerSondeo();
   ui.marcador.dataset.estado = "oculto";
   marcadorEnCurso(false);
+}
+
+// Cierra la botonera cuando la llamada ya terminó. Los segundos de espera son
+// para que dé tiempo a leer el estado final —«Llamada terminada»— antes de que
+// se vaya; sin ellos parecería que la ventana se cerró sin decir nada. Si se
+// vuelve a marcar entretanto, el cierre se cancela.
+let cierreMarcador = null;
+function cerrarMarcadorTrasLlamada(espera = 4000) {
+  clearTimeout(cierreMarcador);
+  cierreMarcador = setTimeout(() => {
+    if (!llamadaActualId) cerrarMarcador();     // sólo si no hay otra llamada viva
+  }, espera);
 }
 
 // El punto y el texto del indicador. `fase` ∈ idle|conectando|activa|fin|error.
@@ -959,6 +972,7 @@ function seguirEstadoLlamada(id, objetivo, intento = 0) {
     marcadorEnCurso(false);
     fijarFaseMarcador("fin", "Seguimiento agotado");
     avisarAlAgente("[Aviso del sistema] La llamada lleva demasiado tiempo y dejé de seguirla; no tengo su desenlace. Dilo en una frase y ofrece volver a intentarlo.");
+    cerrarMarcadorTrasLlamada();
     return;
   }
   sondeoLlamada = setTimeout(async () => {
@@ -973,6 +987,9 @@ function seguirEstadoLlamada(id, objetivo, intento = 0) {
         mostrarLlamada({ estado: datos.estado, numero: ui.marcadorNumero.value, objetivo,
           resultado: datos.resumen ? { logrado: datos.estado === "terminada", detalle: datos.resumen } : undefined });
         contarDesenlace(datos, objetivo);
+        // La botonera ya no pinta nada: se cierra sola. Se deja un momento para
+        // que se alcance a leer el estado final antes de que desaparezca.
+        cerrarMarcadorTrasLlamada();
         return;
       }
     }
@@ -1040,6 +1057,7 @@ async function colgarLlamada() {
       fijarFaseMarcador("fin", "Llamada terminada");
       marcadorEnCurso(false);
       avisarAlAgente("[Aviso del sistema] Colgué la llamada desde la pantalla antes de que terminara sola. Dilo en una frase y pregunta si se vuelve a intentar.");
+      cerrarMarcadorTrasLlamada();
     } else {
       // No se pudo colgar en el servidor: se dice por qué y se sigue el estado,
       // que es la verdad de si la llamada sigue viva o no.
