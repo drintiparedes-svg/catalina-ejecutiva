@@ -935,25 +935,64 @@ function detenerSondeo() {
 
 // Sondea /llamada/:id hasta que la llamada termina o falla, refrescando el
 // indicador. No usa el modelo: es la vista la que sigue la conexión en vivo.
+// Le cuenta algo al agente para que lo diga en voz alta. Se manda como turno de
+// la persona porque es lo único que le hace tomar la palabra; el panel sólo
+// registra lo que dice Catalina, así que no ensucia el historial.
+function avisarAlAgente(texto) {
+  try { sesion?.enviarTexto?.(texto); } catch (error) { console.error(error); }
+}
+
+// Sondea hasta que la llamada termina. Al terminar NO se limita a pintarlo: le
+// empuja el desenlace al agente para que Catalina lo cuente hablando. Antes se
+// esperaba a que ella preguntara por su cuenta, y como dejaba de preguntar, la
+// llamada acababa sin cierre y el marcador se quedaba en «En llamada».
+//
+// El tope es alto (una gestión por teléfono puede pasar de diez minutos) y al
+// agotarse tampoco se calla: avisa de que dejó de seguirla.
+const SONDEOS_MAX = 240;   // ~12 minutos a 3 s
 function seguirEstadoLlamada(id, objetivo, intento = 0) {
   detenerSondeo();
-  if (!id || intento > 40) return;
+  if (!id) return;
   llamadaActualId = id;
+  if (intento > SONDEOS_MAX) {
+    llamadaActualId = null;
+    marcadorEnCurso(false);
+    fijarFaseMarcador("fin", "Seguimiento agotado");
+    avisarAlAgente("[Aviso del sistema] La llamada lleva demasiado tiempo y dejé de seguirla; no tengo su desenlace. Dilo en una frase y ofrece volver a intentarlo.");
+    return;
+  }
   sondeoLlamada = setTimeout(async () => {
     let datos = {};
     try { datos = await (await fetch(`/llamada/${encodeURIComponent(id)}`)).json(); } catch {}
     if (datos.ok && datos.estado) {
       reflejarEstadoLlamada(datos.estado);
       if (!EN_CURSO.has(datos.estado)) {
-        // Llegó a un estado final: se registra el desenlace y se deja de sondear.
+        // Estado final: se pinta el desenlace y se le cuenta al agente.
         llamadaActualId = null;
+        marcadorEnCurso(false);
         mostrarLlamada({ estado: datos.estado, numero: ui.marcadorNumero.value, objetivo,
           resultado: datos.resumen ? { logrado: datos.estado === "terminada", detalle: datos.resumen } : undefined });
+        contarDesenlace(datos, objetivo);
         return;
       }
     }
     seguirEstadoLlamada(id, objetivo, intento + 1);
   }, intento === 0 ? 1500 : 3000);
+}
+
+// Arma el aviso con lo que se sabe de la llamada y se lo pasa al agente para que
+// cierre hablando, en el formato de informe que ya tiene en su persona.
+function contarDesenlace(datos, objetivo) {
+  const partes = ["[Aviso del sistema] La llamada terminó."];
+  if (objetivo) partes.push(`Objetivo: ${objetivo}.`);
+  partes.push(`Estado: ${datos.estado}.`);
+  if (datos.resumen) partes.push(`Lo que ocurrió: ${datos.resumen}`);
+  if (datos.motivo) partes.push(`Motivo del corte: ${datos.motivo}`);
+  if (!datos.resumen && !datos.motivo) {
+    partes.push("No hay resumen de la conversación: di sólo si se logró o no y ofrece reintentar.");
+  }
+  partes.push("Cuéntale AHORA el resultado en voz alta, breve, con tu formato: Estado, Objetivo, Resultado, Datos relevantes y Próximo paso.");
+  avisarAlAgente(partes.join(" "));
 }
 
 // Llamada iniciada a mano desde la botonera (botón verde).
@@ -1000,6 +1039,7 @@ async function colgarLlamada() {
       llamadaActualId = null;
       fijarFaseMarcador("fin", "Llamada terminada");
       marcadorEnCurso(false);
+      avisarAlAgente("[Aviso del sistema] Colgué la llamada desde la pantalla antes de que terminara sola. Dilo en una frase y pregunta si se vuelve a intentar.");
     } else {
       // No se pudo colgar en el servidor: se dice por qué y se sigue el estado,
       // que es la verdad de si la llamada sigue viva o no.

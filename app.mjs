@@ -20,7 +20,7 @@ import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // Se sube a mano con cada arreglo que el usuario tiene que descargar.
-export const VERSION = "2026-08-28.3";
+export const VERSION = "2026-08-28.4";
 
 const root = fileURLToPath(new URL("./public", import.meta.url));
 // El .env se lee de forma síncrona a propósito. Con `await` aquí arriba, en el
@@ -645,8 +645,9 @@ const PARAMETROS_ESTADO_LLAMADA = {
   required: ["id"]
 };
 
-const DESCRIPCION_ESTADO_LLAMADA = "Dice cómo va o cómo terminó una llamada. Consúltala cada pocos segundos "
-  + "mientras la llamada esté en curso, y cuenta el desenlace cuando lo haya.";
+const DESCRIPCION_ESTADO_LLAMADA = "Dice cómo va una llamada. NO hace falta que la consultes en bucle: "
+  + "cuando la llamada termine recibirás un aviso del sistema con el desenlace y ahí lo cuentas. "
+  + "Úsala sólo si la persona pregunta expresamente cómo va mientras sigue en curso.";
 
 const HERRAMIENTAS = [
   { nombre: "buscar_imagen_medica", descripcion: DESCRIPCION_IMAGEN, parametros: PARAMETROS_IMAGEN },
