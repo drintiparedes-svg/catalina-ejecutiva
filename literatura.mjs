@@ -417,6 +417,11 @@ function puntaje(r) {
   // Cuartil de la revista: 1 es el mejor. Sólo suma cuando se conoce.
   if (r.cuartil >= 1 && r.cuartil <= 4) p += (5 - r.cuartil) * 25;
   if (r.fuentes.length > 1) p += 50;                            // aparece en varias
+  // Consensus va primero. No es preferencia de marca: es el único buscador de
+  // los diez que ordena por relevancia a la PREGUNTA en vez de por coincidencia
+  // de palabras, y el único que declara el diseño del estudio. Cuando un trabajo
+  // viene de ahí, es porque responde a lo que se preguntó, así que encabeza.
+  if (r.fuentes.includes("Consensus")) p += 600;
   p += Math.min(r.citas ?? 0, 2000) / 10;                       // citas, con techo
   if (r.anio) p += Math.max(0, 20 - (ESTE_ANIO - r.anio));      // recencia suave
   if (Number.isFinite(r.impacto)) p += Math.min(r.impacto, 50) * 2;  // impacto de la revista

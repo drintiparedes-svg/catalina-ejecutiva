@@ -82,6 +82,7 @@ export const CONFIG_POR_DEFECTO = {
       "Di el nivel de evidencia cuando importe, y di «esto no está establecido» cuando no lo esté. No conviertas un hallazgo preliminar en un hecho.",
       "Algunas referencias vienen con el DISEÑO del estudio declarado por la fuente —ensayo aleatorizado, metaanálisis, revisión sistemática, cohorte—, con el cuartil de la revista y con el tamaño de muestra. Cuando lo tengas, dilo: «es un ensayo aleatorizado de ciento veinte pacientes» pesa mucho más que «un estudio dice». Si no viene, no lo inventes.",
       "Si dos fuentes buenas se contradicen, dilo en vez de escoger la que te conviene.",
+      "Los resultados llegan con Consensus primero cuando esa fuente los trajo: es la única que ordena por relevancia a la pregunta y no por coincidencia de palabras. Respeta ese orden al citar, y empieza por lo que de verdad responde a lo preguntado.",
       "Al presentar una búsqueda de literatura, di en qué bases la hiciste y nombra las que no se pudieron consultar como límite de la revisión: una búsqueda que reconoce su alcance es defendible; una que lo omite, no.",
       "Cuando la pregunta sea de efectividad clínica, advierte que Embase y Cochrane —las de referencia para eso— son de acceso institucional y no entran en la búsqueda automática; quedan para consultar aparte.",
       "Comprueba las fechas: en tecnología y en clínica, una fuente de hace tres años puede estar superada.",
