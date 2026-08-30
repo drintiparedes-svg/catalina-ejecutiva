@@ -187,6 +187,16 @@ async function deSemanticScholar(consulta) {
 // arXiv devuelve Atom (XML), no JSON. Se extrae con expresiones regulares: son
 // preprints de IA, computación y estadística, y su papel es justo ése —lo que
 // aún no está publicado—, así que siempre van marcados como preprint.
+// El identificador de arXiv sale de la URL que devuelve su API
+// (http://arxiv.org/abs/2401.12345v1). alphaXiv publica cada trabajo en
+// /abs/<id>, así que con el identificador basta; se quita la versión (v1, v2)
+// porque la página es del trabajo, no de la revisión.
+function idArxiv(url) {
+  const m = String(url || "").match(/arxiv\.org\/abs\/(.+)$/i);
+  if (!m) return null;
+  return `https://www.alphaxiv.org/abs/${m[1].replace(/v\d+$/, "")}`;
+}
+
 async function deArxiv(consulta) {
   const url = `https://export.arxiv.org/api/query?search_query=${encodeURIComponent("all:" + consulta)}`
     + `&max_results=${POR_FUENTE}&sortBy=relevance`;
@@ -212,6 +222,11 @@ async function deArxiv(consulta) {
       accesoAbierto: true,          // arXiv es abierto por definición
       pdf: id ? id.replace("/abs/", "/pdf/") : null,
       preprint: true,
+      // alphaXiv es la misma preprint de arXiv con una capa encima: discusión
+      // pública, preguntas al texto y comentarios de otros investigadores. No es
+      // otra base —indexa arXiv—, así que en vez de duplicar el resultado se
+      // enlaza: mismo trabajo, sitio donde además se está debatiendo.
+      alphaxiv: idArxiv(id),
       fuente: "arXiv"
     };
   });
@@ -396,6 +411,7 @@ function fundir(listas) {
     if (previo.cuartil == null && item.cuartil != null) previo.cuartil = item.cuartil;
     if (previo.muestra == null && item.muestra != null) previo.muestra = item.muestra;
     if (!previo.resumenClave && item.resumenClave) previo.resumenClave = item.resumenClave;
+    if (!previo.alphaxiv && item.alphaxiv) previo.alphaxiv = item.alphaxiv;
   }
   return [...por.values()];
 }
@@ -510,6 +526,9 @@ export async function buscarLiteratura(consulta, opciones = {}) {
       cuartil: r.cuartil ?? null,
       muestra: r.muestra ?? null,
       resumenClave: r.resumenClave || null,
+      // Página del mismo trabajo en alphaXiv, cuando es una preprint de arXiv:
+      // allí está la discusión pública y se le pueden hacer preguntas al texto.
+      alphaxiv: r.alphaxiv || null,
       // Las bases de las que salió, para que se vea que no es una sola.
       fuentes: r.fuentes
     }));
