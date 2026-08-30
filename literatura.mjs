@@ -316,6 +316,57 @@ async function deEpistemonikos(consulta) {
 
 // ── Fundir y ordenar ─────────────────────────────────────────────────────────
 
+// Consensus. A diferencia de las demás, no es un índice bibliográfico sino un
+// buscador construido para preguntas de investigación: devuelve los papeles
+// ordenados por relevancia a la pregunta, no por coincidencia de palabras, y
+// además dice el DISEÑO del estudio y el cuartil de la revista. Eso es justo lo
+// que la persona necesita para declarar el nivel de evidencia, así que su tipo
+// se conserva tal cual llega.
+//
+// Requiere clave (x-api-key). Sin ella se calla y las otras nueve siguen: es
+// una fuente más, no un requisito.
+async function deConsensus(consulta) {
+  const clave = process.env.CONSENSUS_API_KEY?.trim();
+  if (!clave) return [];
+
+  const params = new URLSearchParams({
+    query: consulta,
+    page_size: String(POR_FUENTE)
+  });
+  const r = await fetch(`https://api.consensus.app/v1/search?${params}`, {
+    headers: { "x-api-key": clave, Accept: "application/json" },
+    signal: AbortSignal.timeout(TIEMPO)
+  });
+  if (!r.ok) throw new Error(`api.consensus.app → ${r.status}`);
+  const datos = await r.json();
+
+  return (datos.results ?? []).map(o => {
+    const autores = Array.isArray(o.authors) ? o.authors : [];
+    const revista = o.journal_name || "";
+    // El diseño que declara Consensus (rct, meta-analysis, systematic review…)
+    // entra como `tipo`: es lo que el puntaje usa para subir las revisiones y
+    // lo que permite decir en voz alta qué clase de estudio es.
+    const tipo = o.study_type || "";
+    return {
+      titulo: o.title || "",
+      autores: autores.slice(0, 3).join(", ") + (autores.length > 3 ? " et al." : ""),
+      anio: o.publish_year || null,
+      revista,
+      tipo,
+      doi: o.doi || null,
+      enlace: o.doi ? `https://doi.org/${o.doi}` : (o.url || ""),
+      citas: o.citation_count ?? null,
+      accesoAbierto: null,
+      preprint: o.is_preprint === true || esPreprint(tipo, revista),
+      // Señales propias de Consensus que las demás no dan.
+      cuartil: Number.isFinite(o.sjr_best_quartile) ? o.sjr_best_quartile : null,
+      muestra: Number.isFinite(o.sample_size) ? o.sample_size : null,
+      resumenClave: o.takeaway || "",
+      fuente: "Consensus"
+    };
+  });
+}
+
 function normalizarTitulo(t) {
   return String(t || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 }
@@ -338,6 +389,13 @@ function fundir(listas) {
     if (!previo.enlace && item.enlace) previo.enlace = item.enlace;
     if (!previo.revista && item.revista) previo.revista = item.revista;
     if (!previo.sourceId && item.sourceId) previo.sourceId = item.sourceId;
+    // Señales que hoy sólo trae Consensus —diseño del estudio, cuartil de la
+    // revista, tamaño de muestra y el resumen en una frase—. Sin esto se
+    // perdían en cuanto otra base había traído el mismo trabajo antes.
+    if (!previo.tipo && item.tipo) previo.tipo = item.tipo;
+    if (previo.cuartil == null && item.cuartil != null) previo.cuartil = item.cuartil;
+    if (previo.muestra == null && item.muestra != null) previo.muestra = item.muestra;
+    if (!previo.resumenClave && item.resumenClave) previo.resumenClave = item.resumenClave;
   }
   return [...por.values()];
 }
@@ -353,6 +411,11 @@ function puntaje(r) {
   if (r.registro) p += 400;                                     // ensayo registrado
   else if (!r.preprint) p += 1000;                              // revisado por pares
   if (/review|meta-?analysis|revisión|systematic/i.test(`${r.tipo} ${r.titulo}`)) p += 300;
+  // Un ensayo aleatorizado pesa más que un observacional. Consensus lo declara
+  // explícitamente («rct»), así que aquí deja de ser una adivinanza del título.
+  else if (/\brct\b|randomi[sz]ed|aleatorizado/i.test(`${r.tipo} ${r.titulo}`)) p += 200;
+  // Cuartil de la revista: 1 es el mejor. Sólo suma cuando se conoce.
+  if (r.cuartil >= 1 && r.cuartil <= 4) p += (5 - r.cuartil) * 25;
   if (r.fuentes.length > 1) p += 50;                            // aparece en varias
   p += Math.min(r.citas ?? 0, 2000) / 10;                       // citas, con techo
   if (r.anio) p += Math.max(0, 20 - (ESTE_ANIO - r.anio));      // recencia suave
@@ -390,10 +453,10 @@ export async function buscarLiteratura(consulta, opciones = {}) {
   const intentos = await Promise.allSettled([
     deOpenAlex(termino), deCrossref(termino), deEuropePMC(termino), dePubMed(termino),
     deSemanticScholar(termino), deArxiv(termino),
-    deClinicalTrials(termino), deBVS(termino), deEpistemonikos(termino)
+    deClinicalTrials(termino), deBVS(termino), deEpistemonikos(termino), deConsensus(termino)
   ]);
   const nombres = ["OpenAlex", "Crossref", "Europe PMC", "PubMed", "Semantic Scholar", "arXiv",
-    "ClinicalTrials.gov", "SciELO/LILACS", "Epistemonikos"];
+    "ClinicalTrials.gov", "SciELO/LILACS", "Epistemonikos", "Consensus"];
   const listas = [];
   const fallaron = [];
   intentos.forEach((res, i) => {
@@ -436,6 +499,12 @@ export async function buscarLiteratura(consulta, opciones = {}) {
       estado: r.estado || null,
       accesoAbierto: r.accesoAbierto,
       pdf: r.pdf || null,
+      // Diseño del estudio y calidad de la revista: es lo que permite decir el
+      // nivel de evidencia en vez de insinuarlo.
+      tipo: r.tipo || null,
+      cuartil: r.cuartil ?? null,
+      muestra: r.muestra ?? null,
+      resumenClave: r.resumenClave || null,
       // Las bases de las que salió, para que se vea que no es una sola.
       fuentes: r.fuentes
     }));
