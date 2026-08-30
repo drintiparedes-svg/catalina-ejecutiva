@@ -522,3 +522,56 @@ export async function buscarLiteratura(consulta, opciones = {}) {
     fallaron
   };
 }
+
+
+// Comprueba la clave de Consensus contra su API, con una búsqueda mínima. Dice
+// qué pasa exactamente —clave ausente, rechazada, sin plan, cuota agotada— en
+// vez de un «no funciona» que obliga a adivinar.
+export async function probarConsensus() {
+  const clave = process.env.CONSENSUS_API_KEY?.trim();
+  if (!clave) {
+    return { ok: false, code: "SIN_CLAVE",
+      error: "No hay CONSENSUS_API_KEY en el servidor. Añádela en Vercel → Settings → Environment Variables y haz Redeploy." };
+  }
+  // Se dice cómo es la clave sin revelarla: sirve para detectar un copiado a
+  // medias o con espacios, que es el fallo más común.
+  const huella = { largo: clave.length, empieza: clave.slice(0, 4) + "…" };
+
+  let r, crudo;
+  try {
+    const params = new URLSearchParams({ query: "test", page_size: "1" });
+    r = await fetch(`https://api.consensus.app/v1/search?${params}`, {
+      headers: { "x-api-key": clave, Accept: "application/json" },
+      signal: AbortSignal.timeout(TIEMPO)
+    });
+    crudo = await r.text();
+  } catch (error) {
+    return { ok: false, code: "SIN_RED", huella,
+      error: error.name === "TimeoutError" ? "Consensus tardó demasiado en responder." : "No se pudo contactar con Consensus." };
+  }
+
+  if (r.status === 401 || r.status === 403) {
+    return { ok: false, code: "CLAVE_RECHAZADA", estado: r.status, huella,
+      error: `Consensus rechazó la clave (${r.status}). Revisa que sea la clave completa de tu cuenta y que tu plan incluya API.`,
+      detalle: crudo.slice(0, 200) };
+  }
+  if (r.status === 429) {
+    return { ok: false, code: "CUOTA", estado: 429, huella,
+      error: "La clave es válida pero se agotó la cuota o se superó el límite de peticiones." };
+  }
+  if (!r.ok) {
+    return { ok: false, code: "ERROR", estado: r.status, huella,
+      error: `Consensus respondió ${r.status}.`, detalle: crudo.slice(0, 200) };
+  }
+
+  let datos = {};
+  try { datos = JSON.parse(crudo); } catch {}
+  const cuantos = (datos.results ?? []).length;
+  const ejemplo = (datos.results ?? [])[0];
+  return {
+    ok: true, estado: 200, huella,
+    resultados: cuantos,
+    // Una muestra real prueba que no sólo autentica: además devuelve datos.
+    ejemplo: ejemplo ? { titulo: ejemplo.title, anio: ejemplo.publish_year, tipo: ejemplo.study_type || null } : null
+  };
+}

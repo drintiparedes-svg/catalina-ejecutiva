@@ -44,7 +44,7 @@
   <p class="sub">Prueba <b>directamente</b> generar imagen, buscar imagen y buscar video —sin pasar por la voz—.
     Así se ve si el problema es el servidor/las claves o si es que el agente no llama a la herramienta.
     Hazle una captura y mándala.</p>
-  <p class="sub" style="font-size:.85rem;opacity:.7">Página del <b>2026-08-24.26</b>. El paso 0 debe decir esta misma versión; si no, el despliegue no tomó.</p>
+  <p class="sub" style="font-size:.85rem;opacity:.7">Página del <b>2026-08-28.9</b>. El paso 0 debe decir esta misma versión; si no, el despliegue no tomó.</p>
 
   <section class="paso" id="p0"><h2><span class="marca espera">•</span> 0. Servidor y claves</h2><p class="detalle">Comprobando…</p></section>
   <section class="paso" id="p1"><h2><span class="marca espera">•</span> 1. Generar imagen con IA <code>/imagen/generar</code></h2><p class="detalle">Esperando…</p></section>
@@ -53,12 +53,14 @@
   <section class="paso" id="p5"><h2><span class="marca espera">•</span> 4. Buscar imágenes en la web (Google) <code>/imagenes/web</code></h2><p class="detalle">Esperando…</p></section>
   <section class="paso" id="p3"><h2><span class="marca espera">•</span> 5. Buscar video <code>/videos/buscar</code></h2><p class="detalle">Esperando…</p></section>
 
+  <section class="paso" id="p6"><h2><span class="marca espera">•</span> 6. Literatura: clave de Consensus <code>/literatura/consensus</code></h2><p class="detalle">Esperando…</p></section>
+
   <button onclick="location.reload()">Volver a probar</button>
   <p class="sub" style="margin-top:1.5rem;font-size:.9rem">¿El camino de la voz? Está en <a href="/diagnostico.html">/diagnostico.html</a>.</p>
 </main>
 
 <script type="module">
-const pasos = { 0: "#p0", 1: "#p1", 2: "#p2", 3: "#p3", 4: "#p4", 5: "#p5" };
+const pasos = { 0: "#p0", 1: "#p1", 2: "#p2", 3: "#p3", 4: "#p4", 5: "#p5", 6: "#p6" };
 function marcar(n, estado, ...nodos) {
   const caja = document.querySelector(pasos[n]);
   const marca = caja.querySelector(".marca");
@@ -173,6 +175,29 @@ try {
       "Si dice que rechazó la clave, entra a Google Cloud → APIs y servicios → Biblioteca, y activa <b>YouTube Data API v3</b> en el proyecto de esa clave.");
   }
 } catch (e) { marcar(3, "mal", "Falló la petición.", `<code>${esc(e.message)}</code>`); }
+
+// 6. Clave de Consensus. Se pregunta al servidor, que es quien la tiene: aquí
+// nunca viaja la clave, sólo el veredicto.
+try {
+  const c = await (await fetch("/literatura/consensus")).json();
+  if (c.ok) {
+    marcar(6, "bien",
+      `La clave <b class="bien">funciona</b>: Consensus autenticó y devolvió ${c.resultados} resultado(s).`,
+      c.ejemplo ? `Ejemplo: <b>${esc(c.ejemplo.titulo)}</b>${c.ejemplo.anio ? " (" + esc(c.ejemplo.anio) + ")" : ""}${c.ejemplo.tipo ? " — diseño: <code>" + esc(c.ejemplo.tipo) + "</code>" : ""}.` : "",
+      `Clave usada: empieza por <code>${esc(c.huella?.empieza)}</code>, ${esc(c.huella?.largo)} caracteres.`);
+  } else if (c.code === "SIN_CLAVE") {
+    marcar(6, "espera", `<b class="espera">No hay clave configurada.</b> ${esc(c.error)}`,
+      "Sin ella, Consensus no se consulta y las otras nueve fuentes siguen funcionando.");
+  } else if (c.code === "CLAVE_RECHAZADA") {
+    marcar(6, "mal", `<b class="mal">Consensus rechazó la clave (${esc(c.estado)}).</b>`,
+      `La clave que tiene el servidor empieza por <code>${esc(c.huella?.empieza)}</code> y mide ${esc(c.huella?.largo)} caracteres: comprueba que esté completa y sin espacios.`,
+      c.detalle ? `Respuesta de Consensus: <code>${esc(c.detalle)}</code>` : "");
+  } else if (c.code === "CUOTA") {
+    marcar(6, "espera", "<b class=\"espera\">La clave es válida, pero se agotó la cuota</b> o se superó el límite de peticiones.");
+  } else {
+    marcar(6, "mal", `No se pudo comprobar: <code>${esc(c.error)}</code>`);
+  }
+} catch (e) { marcar(6, "mal", "Falló la comprobación.", `<code>${esc(e.message)}</code>`); }
 </script>
 </body>
 </html>

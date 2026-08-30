@@ -7,7 +7,7 @@ import { plantillaMediSmart, versionTexto, enviarPorResend } from "./correo.mjs"
 import { buscarCentros, calcularRuta, ubicarLugar } from "./salud.mjs";
 import { buscarEnLaWeb, leerPagina, generarImagen, buscarVideos, hayWeb, hayVideos } from "./investigacion.mjs";
 import { buscarImagenes, buscarImagenesWebAbierta, fuentesClinicas, proxearImagen, hayImagenesWeb, hayImagenesWebAbierta, hayBuscadorWebCompleto } from "./medios.mjs";
-import { buscarLiteratura } from "./literatura.mjs";
+import { buscarLiteratura, probarConsensus } from "./literatura.mjs";
 import {
   telefoniaLista, originarLlamada, estadoLlamada, twimlPuente,
   firmaValida, atenderLlamadaEntrante, anotarEstadoTwilio
@@ -20,7 +20,7 @@ import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // Se sube a mano con cada arreglo que el usuario tiene que descargar.
-export const VERSION = "2026-08-28.8";
+export const VERSION = "2026-08-28.9";
 
 const root = fileURLToPath(new URL("./public", import.meta.url));
 // El .env se lee de forma síncrona a propósito. Con `await` aquí arriba, en el
@@ -105,6 +105,12 @@ export async function atender(req, res) {
     // Qué herramientas tiene REGISTRADAS el agente en ElevenLabs, según
     // ElevenLabs. Es la comprobación que distingue «Catalina no quiso llamar»
     // de «el agente no tiene la herramienta para hacerlo», sin gastar llamadas.
+    // Comprueba la clave de Consensus contra su API, sin gastar una búsqueda
+    // real: dice si autentica y si devuelve datos.
+    if (req.method === "GET" && req.url === "/literatura/consensus") {
+      return json(res, 200, await probarConsensus());
+    }
+
     if (req.method === "GET" && req.url === "/elevenlabs/herramientas") {
       return await herramientasDelAgente(res);
     }
