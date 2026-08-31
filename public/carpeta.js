@@ -35,10 +35,18 @@ function conBase(modo, trabajo) {
     };
     p.onerror = () => rechazar(p.error);
     p.onsuccess = () => {
-      const t = p.result.transaction(ALMACEN, modo);
-      const peticion = trabajo(t.objectStore(ALMACEN));
-      peticion.onsuccess = () => resolver(peticion.result);
-      peticion.onerror = () => rechazar(peticion.error);
+      // El try es imprescindible: `put` de algo que el navegador no sabe clonar
+      // revienta AQUÍ dentro, en el manejador del evento, donde ningún try de
+      // fuera lo alcanza. Sin esto la promesa no se resolvía nunca y quien la
+      // esperaba se quedaba colgado hasta el plazo de abajo.
+      try {
+        const t = p.result.transaction(ALMACEN, modo);
+        const peticion = trabajo(t.objectStore(ALMACEN));
+        peticion.onsuccess = () => resolver(peticion.result);
+        peticion.onerror = () => rechazar(peticion.error);
+      } catch (error) {
+        rechazar(error);
+      }
     };
     setTimeout(() => rechazar(new Error("El navegador no respondió.")), 5000);
   });

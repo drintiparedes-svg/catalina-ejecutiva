@@ -927,6 +927,16 @@ function permisoDeDrive() {
   catch { return ""; }
 }
 
+// ¿Hay alguna otra vía de archivo montada? Sirve para no reclamar Google Drive
+// cuando las minutas ya se están guardando por otro lado.
+function hayOtroArchivo() {
+  return Boolean(miCorreo()) || (carpetaDisponible() && Boolean(carpetaDeLaSesion));
+}
+// Se recuerda al pintar el cierre: consultarlo es asíncrono y aquí hace falta
+// una respuesta inmediata.
+let carpetaDeLaSesion = null;
+carpetaGuardada().then(c => { carpetaDeLaSesion = c; }).catch(() => {});
+
 // Tu propio correo, si lo configuraste. Mandarte a ti mismo la minuta no es la
 // acción externa que exige confirmación —no sale de tu círculo— y convierte tu
 // bandeja en el archivo: buscable, en todos tus dispositivos y con copia de
@@ -1682,8 +1692,13 @@ function pintarCierre(datos, integridad = { ok: true, comprobaciones: [], fallos
       guardado.append(enlace);
     }
   } else if (["SIN_CUENTA", "SIN_CLIENTE", "SIN_CONFIGURAR"].includes(datos.drive?.code)) {
-    bloque("Guardado en Drive", parrafo("No hay ninguna cuenta de Google conectada: descarga los archivos desde aquí. "
-      + "Para que se guarden solos, conecta tu Drive en /reunion.html.", "cierre-aviso"));
+    // Drive por internet es una de tres vías, y la más opcional. Si ya se
+    // archiva por carpeta o por correo, reclamarlo aquí sería insistir con algo
+    // que quien lo montó decidió no usar.
+    if (!hayOtroArchivo()) {
+      bloque("Guardado en Drive", parrafo("No hay ninguna cuenta de Google conectada: descarga los archivos desde aquí. "
+        + "Para que se guarden solos, elige una carpeta o pon tu correo en /reunion.html.", "cierre-aviso"));
+    }
   } else {
     bloque("Guardado en Drive", parrafo(datos.drive?.error || "No se pudieron guardar en Drive.", "cierre-aviso"));
   }

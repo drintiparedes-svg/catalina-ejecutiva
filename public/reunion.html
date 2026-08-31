@@ -21,6 +21,9 @@
   label { display:block; font-size:.85rem; color:#8B93A3; margin:1.1rem 0 .2rem; }
   input { width:100%; box-sizing:border-box; padding:.55rem .7rem; border-radius:8px; border:1px solid #2B303A; background:#0F1116; color:#E4E7ED; font:inherit; }
   button { font:inherit; font-weight:600; margin-top:.7rem; background:#2C6E72; color:#fff; border:0; border-radius:8px; padding:.6rem 1.1rem; cursor:pointer; }
+  details.paso > summary { cursor:pointer; font-size:1rem; }
+  details.paso > summary b { font-weight:600; }
+  details.paso[open] > summary { margin-bottom:.5rem; }
   .boton { display:inline-block; margin-top:1rem; font:inherit; font-weight:600; background:#2C6E72; color:#fff; border:0; border-radius:8px; padding:.6rem 1.1rem; cursor:pointer; text-decoration:none; }
 </style>
 </head>
@@ -31,7 +34,7 @@
      deja la transcripción corregida en Word y la minuta ejecutiva en PDF. Aquí se comprueba qué parte de eso está lista.</p>
 
   <section class="paso" id="pRedaccion"><h2><span class="marca espera">•</span> 1. Redacción de la minuta</h2><p class="detalle">Comprobando…</p></section>
-  <section class="paso" id="pDrive"><h2><span class="marca espera">•</span> 2. Guardado en Google Drive</h2><p class="detalle">Comprobando…</p></section>
+  <section class="paso" id="pArchivo"><h2><span class="marca espera">•</span> 2. Dónde se archivan las minutas</h2><p class="detalle">Comprobando…</p></section>
   <section class="paso" id="pCorreo"><h2><span class="marca espera">•</span> 3. Envío por correo</h2><p class="detalle">Comprobando…</p></section>
 
   <section class="paso">
@@ -65,16 +68,16 @@
     <p class="detalle" id="avisoMiCorreo"></p>
   </section>
 
-  <section class="paso" id="pCuenta">
-    <h2>Conectar Google Drive <span style="font-weight:400;color:#8B93A3;font-size:.85rem">(opcional)</span></h2>
-    <p class="detalle">Hace falta sólo si quieres que suba a Drive <b>por internet</b>, sin la aplicación de
-       escritorio: desde el teléfono, o desde un navegador que no sea Chrome. Si te basta con la carpeta de arriba,
-       puedes saltarte esto entero.</p>
+  <details class="paso" id="pCuenta">
+    <summary><b>Conectar Google Drive por internet</b> — opcional, casi seguro no te hace falta</summary>
+    <p class="detalle">Sólo sirve para subir a Drive <b>sin</b> la aplicación de escritorio: desde el teléfono, o
+       desde un navegador que no sea Chrome. Si usas la carpeta de arriba, tus minutas ya llegan a tu Drive y
+       esto no aporta nada.</p>
     <div id="cuentaCuerpo"><p class="detalle">Comprobando…</p></div>
-  </section>
+  </details>
 
-  <section class="paso" id="pPreparar" hidden>
-    <h2>Preparar la conexión (una sola vez)</h2>
+  <details class="paso" id="pPreparar" hidden>
+    <summary><b>Preparar la conexión con Drive por internet</b> (una sola vez)</summary>
     <p class="detalle">Google no deja que ninguna aplicación entre en un Drive sabiendo el correo: siempre tiene que
        ser la persona quien lo autorice en una pantalla suya. Lo que sí hace falta una única vez es registrar esta
        aplicación en Google; después, conectar tu cuenta es pulsar un botón.</p>
@@ -90,10 +93,10 @@
       <li>Copia el ID y el secreto a Vercel como <code>GOOGLE_CLIENT_ID</code> y <code>GOOGLE_CLIENT_SECRET</code>,
           y haz <b>Redeploy</b>. Eso es todo: a partir de ahí no hay que volver a tocar Vercel.</li>
     </ol>
-  </section>
+  </details>
 
   <section class="paso" id="pCarpeta" hidden>
-    <h2>Dónde guardar las minutas</h2>
+    <h2>Carpeta de Drive (por internet)</h2>
     <div id="carpetaCuerpo"></div>
   </section>
 
@@ -140,7 +143,36 @@ const guardado = (clave, valor) => {
   } catch { return ""; }
 };
 
+let driveConectado = false;
 const cuentaCuerpo = document.querySelector("#cuentaCuerpo");
+
+// Un solo veredicto sobre el archivo, con las tres vías juntas. Antes había una
+// línea que decía «falta Google Drive» aunque estuviera todo resuelto por otro
+// camino, que es pedirle a alguien algo que ya decidió no usar.
+async function pintarResumenDeArchivo() {
+  const carpeta = await (async () => {
+    if (!c.carpetaDisponible()) return null;
+    const guardadaAhora = await c.carpetaGuardada();
+    return guardadaAhora ? { nombre: guardadaAhora.name, permiso: await c.permisoDeCarpeta(guardadaAhora) } : null;
+  })();
+  const correoPropio = guardado(CLAVE_MI_CORREO);
+
+  const vias = [];
+  if (carpeta) {
+    vias.push(carpeta.permiso === "si"
+      ? `carpeta <b>${esc(carpeta.nombre)}</b>`
+      : `carpeta <b>${esc(carpeta.nombre)}</b> (falta volver a dar permiso)`);
+  }
+  if (correoPropio) vias.push(`copia a <code>${esc(correoPropio)}</code>`);
+  if (driveConectado) vias.push("Google Drive por internet");
+
+  const bien = vias.length && (!carpeta || carpeta.permiso === "si" || vias.length > 1);
+  marcar("#pArchivo", vias.length ? (bien ? "bien" : "espera") : "mal",
+    vias.length
+      ? `Las minutas se archivan en: ${vias.join(" · ")}.`
+      : "Ninguna vía configurada: los documentos habrá que descargarlos a mano desde la pantalla de cierre.",
+    vias.length ? "" : "Lo más simple es elegir una carpeta dentro de tu Google Drive, más abajo.");
+}
 const carpetaCuerpo = document.querySelector("#carpetaCuerpo");
 
 const pedir = (ruta, cuerpo = {}) => fetch(ruta, {
@@ -151,11 +183,7 @@ const pedir = (ruta, cuerpo = {}) => fetch(ruta, {
 
 async function pintarCuenta() {
   const estado = await pedir("/drive/estado");
-  marcar("#pDrive", estado.ok ? "bien" : (estado.code === "SIN_CLIENTE" ? "espera" : "mal"),
-    estado.ok
-      ? "Conectado. Las reuniones se guardan solas en tu Drive."
-      : esc(estado.error || "Sin conectar."));
-
+  driveConectado = estado.ok;
   document.querySelector("#pPreparar").hidden = Boolean(estado.listaParaConectar);
   document.querySelector("#pCarpeta").hidden = !estado.ok;
   cuentaCuerpo.innerHTML = "";
@@ -262,6 +290,7 @@ document.querySelector("#guardarMiCorreo").addEventListener("click", () => {
     return;
   }
   guardado(CLAVE_MI_CORREO, valor);
+  pintarResumenDeArchivo();
   avisoMio.textContent = valor
     ? `Cada reunión cerrada se te mandará a ${valor}.`
     : "Sin copia automática: el correo habrá que mandarlo a mano desde la pantalla de cierre.";
@@ -294,6 +323,7 @@ async function pintarCarpetaEquipo() {
     return;
   }
 
+  pintarResumenDeArchivo();
   const permiso = await c.permisoDeCarpeta(carpeta);
   const estado = document.createElement("p");
   estado.className = "detalle";
@@ -342,6 +372,7 @@ async function pintarCarpetaEquipo() {
 }
 
 await pintarCarpetaEquipo();
+await pintarResumenDeArchivo();
 
 // Prueba del reconocimiento de voz, aislada de todo lo demás. Cuando la reunión
 // sale sin transcripción hay que poder saber si el problema es el navegador, el

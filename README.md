@@ -603,9 +603,11 @@ archivo: buscable, en todos los dispositivos y con copia de seguridad. A uno
 mismo se manda sin preguntar —no es una acción externa—; a terceros sigue
 haciendo falta confirmarlo en dos pulsaciones.
 
-**3. Google Drive por internet**, abajo. Hace falta sólo para subir a Drive sin
-la aplicación de escritorio: desde el teléfono, o desde un navegador que no sea
-Chrome.
+**3. Google Drive por internet**, plegado al final de la pantalla. Hace falta
+sólo para subir a Drive sin la aplicación de escritorio: desde el teléfono, o
+desde un navegador que no sea Chrome. Con la carpeta montada no aporta nada, y
+por eso ni la pantalla de puesta a punto ni la de cierre lo reclaman cuando ya
+se archiva por otra vía: insistir con algo que se decidió no usar es ruido.
 
 ### Conectar Google Drive
 
