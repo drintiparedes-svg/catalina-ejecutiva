@@ -42,32 +42,33 @@
     <p class="detalle" id="resultadoVoz"></p>
   </section>
 
-  <section class="paso">
-    <h2>Cómo autorizar Google Drive</h2>
-    <p class="detalle">Se pide el permiso mínimo (<code>drive.file</code>): Catalina sólo puede tocar los archivos que
-       ella misma crea, no el resto de tu Drive.</p>
+  <section class="paso" id="pCuenta">
+    <h2>Tu cuenta de Google</h2>
+    <div id="cuentaCuerpo"><p class="detalle">Comprobando…</p></div>
+  </section>
+
+  <section class="paso" id="pPreparar" hidden>
+    <h2>Preparar la conexión (una sola vez)</h2>
+    <p class="detalle">Google no deja que ninguna aplicación entre en un Drive sabiendo el correo: siempre tiene que
+       ser la persona quien lo autorice en una pantalla suya. Lo que sí hace falta una única vez es registrar esta
+       aplicación en Google; después, conectar tu cuenta es pulsar un botón.</p>
     <ol>
       <li>En <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">Google Cloud → Credenciales</a>,
           crea un <b>ID de cliente de OAuth</b> de tipo «Aplicación web».</li>
-      <li>En «URI de redireccionamiento autorizados» añade exactamente: <code id="redir">…</code></li>
-      <li>Activa la <a href="https://console.cloud.google.com/apis/library/drive.googleapis.com" target="_blank" rel="noopener">Google Drive API</a> en ese mismo proyecto.</li>
-      <li>Copia el ID y el secreto a Vercel como <code>GOOGLE_CLIENT_ID</code> y <code>GOOGLE_CLIENT_SECRET</code>, y haz <b>Redeploy</b>.</li>
-      <li>Vuelve aquí y pulsa el botón. Google te devolverá un permiso permanente: guárdalo como
-          <code>GOOGLE_REFRESH_TOKEN</code> y haz <b>Redeploy</b> otra vez.</li>
-      <li>Opcional: abre la carpeta de Drive donde quieras las minutas y copia el identificador que sale en su
-          dirección (<code>drive.google.com/drive/folders/<b>ESTO</b></code>) a <code>GOOGLE_DRIVE_CARPETA</code>.
-          Si no la pones, o si no es accesible, los archivos van a una carpeta propia llamada «Catalina — Reuniones».</li>
+      <li>En «URI de redireccionamiento autorizados» pega exactamente: <code id="redir">…</code></li>
+      <li>Activa la <a href="https://console.cloud.google.com/apis/library/drive.googleapis.com" target="_blank" rel="noopener">Google Drive API</a> en ese proyecto.</li>
+      <li>En la <b>pantalla de consentimiento</b>, pon el estado en <b>«En producción»</b>. Con «Prueba», Google
+          caduca el permiso <b>cada 7 días</b> y habría que reconectar todas las semanas. Publicar no requiere
+          verificación: el permiso que se pide (<code>drive.file</code>) sólo da acceso a los archivos que
+          Catalina crea, no al resto de tu Drive.</li>
+      <li>Copia el ID y el secreto a Vercel como <code>GOOGLE_CLIENT_ID</code> y <code>GOOGLE_CLIENT_SECRET</code>,
+          y haz <b>Redeploy</b>. Eso es todo: a partir de ahí no hay que volver a tocar Vercel.</li>
     </ol>
-    <a class="boton" href="/drive/autorizar">Autorizar el acceso a Drive</a>
+  </section>
 
-    <label for="carpeta">Carpeta donde guardar las minutas (opcional)</label>
-    <input id="carpeta" placeholder="1a2B3c4D5e6F7g8H9i0J..." autocomplete="off">
-    <p class="detalle">Se guarda en este navegador, así que puedes cambiarla sin volver a desplegar.
-       Si la dejas vacía se usa <code>GOOGLE_DRIVE_CARPETA</code>; y si ninguna de las dos es accesible,
-       los archivos van a «Catalina — Reuniones».</p>
-    <p class="detalle" id="ordenCarpeta"></p>
-    <button id="guardarCarpeta">Guardar la carpeta</button>
-    <p class="detalle" id="avisoCarpeta"></p>
+  <section class="paso" id="pCarpeta" hidden>
+    <h2>Dónde guardar las minutas</h2>
+    <div id="carpetaCuerpo"></div>
   </section>
 
   <section class="paso">
@@ -84,8 +85,8 @@
           preguntarle a Catalina sobre una reunión pasada o usarla como antecedente de una de seguimiento.</li>
       <li><b>Agregar documento</b> lee PDF, Word, Excel, PowerPoint y texto en el propio navegador. De las imágenes
           y de los PDF escaneados no puede sacar texto: pide una descripción y la usa como tal.</li>
-      <li><b>Finalizar reunión</b> genera los dos documentos, los guarda en Drive y propone el correo. El correo
-          no sale hasta que alguien lo confirma en pantalla.</li>
+      <li><b>Finalizar reunión</b> genera los dos documentos, los guarda en la carpeta de Drive que elegiste y
+          propone el correo. El correo no sale hasta que alguien lo confirma en pantalla.</li>
       <li>Cerrar la reunión <b>no la borra</b>: la conversación sigue y Catalina responde sobre ella
           —acuerdos, pendientes, quién dijo qué— con la transcripción entera a mano.</li>
     </ul>
@@ -99,27 +100,128 @@
 const esc = s => String(s ?? "").replace(/</g, "&lt;");
 document.querySelector("#redir").textContent = `${location.origin}/drive/callback`;
 
-// La carpeta elegida vive en el navegador y viaja con cada cierre de reunión.
-// Es la misma clave que lee la aplicación.
+// La cuenta y la carpeta viven en ESTE navegador. El permiso de Google no se
+// guarda en el servidor ni en las variables del despliegue: sale de aquí sólo
+// para pedirle a Google que suba los dos archivos al cerrar una reunión.
 const CLAVE_CARPETA = "catalina.reunion.carpetaDrive";
-const campoCarpeta = document.querySelector("#carpeta");
-const avisoCarpeta = document.querySelector("#avisoCarpeta");
-try { campoCarpeta.value = localStorage.getItem(CLAVE_CARPETA) || ""; } catch {}
-document.querySelector("#guardarCarpeta").addEventListener("click", () => {
-  // Se acepta la dirección entera además del identificador: copiar la barra del
-  // navegador es lo que hace todo el mundo, y pedir que lo recorte a mano sólo
-  // sirve para que se equivoque.
-  const crudo = campoCarpeta.value.trim();
-  const id = (/folders\/([A-Za-z0-9_-]+)/.exec(crudo)?.[1] || crudo).trim();
-  campoCarpeta.value = id;
+const CLAVE_PERMISO = "catalina.drive.permiso";
+
+const guardado = (clave, valor) => {
   try {
-    if (id) localStorage.setItem(CLAVE_CARPETA, id);
-    else localStorage.removeItem(CLAVE_CARPETA);
-    avisoCarpeta.textContent = id ? `Guardada: ${id}` : "Sin carpeta propia: se usará la del despliegue.";
-  } catch {
-    avisoCarpeta.textContent = "Este navegador no deja guardar la preferencia.";
+    if (valor === undefined) return localStorage.getItem(clave) || "";
+    if (valor) localStorage.setItem(clave, valor); else localStorage.removeItem(clave);
+    return valor || "";
+  } catch { return ""; }
+};
+
+const cuentaCuerpo = document.querySelector("#cuentaCuerpo");
+const carpetaCuerpo = document.querySelector("#carpetaCuerpo");
+
+const pedir = (ruta, cuerpo = {}) => fetch(ruta, {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ permiso: guardado(CLAVE_PERMISO), ...cuerpo })
+}).then(r => r.json());
+
+async function pintarCuenta() {
+  const estado = await pedir("/drive/estado");
+  marcar("#pDrive", estado.ok ? "bien" : (estado.code === "SIN_CLIENTE" ? "espera" : "mal"),
+    estado.ok
+      ? "Conectado. Las reuniones se guardan solas en tu Drive."
+      : esc(estado.error || "Sin conectar."));
+
+  document.querySelector("#pPreparar").hidden = Boolean(estado.listaParaConectar);
+  document.querySelector("#pCarpeta").hidden = !estado.ok;
+  cuentaCuerpo.innerHTML = "";
+
+  if (!estado.listaParaConectar) {
+    cuentaCuerpo.innerHTML = "<p class=\"detalle\">Falta preparar la conexión una vez. Los pasos están justo abajo.</p>";
+    return;
   }
-});
+
+  if (!estado.ok) {
+    cuentaCuerpo.innerHTML = "<p class=\"detalle\">"
+      + (estado.code === "SIN_CUENTA"
+        ? "Ninguna cuenta conectada todavía. Al pulsar, Google te preguntará con qué cuenta quieres entrar y si le das permiso a Catalina."
+        : esc(estado.error))
+      + "</p><a class=\"boton\" href=\"/drive/autorizar\">Conectar mi cuenta de Google</a>";
+    return;
+  }
+
+  const quien = estado.cuenta
+    ? `<b>${esc(estado.cuenta.displayName || "")}</b> · <code>${esc(estado.cuenta.emailAddress || "")}</code>`
+    : "cuenta conectada";
+  cuentaCuerpo.innerHTML = `<p class="detalle">Conectado como ${quien}.`
+    + (estado.permisoDelNavegador
+      ? " El permiso está guardado en este navegador, no en el servidor."
+      : " El permiso viene de las variables del despliegue.")
+    + "</p>";
+
+  const cambiar = document.createElement("a");
+  cambiar.className = "boton";
+  cambiar.href = "/drive/autorizar";
+  cambiar.textContent = "Cambiar de cuenta";
+  const desconectar = document.createElement("button");
+  desconectar.textContent = "Desconectar";
+  desconectar.addEventListener("click", () => {
+    guardado(CLAVE_PERMISO, "");
+    guardado(CLAVE_CARPETA, "");
+    pintarCuenta();
+  });
+  cuentaCuerpo.append(cambiar, " ", desconectar);
+  pintarCarpetas();
+}
+
+async function pintarCarpetas() {
+  carpetaCuerpo.innerHTML = "<p class=\"detalle\">Leyendo tus carpetas…</p>";
+  const elegida = guardado(CLAVE_CARPETA);
+  const { carpetas = [] } = await pedir("/drive/carpetas");
+  carpetaCuerpo.innerHTML = "";
+
+  const nota = document.createElement("p");
+  nota.className = "detalle";
+  // Con el permiso mínimo sólo se ven las carpetas que Catalina creó. Es el
+  // precio de no pedir acceso a todo el Drive, y merece la pena explicarlo.
+  nota.innerHTML = carpetas.length
+    ? "Elige dónde quieres las minutas. Sólo aparecen las carpetas que Catalina ha creado: con el permiso mínimo "
+      + "no puede ver el resto de tu Drive. Puedes moverla o renombrarla desde Drive y seguirá funcionando."
+    : "Todavía no hay ninguna carpeta. Créala aquí y las minutas irán a ella.";
+  carpetaCuerpo.append(nota);
+
+  for (const c of carpetas) {
+    const boton = document.createElement("button");
+    boton.textContent = (c.id === elegida ? "✓ " : "") + c.name;
+    boton.style.marginRight = ".4rem";
+    boton.addEventListener("click", () => { guardado(CLAVE_CARPETA, c.id); pintarCarpetas(); });
+    carpetaCuerpo.append(boton);
+  }
+
+  const etiqueta = document.createElement("label");
+  etiqueta.textContent = "Crear una carpeta nueva";
+  const campo = document.createElement("input");
+  campo.placeholder = "Minutas de reuniones";
+  const crear = document.createElement("button");
+  crear.textContent = "Crear y usarla";
+  crear.addEventListener("click", async () => {
+    const nombre = campo.value.trim();
+    if (!nombre) return;
+    crear.disabled = true;
+    crear.textContent = "Creando…";
+    const r = await pedir("/drive/carpeta", { nombre });
+    crear.disabled = false;
+    crear.textContent = "Crear y usarla";
+    if (r.ok) { guardado(CLAVE_CARPETA, r.id); campo.value = ""; pintarCarpetas(); }
+    else { nota.textContent = r.error || "No se pudo crear la carpeta."; }
+  });
+  carpetaCuerpo.append(etiqueta, campo, crear);
+
+  if (!elegida) {
+    const pie = document.createElement("p");
+    pie.className = "detalle";
+    pie.textContent = "Sin elegir ninguna, las minutas van a una carpeta llamada «Catalina — Reuniones».";
+    carpetaCuerpo.append(pie);
+  }
+}
 
 // Prueba del reconocimiento de voz, aislada de todo lo demás. Cuando la reunión
 // sale sin transcripción hay que poder saber si el problema es el navegador, el
@@ -192,37 +294,12 @@ try {
       "Si tu cuenta usa otro nombre de modelo, ponlo en Vercel como <code>GEMINI_MODELO</code> y haz Redeploy.");
   }
 
-  const drive = d.drive ?? {};
-  if (drive.ok) {
-    marcar("#pDrive", drive.aviso ? "espera" : "bien",
-      drive.carpetaAlcanzable === false
-        ? "Google acepta el permiso, pero la carpeta configurada no es accesible: los archivos irán a «Catalina — Reuniones»."
-        : `Listo. Las reuniones se guardan solas${drive.carpetaAlcanzable && drive.carpetaAlcanzable !== true ? ` en «${esc(drive.carpetaAlcanzable)}»` : ""}.`);
-  } else if (drive.code === "PERMISO_REVOCADO") {
-    marcar("#pDrive", "mal", "Google revocó el permiso guardado. Vuelve a autorizar con el botón de abajo.");
-  } else {
-    const faltan = [
-      drive.clienteConfigurado ? "" : "<code>GOOGLE_CLIENT_ID</code>",
-      drive.secretoConfigurado ? "" : "<code>GOOGLE_CLIENT_SECRET</code>",
-      drive.permisoGuardado ? "" : "<code>GOOGLE_REFRESH_TOKEN</code>"
-    ].filter(Boolean);
-    marcar("#pDrive", "mal",
-      faltan.length ? `Falta por configurar: ${faltan.join(", ")}.` : esc(drive.error || "No se pudo comprobar."),
-      "Sin Drive el modo reunión funciona igual: los documentos se descargan desde la pantalla de cierre.");
-  }
-
-  // La carpeta no sirve de nada hasta que Drive esté autorizado: decirlo aquí
-  // evita elegir una carpeta y esperar que pase algo.
-  document.querySelector("#ordenCarpeta").innerHTML = drive.ok
-    ? ""
-    : "<b>Primero hay que autorizar Drive</b> (los pasos de arriba). Mientras no lo esté, elegir carpeta no hace nada "
-      + "y los documentos se descargan desde la pantalla de cierre.";
-
   marcar("#pCorreo", d.correo ? "bien" : "mal",
     d.correo
       ? "Listo. La minuta se puede mandar por correo desde la pantalla de cierre, con los dos archivos adjuntos."
       : "Falta <code>RESEND_API_KEY</code>. Los documentos se pueden descargar igual, pero no enviarlos desde aquí.",
     d.correo ? "El envío pide confirmación en dos pasos: primero enseña a quién va, y sólo la segunda pulsación lo manda." : "");
+  await pintarCuenta();
 } catch (error) {
   for (const id of ["#pRedaccion", "#pDrive", "#pCorreo"]) {
     marcar(id, "mal", `No se pudo consultar el diagnóstico: <code>${esc(error.message)}</code>`);

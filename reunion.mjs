@@ -347,12 +347,14 @@ export async function cerrarReunion(reunion) {
   // La carpeta puede venir elegida desde la pantalla de puesta a punto. Se
   // prefiere ésa a la de las variables de entorno: cambiarla no debería exigir
   // volver a desplegar.
-  const drive = driveConfigurado()
+  // El permiso de la cuenta lo trae el navegador de quien la conectó; si no,
+  // se usa el del despliegue.
+  const drive = driveConfigurado(reunion.driveRefresco)
     ? await guardarEnDrive([
       { nombre: nombres.transcripcion, tipo: TIPO_DOCX, contenido: docx },
       { nombre: nombres.minuta, tipo: TIPO_PDF, contenido: pdf }
-    ], reunion.carpetaDrive)
-    : { ok: false, code: "SIN_CONFIGURAR", error: "Google Drive no está configurado en este despliegue.", archivos: [] };
+    ], reunion.carpetaDrive, reunion.driveRefresco)
+    : { ok: false, code: "SIN_CUENTA", error: "No hay ninguna cuenta de Google Drive conectada.", archivos: [] };
 
   const integridad = revisarIntegridad({ reunion, revision, cuaderno, docx, pdf, minuta });
 

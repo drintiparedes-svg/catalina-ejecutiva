@@ -18,12 +18,12 @@ import {
 } from "./llamadas.mjs";
 import { cerrarReunion } from "./reunion.mjs";
 import { hayRedaccion, probarRedaccion } from "./redaccion.mjs";
-import { estadoDrive, urlDeConsentimiento, canjearCodigo } from "./drive.mjs";
+import { estadoDrive, urlDeConsentimiento, canjearCodigo, carpetasPropias, crearCarpeta } from "./drive.mjs";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // Se sube a mano con cada arreglo que el usuario tiene que descargar.
-export const VERSION = "2026-08-31.4";
+export const VERSION = "2026-08-31.5";
 
 const root = fileURLToPath(new URL("./public", import.meta.url));
 // El .env se lee de forma síncrona a propósito. Con `await` aquí arriba, en el
@@ -307,7 +307,7 @@ export async function atender(req, res) {
       // La redacción se COMPRUEBA contra el modelo, no se da por buena porque
       // haya clave: el fallo real fue una clave válida con un modelo que ya no
       // existía, y eso sólo se ve preguntándole.
-      const [modelo, drive] = await Promise.all([probarRedaccion(), estadoDrive()]);
+      const [modelo, drive] = await Promise.all([probarRedaccion(), estadoDrive("")]);
       return json(res, 200, {
         redaccion: hayRedaccion(),
         modelo,
@@ -336,6 +336,24 @@ export async function atender(req, res) {
       return canje.ok
         ? paginaDeDrive(res, "", canje.refresco)
         : paginaDeDrive(res, canje.error, "");
+    }
+
+    // Estado, carpetas y creación de carpeta con la cuenta que conectó el
+    // navegador. Van por POST porque el permiso viaja en el cuerpo: en la
+    // dirección acabaría en los registros del servidor.
+    if (req.method === "POST" && req.url.startsWith("/drive/")) {
+      let cuerpo = {};
+      try { cuerpo = JSON.parse(await readBody(req) || "{}"); } catch {}
+      const permiso = String(cuerpo.permiso || "");
+
+      if (req.url === "/drive/estado") return json(res, 200, await estadoDrive(permiso));
+      if (req.url === "/drive/carpetas") return json(res, 200, await carpetasPropias(permiso));
+      if (req.url === "/drive/carpeta") {
+        const nombre = String(cuerpo.nombre || "").trim();
+        if (!nombre) return json(res, 400, { ok: false, error: "Falta el nombre de la carpeta." });
+        return json(res, 200, await crearCarpeta(nombre, permiso));
+      }
+      return json(res, 404, { error: "No encontrado" });
     }
 
     if (req.method === "POST" && req.url === "/conector") {
@@ -1988,20 +2006,36 @@ function origenDe(req) {
   return `${protocolo}://${req.headers.host}`;
 }
 
-// Página de vuelta de Google. Enseña el permiso una sola vez, aquí, y no lo
-// guarda en ningún sitio: el único lugar donde debe quedar es en las variables
-// de entorno del despliegue.
+// Página de vuelta de Google.
+//
+// El permiso se guarda aquí mismo, en el navegador de quien acaba de autorizar,
+// y no se guarda en ningún otro sitio. Antes se enseñaba para copiarlo a mano en
+// las variables del despliegue y volver a desplegar: funcionaba, pero pedirle
+// eso a alguien por guardar una minuta era desproporcionado.
 function paginaDeDrive(res, error, refresco) {
   const escapar = t => String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   const cuerpo = error
-    ? `<h1>No se pudo autorizar</h1><p class="mal">${escapar(error)}</p>
+    ? `<h1>No se pudo conectar</h1><p class="mal">${escapar(error)}</p>
        <p><a href="/reunion.html">Volver</a></p>`
-    : `<h1>Autorizado</h1>
-       <p>Copia esto y guárdalo en Vercel como la variable <code>GOOGLE_REFRESH_TOKEN</code>.
-          Luego haz un <em>Redeploy</em>. No se guarda en ningún otro sitio: si cierras esta
-          página sin copiarlo, hay que volver a autorizar.</p>
-       <textarea readonly rows="3" onclick="this.select()">${escapar(refresco)}</textarea>
+    : `<h1 id="titulo">Conectando…</h1>
+       <p id="detalle">Guardando el permiso en este navegador.</p>
        <p><a href="/reunion.html">Volver a la puesta a punto</a></p>`;
+
+  // El permiso viaja incrustado en la página y de ahí al almacén del navegador.
+  // No se registra ni se devuelve por ninguna otra vía.
+  const guion = error ? "" : `<script>
+    try {
+      localStorage.setItem("catalina.drive.permiso", ${JSON.stringify(refresco)});
+      document.querySelector("#titulo").textContent = "Cuenta conectada";
+      document.querySelector("#detalle").textContent =
+        "Ya puedes elegir la carpeta y cerrar reuniones. El permiso queda en este navegador y en ningún otro sitio.";
+      setTimeout(() => { location.href = "/reunion.html"; }, 1400);
+    } catch (e) {
+      document.querySelector("#titulo").textContent = "No se pudo guardar";
+      document.querySelector("#detalle").textContent =
+        "Este navegador no deja guardar el permiso. Prueba fuera de una ventana privada.";
+    }
+  </script>`;
 
   res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
   res.end(`<!doctype html><html lang="es"><head><meta charset="utf-8">
@@ -2009,10 +2043,8 @@ function paginaDeDrive(res, error, refresco) {
 <title>Google Drive · Catalina</title><style>
 body{margin:0;padding:40px 22px;background:#050b12;color:#e9f6fc;font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
 main{max-width:620px;margin:0 auto}h1{font-size:22px;margin:0 0 14px}
-p{color:rgba(233,246,252,.8)}code{background:rgba(255,255,255,.08);padding:2px 6px;border-radius:5px}
-textarea{width:100%;box-sizing:border-box;padding:12px;border-radius:12px;border:1px solid rgba(180,225,245,.25);
-background:rgba(255,255,255,.05);color:#e9f6fc;font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}
-a{color:#6de4ff}.mal{color:#ffb84d}</style></head><body><main>${cuerpo}</main></body></html>`);
+p{color:rgba(233,246,252,.8)}a{color:#6de4ff}.mal{color:#ffb84d}</style></head>
+<body><main>${cuerpo}</main>${guion}</body></html>`);
 }
 
 // Uso de un conector durante la conversación. El navegador manda el nombre, no

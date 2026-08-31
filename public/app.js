@@ -919,6 +919,13 @@ function carpetaDeDrive() {
   catch { return ""; }
 }
 
+// El permiso de la cuenta de Google que se conectó en /reunion.html. Vive aquí,
+// en este navegador, y sólo viaja al propio servidor al cerrar una reunión.
+function permisoDeDrive() {
+  try { return localStorage.getItem("catalina.drive.permiso") || ""; }
+  catch { return ""; }
+}
+
 // ── Historial ────────────────────────────────────────────────────────────────
 //
 // Una reunión no termina en dos archivos: termina en algo que se consulta
@@ -1379,7 +1386,11 @@ async function cerrarLaReunion() {
     const respuesta = await fetch("/reunion/cerrar", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...memoria.paraEnviar(), carpetaDrive: carpetaDeDrive() })
+      body: JSON.stringify({
+        ...memoria.paraEnviar(),
+        carpetaDrive: carpetaDeDrive(),
+        driveRefresco: permisoDeDrive()
+      })
     });
     datos = await respuesta.json();
     if (!respuesta.ok) throw new Error(datos?.error || `El servidor respondió ${respuesta.status}`);
@@ -1610,9 +1621,9 @@ function pintarCierre(datos, integridad = { ok: true, comprobaciones: [], fallos
       enlace.textContent = `Abrir ${archivo.nombre}`;
       guardado.append(enlace);
     }
-  } else if (datos.drive?.code === "SIN_CONFIGURAR") {
-    bloque("Guardado en Drive", parrafo("Google Drive no está configurado: descarga los archivos desde aquí. "
-      + "Para que se guarden solos, configúralo en /reunion.html.", "cierre-aviso"));
+  } else if (["SIN_CUENTA", "SIN_CLIENTE", "SIN_CONFIGURAR"].includes(datos.drive?.code)) {
+    bloque("Guardado en Drive", parrafo("No hay ninguna cuenta de Google conectada: descarga los archivos desde aquí. "
+      + "Para que se guarden solos, conecta tu Drive en /reunion.html.", "cierre-aviso"));
   } else {
     bloque("Guardado en Drive", parrafo(datos.drive?.error || "No se pudieron guardar en Drive.", "cierre-aviso"));
   }

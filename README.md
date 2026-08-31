@@ -579,8 +579,35 @@ preguntar por ella, o mientras se pregunta. También se usa como **antecedente**
 de una reunión de seguimiento: entonces la minuta nueva sabe de dónde viene y
 dice qué avanzó y qué sigue igual.
 
-La carpeta de Drive se elige en `/reunion.html` y se guarda en el navegador, así
-que cambiarla no exige volver a desplegar.
+### Conectar Google Drive
+
+Google no deja que ninguna aplicación entre en un Drive sabiendo el correo —si
+bastara con eso, cualquiera entraría en el de cualquiera—, así que siempre hace
+falta pasar por su pantalla de consentimiento. Lo que no hacía falta era el resto:
+antes había que copiar el permiso a mano en Vercel y volver a desplegar.
+
+Ahora el reparto es:
+
+- **Una vez, quien despliega**: registrar la aplicación en Google Cloud y poner
+  `GOOGLE_CLIENT_ID` y `GOOGLE_CLIENT_SECRET`. Es inevitable: el consentimiento
+  lo sirve una aplicación registrada, no un correo.
+- **Cada vez, quien la usa**: pulsar **Conectar mi cuenta de Google**, elegir la
+  cuenta y aceptar. El permiso se guarda en **ese navegador** y no en el
+  servidor; sale de ahí sólo para pedirle a Google que suba los dos archivos al
+  cerrar una reunión. `/reunion.html` enseña con qué cuenta está conectado, sus
+  carpetas para elegir dónde van las minutas, un botón para crear una nueva y
+  otro para desconectar.
+
+Un detalle que cuesta caro descubrir tarde: la pantalla de consentimiento debe
+quedar **«En producción»**. En «Prueba», Google caduca el permiso cada siete días
+y habría que reconectar todas las semanas. Publicar no exige verificación porque
+el permiso que se pide (`drive.file`) sólo alcanza a los archivos que Catalina
+crea, no al resto del Drive. Ese mismo permiso es el que hace que en la lista
+sólo aparezcan sus carpetas.
+
+Si Drive no responde, la reunión se cierra igual: los documentos ya están hechos
+y se descargan desde la pantalla de cierre. Que Drive esté caído es una molestia;
+perder la reunión por ello sería un desastre.
 
 Puesta a punto y diagnóstico en **`/reunion.html`**.
 
