@@ -300,12 +300,29 @@ button.primary { border-color: rgba(109,228,255,.45); background: linear-gradien
 .tipo-reunion b { font-size: 13px; font-weight: 600; }
 .tipo-reunion i { font-style: normal; font-size: 11.5px; line-height: 1.35; color: rgba(209,229,239,.6); }
 
-.preparar-fila { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-top: 8px; }
+/* Los idiomas se marcan, no se eligen: una reunión puede ser bilingüe y con un
+   desplegable habría que renunciar a una de las dos lenguas. */
+.preparar-idiomas { display: flex; gap: 6px; margin-bottom: 4px; }
+.tipo-idioma {
+  flex: 1; min-height: 32px; padding: 0 10px; border: 1px solid rgba(180,225,245,.16);
+  border-radius: 10px; background: rgba(255,255,255,.03); color: #eaf6fc; font: inherit;
+  font-size: 12.5px; cursor: pointer;
+}
+.tipo-idioma:hover { background: rgba(255,255,255,.07); }
+.tipo-idioma[aria-pressed="true"] { border-color: rgba(109,228,255,.55); background: rgba(25,134,173,.32); }
+
+.preparar-fila { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-top: 14px; }
 .preparar-fila button { min-height: 32px; font-size: 12px; }
 .preparar-pie { margin: 4px 0 0; color: rgba(209,229,239,.6); font-size: 11.5px; line-height: 1.4; }
 .preparar-interruptor { display: flex; align-items: center; gap: 9px; margin-top: 10px; color: rgba(233,246,252,.85); font-size: 12.5px; }
 .preparar-interruptor input { width: 16px; height: 16px; accent-color: #2C6E72; }
-.preparar-empezar { border-color: rgba(109,228,255,.45); background: linear-gradient(135deg, rgba(25,134,173,.85), rgba(39,82,126,.9)); min-height: 38px; }
+/* Una sola acción de inicio, y que se vea que lo es. Antes competía en tamaño
+   con «Ver reuniones anteriores» y no quedaba claro cuál empezaba la reunión. */
+.preparar-empezar {
+  border-color: rgba(109,228,255,.5); background: linear-gradient(135deg, rgba(25,134,173,.92), rgba(39,82,126,.95));
+  min-height: 46px; font-size: 14px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase;
+  box-shadow: 0 8px 22px rgba(25,134,173,.28);
+}
 .preparar-historial { min-height: 32px; font-size: 12px; }
 
 /* ─── Modo reunión ────────────────────────────────────────────────────────
@@ -326,6 +343,29 @@ button.primary { border-color: rgba(109,228,255,.45); background: linear-gradien
 /* `display:flex` gana al atributo `hidden` del navegador, así que hay que
    decirlo: sin esto el campo de texto se quedaba abierto después de guardar. */
 .reunion[hidden], .reunion-campo[hidden], .reunion-cuaderno[hidden], .reunion-hablante[hidden] { display: none; }
+
+/* ─── Acta en vivo ────────────────────────────────────────────────────────
+   La transcripción, mientras ocurre. Va dentro de la tira y con altura fija:
+   crece hacia dentro con su propio scroll, para que la reunión no le coma la
+   pantalla a la videollamada que hay detrás. */
+.reunion-acta {
+  max-height: min(38dvh, 300px); overflow-y: auto; overscroll-behavior: contain;
+  padding: 9px 10px; border: 1px solid rgba(180,225,245,.13); border-radius: 12px;
+  background: rgba(0,0,0,.28);
+}
+.reunion-acta[hidden] { display: none; }
+.acta-vacia { margin: 0; color: rgba(209,229,239,.4); font-size: 11.5px; line-height: 1.4; }
+.acta-vacia[hidden] { display: none; }
+.acta-linea { margin: 0 0 6px; font-size: 12.5px; line-height: 1.45; color: rgba(233,246,252,.9); }
+.acta-linea:last-child { margin-bottom: 0; }
+.acta-hora { margin-right: 6px; color: rgba(169,216,236,.45); font-size: 10.5px; font-variant-numeric: tabular-nums; }
+.acta-quien { margin-right: 5px; color: #a9d8ec; font-weight: 650; }
+.acta-quien::after { content: ":"; }
+.acta-idioma { margin-left: 6px; padding: 0 4px; border-radius: 4px; background: rgba(109,228,255,.12); color: rgba(169,216,236,.7); font-style: normal; font-size: 9.5px; font-weight: 700; letter-spacing: .08em; }
+/* Lo que se está oyendo ahora mismo, todavía sin cerrar. En gris y en cursiva
+   porque va a cambiar: es una señal de vida, no todavía el registro. */
+.acta-parcial { margin: 4px 0 0; color: rgba(209,229,239,.45); font-size: 12px; font-style: italic; line-height: 1.4; }
+.acta-parcial[hidden] { display: none; }
 
 .reunion-estado { display: flex; align-items: center; gap: 8px; color: #a9d8ec; font-size: 10px; font-weight: 700; letter-spacing: .18em; text-transform: uppercase; }
 .reunion-punto { flex: none; width: 7px; height: 7px; border-radius: 50%; background: #34C759; animation: pulse 1.8s infinite; }

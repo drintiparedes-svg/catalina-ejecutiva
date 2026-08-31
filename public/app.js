@@ -11,7 +11,7 @@ import { RealtimeSession } from "./realtime/session.js";
 import { GeminiSession } from "./realtime/gemini-session.js";
 import { ElevenLabsSession } from "./realtime/elevenlabs-session.js";
 import { dibujarRuta } from "./mapa.js";
-import { EscuchaDeReunion, escuchaDisponible } from "./escucha.js";
+import { EscuchaDeReunion, escuchaDisponible, IDIOMAS } from "./escucha.js";
 import { MemoriaDeReunion, leerDocumento, ESTADOS, ROTULOS } from "./reunion.js";
 import { TIPOS, TIPO_POR_DEFECTO, tipoDeReunion } from "./tipos-de-reunion.js";
 import { carpetaGuardada, permisoDeCarpeta, escribirEnCarpeta, carpetaDisponible } from "./carpeta.js";
@@ -33,7 +33,7 @@ const ui = {
   prepararTipos: document.querySelector("#prepararTipos"),
   prepararTitulo: document.querySelector("#prepararTitulo"),
   prepararObjetivo: document.querySelector("#prepararObjetivo"),
-  prepararNotas: document.querySelector("#prepararNotas"),
+  prepararIdiomas: document.querySelector("#prepararIdiomas"),
   prepararDocumentos: document.querySelector("#prepararDocumentos"),
   prepararAntecedente: document.querySelector("#prepararAntecedente"),
   prepararAdjuntos: document.querySelector("#prepararAdjuntos"),
@@ -47,6 +47,10 @@ const ui = {
   reunionEstadoTexto: document.querySelector("#reunionEstadoTexto"),
   reunionCuenta: document.querySelector("#reunionCuenta"),
   reunionEco: document.querySelector("#reunionEco"),
+  reunionActa: document.querySelector("#reunionActa"),
+  reunionActaLineas: document.querySelector("#reunionActaLineas"),
+  reunionActaParcial: document.querySelector("#reunionActaParcial"),
+  reunionActaVacia: document.querySelector("#reunionActaVacia"),
   reunionQuien: document.querySelector("#reunionQuien"),
   reunionCampo: document.querySelector("#reunionCampo"),
   reunionCampoTitulo: document.querySelector("#reunionCampoTitulo"),
@@ -462,9 +466,12 @@ function setStatus(text) {
 const memoria = new MemoriaDeReunion();
 
 const escucha = new EscuchaDeReunion({
-  alTranscribir: texto => {
+  alTranscribir: (texto, frase) => {
     hayActividad();                       // la reunión cuenta como vida
-    memoria.anotarTurno(texto);
+    const turno = memoria.anotarTurno(texto, frase?.idioma);
+    // A la pantalla en cuanto se capta. Que la transcripción no se viera hasta
+    // el final era, en la práctica, no poder saber si se estaba transcribiendo.
+    pintarLinea(turno);
     // Cada frase capturada se persiste. Esto es lo que convierte la
     // transcripción en un registro: deja de depender de que el navegador siga
     // vivo al final de la reunión.
@@ -473,8 +480,10 @@ const escucha = new EscuchaDeReunion({
     // Con la participación habilitada, lo primero que se diga es la pregunta.
     // Queda igualmente anotado como parte de la reunión: se dijo en la sala.
     if (estadoReunion === ESTADOS.HABILITADA) invocar(texto);
-    else eco(texto);
   },
+  // Lo que el navegador está entendiendo ahora mismo, todavía sin cerrar. No
+  // entra en el registro: sólo se enseña, para que se vea que hay captura.
+  alParcial: texto => pintarParcial(texto),
   // Llamarla por su nombre.
   //
   // Con la participación permitida —se marca al preparar la reunión— decir
@@ -540,6 +549,19 @@ function apuntarBorrador() {
 }
 let avisadoDelBorrador = false;
 
+// Guarda YA lo que hay y espera a que esté escrito. Se usa antes de pedir los
+// documentos: entre la última frase capturada y el cierre hay hasta dos
+// segundos de espera agrupada, y esas frases son justo las del final de la
+// reunión. Generar la minuta sin ellas es generarla incompleta.
+async function volcarBorrador() {
+  if (!memoria.id) return { ok: false, error: "no hay reunión" };
+  clearTimeout(plazoDeBorrador);
+  const frases = memoria.turnos.length;
+  const r = await guardarBorrador(memoria.borrador());
+  ultimoBorrador = { ok: r.ok, momento: r.momento || Date.now(), frases, error: r.error };
+  return r;
+}
+
 // ── Señales en pantalla ──────────────────────────────────────────────────────
 
 function eco(texto) {
@@ -560,8 +582,6 @@ function fijarEstado(estado, textoEco = "", fase = "") {
 // Descubrir al FINAL que no se transcribió nada es descubrirlo cuando ya no
 // tiene arreglo. Una reunión que lleva tres minutos sin una sola frase está
 // rota, y hay que decirlo mientras todavía se puede hacer algo.
-const SILENCIO_SOSPECHOSO = 3 * 60_000;
-
 function vigilarLaReunion() {
   refrescarCuenta();
   if (estadoReunion === ESTADOS.CERRANDO || estadoReunion === ESTADOS.POSTERIOR) return;
@@ -573,6 +593,66 @@ function vigilarLaReunion() {
     ? `No he capturado nada en ${memoria.minutosTranscurridos()} minutos: ${captura.ultimoFallo}`
     : `Llevo ${memoria.minutosTranscurridos()} minutos sin capturar ni una frase. Comprueba el micrófono en /reunion.html; las notas y los documentos sí se están guardando.`,
     "problema");
+}
+
+// ── El acta en vivo ─────────────────────────────────────────────────────────
+//
+// Lo que se va capturando, en pantalla, mientras la reunión ocurre. No es un
+// adorno: es la única prueba de que se está transcribiendo. Sin esto, la única
+// forma de saber si el micrófono estaba capturando era cerrar la reunión y
+// abrir el documento, y descubrir el fallo cuando ya no tenía arreglo.
+
+const BANDERAS = { es: "ES", en: "EN" };
+
+function horaCorta(t) {
+  return new Date(t).toLocaleTimeString("es-CL", { hour: "2-digit", minute: "2-digit" });
+}
+
+function pintarLinea(turno) {
+  if (!ui.reunionActaLineas || !turno) return;
+  if (ui.reunionActaVacia) ui.reunionActaVacia.hidden = true;
+  const linea = document.createElement("p");
+  linea.className = "acta-linea";
+  const hora = document.createElement("span");
+  hora.className = "acta-hora";
+  hora.textContent = horaCorta(turno.t);
+  const quien = document.createElement("b");
+  quien.className = "acta-quien";
+  quien.textContent = turno.hablante;
+  const texto = document.createElement("span");
+  texto.className = "acta-texto";
+  texto.textContent = turno.texto;
+  linea.append(hora, quien, texto);
+  if (turno.idioma && BANDERAS[turno.idioma]) {
+    const idioma = document.createElement("i");
+    idioma.className = "acta-idioma";
+    idioma.textContent = BANDERAS[turno.idioma];
+    linea.append(idioma);
+  }
+  ui.reunionActaLineas.append(linea);
+  pintarParcial("");
+  // Sólo se sigue al final si ya se estaba: quien ha subido a releer algo no
+  // quiere que la siguiente frase le tire la vista abajo.
+  const caja = ui.reunionActa;
+  const alFinal = caja.scrollHeight - caja.scrollTop - caja.clientHeight < 80;
+  if (alFinal) caja.scrollTop = caja.scrollHeight;
+}
+
+function pintarParcial(texto) {
+  if (!ui.reunionActaParcial) return;
+  ui.reunionActaParcial.textContent = texto || "";
+  ui.reunionActaParcial.hidden = !texto;
+  if (texto && ui.reunionActa) ui.reunionActa.scrollTop = ui.reunionActa.scrollHeight;
+}
+
+// Repinta el acta entera desde la memoria. Se usa al retomar una reunión a
+// medias y al volver al modo: lo capturado antes tiene que seguir a la vista.
+function repintarActa() {
+  if (!ui.reunionActaLineas) return;
+  ui.reunionActaLineas.innerHTML = "";
+  for (const turno of memoria.turnos) pintarLinea(turno);
+  pintarParcial("");
+  if (ui.reunionActaVacia) ui.reunionActaVacia.hidden = memoria.turnos.length > 0;
 }
 
 function refrescarCuenta() {
@@ -600,6 +680,10 @@ function refrescarCuenta() {
 
 let preparando = false;
 let tipoElegido = TIPO_POR_DEFECTO;
+// Qué lenguas se van a escuchar. Bilingüe por defecto: una reunión en la que
+// alguien suelta dos frases en inglés es lo normal, y con un solo idioma esas
+// dos frases no salían mal transcritas, salían como ruido.
+let idiomasElegidos = ["es", "en"];
 let antecedenteElegido = null;
 let documentosPrevios = [];
 
@@ -622,9 +706,9 @@ async function abrirPreparacion() {
   ui.preparar.hidden = false;
 
   pintarTipos();
+  pintarIdiomas();
   ui.prepararTitulo.value = "";
   ui.prepararObjetivo.value = "";
-  ui.prepararNotas.value = "";
   antecedenteElegido = null;
   documentosPrevios = [];
   refrescarAdjuntosPrevios();
@@ -678,6 +762,30 @@ function pintarTipos() {
   ui.prepararParticipa.checked = tipoDeReunion(tipoElegido).participacion;
 }
 
+// En qué lengua se va a hablar. Se puede marcar una o las dos; con las dos,
+// cada frase se transcribe en la que se dijo.
+function pintarIdiomas() {
+  if (!ui.prepararIdiomas) return;
+  ui.prepararIdiomas.innerHTML = "";
+  for (const [id, idioma] of Object.entries(IDIOMAS)) {
+    const boton = document.createElement("button");
+    boton.className = "tipo-idioma";
+    boton.type = "button";
+    boton.setAttribute("aria-pressed", String(idiomasElegidos.includes(id)));
+    boton.textContent = idioma.etiqueta;
+    boton.addEventListener("click", () => {
+      const puesto = idiomasElegidos.includes(id);
+      // Nunca cero: sin ningún idioma no habría nada que escuchar.
+      if (puesto && idiomasElegidos.length === 1) return;
+      idiomasElegidos = puesto
+        ? idiomasElegidos.filter(i => i !== id)
+        : [...idiomasElegidos, id];
+      pintarIdiomas();
+    });
+    ui.prepararIdiomas.append(boton);
+  }
+}
+
 function refrescarAdjuntosPrevios() {
   const piezas = [];
   if (documentosPrevios.length) piezas.push(`${documentosPrevios.length} documento${documentosPrevios.length === 1 ? "" : "s"}`);
@@ -694,7 +802,7 @@ function empezarLaReunion({ retomada = false } = {}) {
       objetivo: ui.prepararObjetivo?.value.trim() || "",
       tipo: tipoElegido,
       antecedente: antecedenteElegido,
-      cuaderno: ui.prepararNotas?.value.trim() || ""
+      idiomas: idiomasElegidos
     });
     for (const documento of documentosPrevios) memoria.anotarDocumento(documento);
   }
@@ -709,13 +817,22 @@ function empezarLaReunion({ retomada = false } = {}) {
   clearInterval(relojReunion);
   relojReunion = setInterval(vigilarLaReunion, 20_000);
   refrescarCuenta();
+  repintarActa();
   apuntarBorrador();
+
+  // El estado se fija ANTES de arrancar el reconocimiento, no después. Pulsar
+  // «Iniciar reunión» tiene que responder en el acto: si la confirmación
+  // esperaba a que el navegador levantara los reconocedores, el botón parecía
+  // no hacer nada y no había forma de saber si la reunión había empezado.
+  fijarEstado(ESTADOS.ESCUCHANDO, "Reunión iniciada — Catalina está escuchando.");
+  setStatus("En reunión");
 
   const arrancada = arrancarLaEscucha();
   if (arrancada.ok) {
+    const lenguas = idiomasElegidos.map(i => IDIOMAS[i].etiqueta).join(" y ");
     fijarEstado(ESTADOS.ESCUCHANDO, retomada
       ? `Reunión retomada: ${memoria.turnos.length} intervenciones ya capturadas. Sigo escuchando.`
-      : "Escuchando la reunión. No voy a intervenir hasta que me lo pidas.");
+      : `Reunión iniciada — Catalina está escuchando (${lenguas}). Lo que se diga irá apareciendo aquí abajo.`);
     setStatus("En reunión");
   } else {
     fijarEstado(ESTADOS.ESCUCHANDO, arrancada.motivo, "problema");
@@ -727,10 +844,15 @@ function empezarLaReunion({ retomada = false } = {}) {
 // Todo lo que puede impedir escuchar, en un solo sitio y con un motivo legible.
 function arrancarLaEscucha() {
   if (!escuchaDisponible()) {
-    return { ok: false, motivo: "Este navegador no transcribe. Usa Chrome; las notas y los documentos sí funcionan." };
+    return { ok: false, motivo: "Este navegador no transcribe. Usa Chrome o Edge de escritorio; las notas y los documentos sí funcionan." };
   }
-  if (!connected) return { ok: false, motivo: "La conversación está cerrada: pulsa «Iniciar conversación» y reintenta." };
 
+  // Transcribir NO necesita la sesión de voz. Quien escucha la sala es el
+  // navegador, gratis y por su cuenta; la sesión sólo hace falta para que
+  // Catalina conteste. Exigirla aquí era el motivo de que entrar en modo
+  // reunión no funcionara a la primera: había que salir, iniciar la
+  // conversación y volver a entrar para que la escucha arrancara.
+  //
   // Se deja de enviar audio al modelo sin apagar la pista: quien escucha ahora
   // es el navegador, y con la pista apagada no oiría nada.
   //
@@ -749,7 +871,7 @@ function arrancarLaEscucha() {
   }
 
   escucha.ensordecer(false);
-  if (!escucha.empezar()) {
+  if (!escucha.empezar(idiomasElegidos)) {
     return { ok: false, motivo: escucha.ultimoFallo || "El navegador no dejó arrancar el reconocimiento de voz." };
   }
   return { ok: true };
@@ -788,6 +910,7 @@ function volverALaReunion() {
   if (ui.reunionNotas) ui.reunionNotas.value = memoria.cuaderno;
   ajustarBotonesDeReunion();
   refrescarCuenta();
+  repintarActa();
   if (estadoReunion === ESTADOS.POSTERIOR) {
     fijarEstado(ESTADOS.POSTERIOR, "Reunión cerrada. Pregúntame lo que quieras sobre ella.");
     return;
@@ -843,8 +966,20 @@ function participar() {
     return;
   }
   if (estadoReunion === ESTADOS.INVOCADA || estadoReunion === ESTADOS.HABLANDO) return;
+
+  // Para contestar sí hace falta la sesión de voz, pero eso se resuelve aquí y
+  // ahora en vez de mandar al usuario a salir del modo: se abre y, en cuanto
+  // esté, se habilita. La transcripción no se entera de nada de esto y sigue.
   if (!connected) {
-    fijarEstado(ESTADOS.ESCUCHANDO, "La conversación está cerrada: no puedo intervenir.", "problema");
+    participacionPermitida = true;
+    fijarEstado(ESTADOS.ESCUCHANDO, "Abriendo la voz de Catalina para que pueda contestarte…");
+    conectar().then(() => {
+      if (!enModoMeet || estadoReunion !== ESTADOS.ESCUCHANDO) return;
+      if (connected) participar();
+      else fijarEstado(ESTADOS.ESCUCHANDO, "No pude abrir la voz de Catalina. Sigo transcribiendo la reunión.", "problema");
+    }).catch(() => {
+      fijarEstado(ESTADOS.ESCUCHANDO, "No pude abrir la voz de Catalina. Sigo transcribiendo la reunión.", "problema");
+    });
     return;
   }
 
@@ -884,7 +1019,7 @@ function volverAEscuchar(mensaje) {
 function invocar(peticion) {
   clearTimeout(esperaParticipacion);
   if (!connected || !sesion) {
-    fijarEstado(ESTADOS.ESCUCHANDO, "Me llamaste, pero la sesión está cerrada.", "problema");
+    fijarEstado(ESTADOS.ESCUCHANDO, "Me nombraste, pero mi voz está cerrada. Pulsa «Participar» y la abro.", "problema");
     return;
   }
   fijarEstado(ESTADOS.INVOCADA, `Me pediste: «${peticion}»`);
@@ -1367,9 +1502,11 @@ function pedirCierre() {
   // historial y se puede volver a él cuando se quiera.
   if (estadoReunion === ESTADOS.POSTERIOR) return empezarOtraReunion();
   guardarCuaderno();
+  // Vacía se cierra igual. Negarse a cerrar era peor que cerrar en blanco:
+  // pulsar «Finalizar» y que no pasara nada dejaba la reunión atrapada, sin
+  // manera de salir de ella ni de saber por qué.
   if (memoria.vacia()) {
-    eco("La reunión está vacía: no hay nada que resumir todavía.");
-    return;
+    eco("No he capturado nada todavía. Si finalizas ahora, la reunión quedará vacía.");
   }
   abrirCampo("titulo", "Título de la reunión", memoria.titulo, "Comité de innovación clínica");
 }
@@ -1382,6 +1519,7 @@ function empezarOtraReunion() {
   if (ui.reunionNotas) ui.reunionNotas.value = "";
   ui.cierre.dataset.estado = "oculto";
   refrescarCuenta();
+  repintarActa();
 
   try {
     if (sesion && !sesion.muted && typeof sesion.pausarEnvio === "function") {
@@ -1394,7 +1532,7 @@ function empezarOtraReunion() {
   }
   clearInterval(relojReunion);
   relojReunion = setInterval(vigilarLaReunion, 20_000);
-  if (escuchaDisponible() && connected && escucha.empezar()) {
+  if (escuchaDisponible() && escucha.empezar(idiomasElegidos)) {
     fijarEstado(ESTADOS.ESCUCHANDO, anterior
       ? `Reunión nueva. La anterior («${anterior.titulo}») quedó en el historial.`
       : "Reunión nueva. Escuchando.");
@@ -1419,6 +1557,14 @@ async function cerrarLaReunion() {
   memoria.cerrar();
   mostrarCierre("Cerrando la reunión", "<p>Corrigiendo la transcripción y redactando la minuta. Tarda unos segundos.</p>");
 
+  // Primero se guarda, después se redacta. En este orden y no al revés: si el
+  // servidor falla, o la pestaña se cierra mientras redacta, la transcripción
+  // ya está a salvo y la reunión se puede retomar. Al revés se perdía entera.
+  const volcado = await volcarBorrador();
+  if (!volcado.ok && memoria.turnos.length) {
+    console.warn("La transcripción no se pudo persistir antes de cerrar:", volcado.error);
+  }
+
   let datos;
   try {
     const respuesta = await fetch("/reunion/cerrar", {
@@ -1437,7 +1583,7 @@ async function cerrarLaReunion() {
     // Se vuelve a escuchar: la reunión no se cerró, así que sigue en curso.
     memoria.abierta = true;
     fijarEstado(ESTADOS.ESCUCHANDO, "No se pudo cerrar la reunión, sigo escuchando.", "problema");
-    if (escuchaDisponible() && connected) escucha.empezar();
+    if (escuchaDisponible()) escucha.empezar(idiomasElegidos);
     relojReunion = setInterval(refrescarCuenta, 20_000);
     mostrarCierre("No se pudo cerrar", `<p class="cierre-aviso">${escaparHtml(error.message)}</p>`
       + "<p>La reunión sigue en memoria y se sigue transcribiendo: vuelve a pulsar «Finalizar reunión» para intentarlo otra vez.</p>");

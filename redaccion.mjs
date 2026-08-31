@@ -354,9 +354,25 @@ export async function revisarTranscripcion(reunion) {
 
   if (!hayRedaccion()) return { ok: true, revisada: false, texto: bruto, motivo: "Sin GEMINI_API_KEY: va la transcripción tal cual." };
 
+  // Una reunión puede ser bilingüe, y una intervención en inglés traducida al
+  // español deja de ser una cita: pasa a ser una versión de lo que alguien
+  // dijo. La transcripción es el registro literal, así que cada intervención se
+  // queda en la lengua en la que se pronunció.
+  const idiomas = reunion.idiomas ?? [];
+  const bilingue = idiomas.length > 1;
+
   const prompt = [
-    "Eres una correctora de estilo. Recibes la transcripción automática de una reunión en español de Chile.",
+    bilingue
+      ? "Eres una correctora de estilo. Recibes la transcripción automática de una reunión BILINGÜE: unas intervenciones se dijeron en español y otras en inglés."
+      : "Eres una correctora de estilo. Recibes la transcripción automática de una reunión en español de Chile.",
     "",
+    ...(bilingue ? [
+      "REGLA ABSOLUTA SOBRE EL IDIOMA: NO traduzcas nada, ni en un sentido ni en el otro.",
+      "Cada intervención se corrige EN LA LENGUA EN QUE ESTÁ ESCRITA y se queda en ella.",
+      "Lo dicho en inglés sale en inglés; lo dicho en español sale en español. Una traducción no es una transcripción.",
+      "Aplica a cada lengua sus propias reglas de ortografía y puntuación.",
+      ""
+    ] : []),
     "Tu ÚNICA tarea es corregir la forma. Concretamente:",
     "- Corrige ortografía, tildes, gramática y puntuación.",
     "- Añade mayúsculas y signos de interrogación y exclamación donde falten.",

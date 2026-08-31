@@ -51,6 +51,7 @@ export class MemoriaDeReunion {
     this.abierta = false;
     this.id = "";
     this.tipo = "operacional";
+    this.idiomas = ["es"];
     this.inicio = 0;
     this.fin = 0;
     this.titulo = "";
@@ -71,7 +72,7 @@ export class MemoriaDeReunion {
     this.cierre = null;
   }
 
-  abrir({ titulo = "", objetivo = "", antecedente = null, tipo = "operacional", cuaderno = "" } = {}) {
+  abrir({ titulo = "", objetivo = "", antecedente = null, tipo = "operacional", cuaderno = "", idiomas = ["es"] } = {}) {
     this.olvidar();
     this.abierta = true;
     this.inicio = Date.now();
@@ -81,6 +82,7 @@ export class MemoriaDeReunion {
     this.antecedente = antecedente;
     this.tipo = tipo;
     this.cuaderno = cuaderno;
+    this.idiomas = idiomas;
   }
 
   // Retoma un borrador guardado durante una reunión anterior que no llegó a
@@ -94,6 +96,7 @@ export class MemoriaDeReunion {
       titulo: borrador.titulo || "",
       objetivo: borrador.objetivo || "",
       tipo: borrador.tipo || "operacional",
+      idiomas: borrador.idiomas ?? ["es"],
       hablante: borrador.hablante || "",
       nombresVistos: borrador.nombresVistos ?? [],
       turnos: borrador.turnos ?? [],
@@ -114,6 +117,7 @@ export class MemoriaDeReunion {
       titulo: this.titulo,
       objetivo: this.objetivo,
       tipo: this.tipo,
+      idiomas: this.idiomas,
       hablante: this.hablante,
       nombresVistos: this.nombresVistos,
       turnos: this.turnos,
@@ -139,12 +143,20 @@ export class MemoriaDeReunion {
     return limpio;
   }
 
-  anotarTurno(texto) {
+  // El idioma se guarda con la frase, no se traduce nada: una reunión bilingüe
+  // se transcribe en las dos lenguas y cada intervención queda en la suya.
+  anotarTurno(texto, idioma = "") {
     const limpio = String(texto ?? "").trim();
     if (!limpio) return null;
     const turno = { t: Date.now(), hablante: this.hablante || SIN_NOMBRE, texto: limpio, origen: "CONVERSACION" };
+    if (idioma) turno.idioma = idioma;
     this.turnos.push(turno);
     return turno;
+  }
+
+  // Qué lenguas se hablaron de verdad, para decirlo en la minuta.
+  idiomasHablados() {
+    return [...new Set(this.turnos.map(t => t.idioma).filter(Boolean))];
   }
 
   // Añade una línea al cuaderno sin tocar lo que ya había. Es lo que usa la voz
@@ -221,6 +233,7 @@ export class MemoriaDeReunion {
       titulo: this.titulo,
       objetivo: this.objetivo,
       tipo: this.tipo,
+      idiomas: this.idiomasHablados(),
       destinatario: this.destinatario,
       participantes: this.participantes(),
       turnos: this.turnos,

@@ -476,9 +476,11 @@ Las acciones son **Participar**, **Tomar nota**, **Agregar documento**,
 
 ### Antes de escuchar: qué reunión es
 
-Entrar en modo reunión abre primero una preparación —título, objetivo, notas
-iniciales, documentos previos, reunión anterior de la que ésta es seguimiento, y
-si Catalina puede participar—. Lo que más pesa ahí es el **tipo**:
+Entrar en modo reunión abre primero una preparación —título, objetivo, idiomas,
+documentos previos, reunión anterior de la que ésta es seguimiento, y si Catalina
+puede participar—. De ahí sale con una sola acción, **Iniciar reunión**, que
+confirma en el acto: «Reunión iniciada — Catalina está escuchando». Lo que más
+pesa en la preparación es el **tipo**:
 
 | Tipo | Qué prioriza | ¿Participa? |
 | --- | --- | --- |
@@ -496,6 +498,42 @@ Los cinco tipos viven en `public/tipos-de-reunion.js`, que importan **los dos
 lados** —el navegador para la pantalla, el servidor para la minuta— porque con
 dos copias un día dejarían de coincidir sin que nadie lo notara.
 
+### Español e inglés, en la misma reunión
+
+El reconocimiento del navegador no detecta el idioma: se le fija uno y todo lo
+que oye lo escribe en ese idioma. Un seminario en inglés escuchado en español no
+sale mal transcrito, sale como ruido. Por eso se abren **dos reconocedores en
+paralelo**, uno por lengua, y de cada frase se queda el que la entendió: se
+puntúa cuánto se parece cada versión a su propio idioma —contando palabras de
+armazón, quitadas las que comparten las dos lenguas, que no distinguen nada— y
+se suma la confianza que declare el navegador. Cuesta unos 900 ms de espera por
+frase, el tiempo de que conteste el segundo motor.
+
+Cada intervención queda **en la lengua en que se dijo**, marcada `ES` o `EN`, y
+la corrección de estilo tiene prohibido traducir: una intervención traducida deja
+de ser una cita. Se pueden marcar los dos idiomas o sólo uno; con uno solo no hay
+espera ni segundo motor.
+
+### Verlo mientras ocurre
+
+La transcripción aparece **en la tira, frase a frase, mientras la reunión pasa**,
+con la hora, quién hablaba y el idioma; debajo, en gris y en cursiva, lo que el
+navegador está entendiendo ahora mismo y todavía no ha cerrado. No es un adorno:
+es la única prueba a la vista de que hay captura. Antes, saber si el micrófono
+estaba funcionando exigía cerrar la reunión y abrir el documento, y descubrir el
+fallo cuando ya no tenía arreglo.
+
+Esa capa de transcripción es **una sola y no se corta nunca**: no se detiene ni
+se reinicia al pulsar «Participar», al invocarla por su nombre, al salir del modo
+y volver a entrar, ni mientras ella contesta —ahí deja de apuntar unos segundos
+para no transcribir su propia voz, y nada más—.
+
+Y **no depende de la sesión de voz**: quien escucha la sala es el navegador, por
+su cuenta y gratis. Exigir la conversación abierta para transcribir era el motivo
+de que entrar en modo reunión no funcionara a la primera y hubiera que salir,
+iniciar la conversación y volver a entrar. La sesión sólo hace falta para que
+Catalina conteste, y si no está abierta, «Participar» la abre.
+
 ### La transcripción es un registro, no un recuerdo
 
 Cada frase capturada se escribe en IndexedDB en cuanto se oye, agrupando las
@@ -506,7 +544,7 @@ reunión. Antes vivía sólo en memoria, y bastaba un cierre a medias para perde
 Dos seguros más, porque la captura falla en silencio y eso es lo peor que puede
 hacer: **la sordera lleva plazo** —mientras Catalina habla no se apunta nada, y
 si el aviso de que terminó no llega, a los 45 segundos se quita sola— y un
-**latido** cada diez segundos comprueba que el reconocimiento sigue en pie y lo
+**latido** cada ocho segundos comprueba que el reconocimiento sigue en pie y lo
 levanta si se cayó, avisando cuando se corta demasiado.
 
 El vigía va más allá: cada veinte segundos comprueba que se esté capturando algo,

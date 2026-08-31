@@ -137,8 +137,8 @@
         <label class="preparar-rotulo" for="prepararObjetivo">Objetivo <span>(opcional)</span></label>
         <input id="prepararObjetivo" autocomplete="off" placeholder="Definir el alcance del piloto">
 
-        <label class="preparar-rotulo" for="prepararNotas">Notas iniciales <span>(opcional)</span></label>
-        <textarea id="prepararNotas" placeholder="Lo que quieras tener presente durante la reunión"></textarea>
+        <label class="preparar-rotulo">¿En qué idioma se va a hablar?</label>
+        <div class="preparar-idiomas" id="prepararIdiomas" aria-label="Idiomas de la reunión"></div>
 
         <div class="preparar-fila">
           <button id="prepararDocumentos">Documentos previos</button>
@@ -163,6 +163,15 @@
         <span class="reunion-cuenta" id="reunionCuenta"></span>
       </div>
       <p class="reunion-eco" id="reunionEco">Escuchando la reunión. No voy a intervenir hasta que me lo pidas.</p>
+
+      <!-- La transcripción, mientras ocurre. Es la única prueba a la vista de
+           que se está capturando: sin ella, saber si el micrófono funcionaba
+           exigía cerrar la reunión y abrir el documento. -->
+      <div class="reunion-acta" id="reunionActa" aria-live="polite" aria-label="Transcripción en vivo">
+        <p class="acta-vacia" id="reunionActaVacia">Aquí irá apareciendo lo que se diga, frase a frase.</p>
+        <div id="reunionActaLineas"></div>
+        <p class="acta-parcial" id="reunionActaParcial" hidden></p>
+      </div>
 
       <label class="reunion-hablante">
         <span>Habla</span>
@@ -215,6 +224,6 @@
     <button class="exit-meet" id="exitMeet" aria-label="Salir del modo Meet">Mostrar controles</button>
   </main>
   <audio id="remoteAudio" autoplay></audio>
-  <script type="module" src="app.js?v=37"></script>
+  <script type="module" src="app.js?v=38"></script>
 </body>
 </html>
