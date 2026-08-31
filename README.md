@@ -443,8 +443,9 @@ Oír su nombre ya no basta —una asistente que contesta cada vez que la nombran
 interrumpe una reunión de verdad—, así que el nombre sólo sirve para recordarle
 a quien la llamó que hay que pulsar **Participar**.
 
-Los cinco estados se ven en la tira de arriba a la izquierda:
-`Escuchando → Puedes hablarme → Me lo estoy pensando → Hablando → Escuchando`.
+Los estados se ven en la tira de arriba a la izquierda:
+`Escuchando → Puedes hablarme → Me lo estoy pensando → Hablando → Escuchando`,
+y al terminar `Reunión cerrada`.
 
 La memoria de la reunión (`public/reunion.js`) es **aparte** de la conversación
 con ella, y todo lo que entra queda marcado con su procedencia:
@@ -453,16 +454,25 @@ con ella, y todo lo que entra queda marcado con su procedencia:
 | --- | --- |
 | `CONVERSACION` | lo que se dijo en la sala, transcrito por el navegador |
 | `DOCUMENTO` | lo que traía un archivo aportado |
-| `NOTA_EDITORIAL` | una indicación del usuario sobre qué destacar |
+| `NOTA_EDITORIAL` | lo que el usuario apuntó en su cuaderno |
 | `ASISTENTE` | lo que dijo Catalina al ser invocada |
 
-La marca sobrevive hasta el papel. Una nota editorial puede cambiar el énfasis y
-el orden de la minuta, pero **nunca** puede acabar convertida en algo que alguien
-dijo, y lo que venía en un PDF se atribuye al PDF, no a una persona.
+La marca sobrevive hasta el papel, y cada documento la resuelve distinto a
+propósito: **en la minuta las notas se funden en la redacción** y desaparecen
+como notas —quien lee una minuta ejecutiva necesita el énfasis, no saber de qué
+apunte salió—, mientras que **en el Word se conservan al final**, corregidas,
+bajo «Notas personales del usuario», porque el Word es el registro. Lo que no
+cambia nunca es que una nota **no** puede acabar convertida en algo que alguien
+dijo, y que lo que venía en un PDF se atribuye al PDF, no a una persona.
 
-Las cuatro acciones son **Participar**, **Tomar nota**, **Agregar documento** y
-**Finalizar reunión**; las cuatro se pueden pedir también de viva voz
-(`tomar_nota`, `quien_habla`, `estado_de_la_reunion`, `finalizar_reunion`).
+El cuaderno es acumulativo: se abre, se escribe, se cierra y al reabrirlo está
+todo lo anterior para releerlo y seguir debajo. Se guarda en cada tecla, así que
+una recarga a mitad de reunión no se lleva lo apuntado.
+
+Las acciones son **Participar**, **Tomar nota**, **Agregar documento**,
+**Reuniones anteriores** y **Finalizar reunión**; también se piden de viva voz
+(`tomar_nota`, `quien_habla`, `estado_de_la_reunion`, `consultar_reunion`,
+`finalizar_reunion`).
 
 Los documentos se leen en el propio navegador —PDF, Word, Excel, PowerPoint y
 texto— con `DecompressionStream`, sin subirlos: el archivo ya está ahí y Vercel
@@ -486,6 +496,29 @@ pulsaciones: guardar en la carpeta de siempre es reversible, mandarle la reunió
 a un tercero no lo es. Sin `GEMINI_API_KEY` la reunión se cierra igual, pero la
 transcripción va sin corregir y la minuta sale con el material ordenado y sin
 resumen; se dice en pantalla en vez de disimularlo.
+
+### Cerrar no es terminar
+
+Finalizar la reunión **no destruye la sesión**: apaga la captura de la sala,
+devuelve el micrófono y convierte la reunión en un objeto consultable. A partir
+de ahí la conversación sigue con normalidad y Catalina responde sobre ella
+—«¿qué quedó pendiente?», «¿qué dijo Marcela del presupuesto?», «¿quién quedó a
+cargo?»— con la minuta, la transcripción completa, los documentos y las notas a
+mano (`consultar_reunion`).
+
+Cada reunión cerrada queda en el **historial**, en IndexedDB de este navegador.
+Ese sitio no es una comodidad: el disco de Vercel es de sólo lectura y cada
+petición cae en una instancia distinta, así que el servidor no tiene dónde
+guardar nada, y montar una base de datos para algo que sólo lee su dueño sería
+desproporcionado. La consecuencia hay que decirla: **el historial vive en ese
+navegador y no se sincroniza**; lo que sí viaja son los documentos, en Drive.
+
+Desde el historial se abre una reunión pasada para preguntar por ella, o se usa
+como **antecedente** de una de seguimiento: entonces la minuta nueva sabe de
+dónde viene y dice qué avanzó y qué sigue igual.
+
+La carpeta de Drive se elige en `/reunion.html` y se guarda en el navegador, así
+que cambiarla no exige volver a desplegar.
 
 Puesta a punto y diagnóstico en **`/reunion.html`**.
 

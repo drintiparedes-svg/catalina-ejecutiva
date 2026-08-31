@@ -18,6 +18,9 @@
   ol, ul { margin:.5rem 0 0; padding-left:1.2rem; color:#A8B0BE; font-size:.93rem; }
   li { margin-bottom:.35rem; }
   a { color:#7FC8CC; }
+  label { display:block; font-size:.85rem; color:#8B93A3; margin:1.1rem 0 .2rem; }
+  input { width:100%; box-sizing:border-box; padding:.55rem .7rem; border-radius:8px; border:1px solid #2B303A; background:#0F1116; color:#E4E7ED; font:inherit; }
+  button { font:inherit; font-weight:600; margin-top:.7rem; background:#2C6E72; color:#fff; border:0; border-radius:8px; padding:.6rem 1.1rem; cursor:pointer; }
   .boton { display:inline-block; margin-top:1rem; font:inherit; font-weight:600; background:#2C6E72; color:#fff; border:0; border-radius:8px; padding:.6rem 1.1rem; cursor:pointer; text-decoration:none; }
 </style>
 </head>
@@ -48,6 +51,14 @@
           Si no la pones, o si no es accesible, los archivos van a una carpeta propia llamada «Catalina — Reuniones».</li>
     </ol>
     <a class="boton" href="/drive/autorizar">Autorizar el acceso a Drive</a>
+
+    <label for="carpeta">Carpeta donde guardar las minutas (opcional)</label>
+    <input id="carpeta" placeholder="1a2B3c4D5e6F7g8H9i0J..." autocomplete="off">
+    <p class="detalle">Se guarda en este navegador, así que puedes cambiarla sin volver a desplegar.
+       Si la dejas vacía se usa <code>GOOGLE_DRIVE_CARPETA</code>; y si ninguna de las dos es accesible,
+       los archivos van a «Catalina — Reuniones».</p>
+    <button id="guardarCarpeta">Guardar la carpeta</button>
+    <p class="detalle" id="avisoCarpeta"></p>
   </section>
 
   <section class="paso">
@@ -57,12 +68,17 @@
       <li>Escribe en <b>Habla</b> quién tiene la palabra, o díselo: «Catalina, habla Marcela». Sin eso, las
           intervenciones quedan como «Sin identificar»; no las adivina.</li>
       <li><b>Participar</b> le da la palabra para una intervención. Sin pulsarlo no interrumpe, aunque oiga su nombre.</li>
-      <li><b>Tomar nota</b> guarda una indicación para la minuta, no algo dicho en la sala. Las dos cosas se
-          mantienen separadas hasta el documento final.</li>
+      <li><b>Tomar nota</b> abre tu cuaderno. Es acumulativo: al reabrirlo está todo lo que llevas escrito,
+          para releerlo y seguir debajo. En la minuta esas notas se funden en la redacción y no se ven como
+          notas; en el Word se conservan al final, corregidas, bajo «Notas personales del usuario».</li>
+      <li><b>Reuniones anteriores</b> guarda cada reunión cerrada en este navegador. Desde ahí puedes
+          preguntarle a Catalina sobre una reunión pasada o usarla como antecedente de una de seguimiento.</li>
       <li><b>Agregar documento</b> lee PDF, Word, Excel, PowerPoint y texto en el propio navegador. De las imágenes
           y de los PDF escaneados no puede sacar texto: pide una descripción y la usa como tal.</li>
       <li><b>Finalizar reunión</b> genera los dos documentos, los guarda en Drive y propone el correo. El correo
           no sale hasta que alguien lo confirma en pantalla.</li>
+      <li>Cerrar la reunión <b>no la borra</b>: la conversación sigue y Catalina responde sobre ella
+          —acuerdos, pendientes, quién dijo qué— con la transcripción entera a mano.</li>
     </ul>
   </section>
 
@@ -73,6 +89,28 @@
 <script type="module">
 const esc = s => String(s ?? "").replace(/</g, "&lt;");
 document.querySelector("#redir").textContent = `${location.origin}/drive/callback`;
+
+// La carpeta elegida vive en el navegador y viaja con cada cierre de reunión.
+// Es la misma clave que lee la aplicación.
+const CLAVE_CARPETA = "catalina.reunion.carpetaDrive";
+const campoCarpeta = document.querySelector("#carpeta");
+const avisoCarpeta = document.querySelector("#avisoCarpeta");
+try { campoCarpeta.value = localStorage.getItem(CLAVE_CARPETA) || ""; } catch {}
+document.querySelector("#guardarCarpeta").addEventListener("click", () => {
+  // Se acepta la dirección entera además del identificador: copiar la barra del
+  // navegador es lo que hace todo el mundo, y pedir que lo recorte a mano sólo
+  // sirve para que se equivoque.
+  const crudo = campoCarpeta.value.trim();
+  const id = (/folders\/([A-Za-z0-9_-]+)/.exec(crudo)?.[1] || crudo).trim();
+  campoCarpeta.value = id;
+  try {
+    if (id) localStorage.setItem(CLAVE_CARPETA, id);
+    else localStorage.removeItem(CLAVE_CARPETA);
+    avisoCarpeta.textContent = id ? `Guardada: ${id}` : "Sin carpeta propia: se usará la del despliegue.";
+  } catch {
+    avisoCarpeta.textContent = "Este navegador no deja guardar la preferencia.";
+  }
+});
 
 function marcar(id, estado, ...lineas) {
   const caja = document.querySelector(id);

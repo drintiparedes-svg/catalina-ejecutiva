@@ -5,12 +5,13 @@
 // expone la ruta.
 //
 // La regla que ordena todo lo de abajo: lo que se dijo, lo que traían los
-// documentos y lo que indicó el usuario como nota editorial son tres cosas
-// distintas y se mantienen distinguibles hasta el papel. La minuta interpreta;
-// la transcripción, no.
+// documentos y lo que el usuario apuntó en su cuaderno son tres cosas distintas
+// y se mantienen distinguibles hasta el papel. La minuta interpreta y funde las
+// notas en su redacción; la transcripción no interpreta nada y conserva las
+// notas aparte, al final, porque el Word es el registro.
 
 import { construirDocx, construirPdf, bloque as b } from "./documentos.mjs";
-import { revisarTranscripcion, redactarMinuta, minutaSinModelo, hayRedaccion } from "./redaccion.mjs";
+import { revisarTranscripcion, corregirCuaderno, redactarMinuta, minutaSinModelo, hayRedaccion } from "./redaccion.mjs";
 import { guardarEnDrive, driveConfigurado } from "./drive.mjs";
 
 const TIPO_DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
@@ -71,7 +72,7 @@ function portada(reunion, minuta, titulo) {
 // La transcripción revisada. Lleva su propia advertencia porque quien la lea
 // tiene que saber qué está leyendo: una captura automática corregida en la
 // forma, no una grabación.
-export function componerTranscripcion(reunion, revision, minuta) {
+export function componerTranscripcion(reunion, revision, minuta, cuaderno = { texto: "", corregido: false }) {
   const bloques = [
     ...portada(reunion, minuta, `Transcripción — ${minuta.titulo || reunion.titulo || "Reunión"}`),
     b.separador(),
@@ -104,11 +105,20 @@ export function componerTranscripcion(reunion, revision, minuta) {
     }
   }
 
-  const notas = reunion.notas ?? [];
-  if (notas.length) {
-    bloques.push(b.seccion("Notas del usuario"));
-    bloques.push(b.parrafo("Indicaciones dadas a la asistente durante la reunión. No son parte de lo hablado."));
-    for (const n of notas) bloques.push(b.vineta(n.texto));
+  // Las notas personales van aquí y sólo aquí. En la minuta se integran en la
+  // redacción y desaparecen como notas; el Word es el registro, así que en él se
+  // conservan aparte y con su rótulo, para que se vea qué escribió la persona y
+  // qué se dijo en la sala.
+  const cuadernoTexto = String(cuaderno.texto || "").trim();
+  if (cuadernoTexto) {
+    bloques.push(b.seccion("Notas personales del usuario"));
+    bloques.push(b.parrafo("Apuntes tomados durante la reunión"
+      + (cuaderno.corregido ? ", corregidos en ortografía y redacción sin alterar su significado" : "")
+      + ". No son parte de lo que se habló ni fueron dichos por ningún participante."));
+    for (const linea of cuadernoTexto.split("\n")) {
+      const limpia = linea.trim();
+      if (limpia) bloques.push(b.vineta(limpia));
+    }
   }
 
   return bloques;
@@ -118,6 +128,10 @@ export function componerTranscripcion(reunion, revision, minuta) {
 // epígrafes que dicen «ninguno» se lee peor y da la impresión de que faltó algo.
 export function componerMinuta(reunion, minuta) {
   const bloques = portada(reunion, minuta, minuta.titulo || reunion.titulo || "Minuta de reunión");
+  if (reunion.antecedente?.titulo) {
+    bloques.push(b.dato("Da seguimiento a", `${reunion.antecedente.titulo}`
+      + (reunion.antecedente.fecha ? ` (${fechaCorta(reunion.antecedente.fecha)})` : "")));
+  }
   bloques.push(b.separador());
 
   if (minuta.sinModelo) {
@@ -173,7 +187,7 @@ export function componerMinuta(reunion, minuta) {
   bloques.push(b.dato("Preparada por", "Catalina, asistente ejecutiva del Dr. Inti Paredes"));
   bloques.push(b.dato("Fuente", "Transcripción automática de la reunión"
     + (documentos.length ? `, ${documentos.length} documento${documentos.length === 1 ? "" : "s"} aportado${documentos.length === 1 ? "" : "s"}` : "")
-    + ((reunion.notas ?? []).length ? " y las notas dadas durante la sesión" : "")));
+    + (String(reunion.cuaderno ?? "").trim() ? " y las notas tomadas durante la sesión" : "")));
 
   return bloques;
 }
@@ -207,24 +221,28 @@ export function correoPropuesto(reunion, minuta, nombres) {
 // ── Cierre completo ──────────────────────────────────────────────────────────
 
 export async function cerrarReunion(reunion) {
-  // Las dos peticiones al modelo son independientes: van a la vez para no
+  // Las tres peticiones al modelo son independientes: van a la vez para no
   // sumar sus esperas, que en una reunión larga son decenas de segundos.
-  const [revision, redactada] = await Promise.all([
+  const [revision, cuaderno, redactada] = await Promise.all([
     revisarTranscripcion(reunion),
+    corregirCuaderno(reunion),
     redactarMinuta(reunion)
   ]);
 
   const minuta = redactada.ok ? redactada.minuta : minutaSinModelo(reunion);
   const nombres = nombresDeArchivo(reunion, minuta);
 
-  const docx = construirDocx(componerTranscripcion(reunion, revision, minuta));
+  const docx = construirDocx(componerTranscripcion(reunion, revision, minuta, cuaderno));
   const pdf = construirPdf(componerMinuta(reunion, minuta), { titulo: minuta.titulo || "Minuta" });
 
+  // La carpeta puede venir elegida desde la pantalla de puesta a punto. Se
+  // prefiere ésa a la de las variables de entorno: cambiarla no debería exigir
+  // volver a desplegar.
   const drive = driveConfigurado()
     ? await guardarEnDrive([
       { nombre: nombres.transcripcion, tipo: TIPO_DOCX, contenido: docx },
       { nombre: nombres.minuta, tipo: TIPO_PDF, contenido: pdf }
-    ])
+    ], reunion.carpetaDrive)
     : { ok: false, code: "SIN_CONFIGURAR", error: "Google Drive no está configurado en este despliegue.", archivos: [] };
 
   return {
@@ -235,6 +253,7 @@ export async function cerrarReunion(reunion) {
     avisos: [
       redactada.ok ? "" : `La minuta va sin redacción asistida: ${redactada.error}`,
       revision.revisada ? "" : (revision.motivo ? `La transcripción va sin corregir: ${revision.motivo}` : ""),
+      cuaderno.motivo ? `Las notas van sin corregir: ${cuaderno.motivo}` : "",
       drive.ok ? "" : (drive.code === "SIN_CONFIGURAR" ? "" : `No se pudo guardar en Drive: ${drive.error}`),
       drive.aviso || ""
     ].filter(Boolean),
@@ -243,6 +262,11 @@ export async function cerrarReunion(reunion) {
     hayModelo: hayRedaccion(),
     drive,
     correo: correoPropuesto(reunion, minuta, nombres),
+    // El texto de los dos, además de los archivos. Los archivos se descargan y
+    // se guardan; esto es lo que se queda en el historial y lo que permite
+    // seguir preguntando por la reunión después de cerrarla.
+    transcripcion: revision.texto || "",
+    cuadernoCorregido: cuaderno.texto || "",
     archivos: {
       transcripcion: { nombre: nombres.transcripcion, tipo: TIPO_DOCX, base64: docx.toString("base64") },
       minuta: { nombre: nombres.minuta, tipo: TIPO_PDF, base64: pdf.toString("base64") }

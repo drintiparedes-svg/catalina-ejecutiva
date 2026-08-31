@@ -150,11 +150,13 @@ async function subir({ token, nombre, tipo, contenido, carpeta }) {
 // Sube varios archivos a la carpeta configurada. Si esa carpeta no es alcanzable
 // —no existe, o la creó otra cuenta y este permiso no llega— NO se pierde el
 // archivo: se guarda en una carpeta propia y se dice dónde quedó.
-export async function guardarEnDrive(archivos) {
+export async function guardarEnDrive(archivos, carpetaElegida = "") {
   const credencial = await tokenDeAcceso();
   if (!credencial.ok) return { ok: false, ...credencial, archivos: [] };
 
-  let carpeta = carpetaFijada();
+  // La que se eligió en la pantalla manda sobre la de las variables de entorno:
+  // cambiar de carpeta no debería exigir volver a desplegar.
+  let carpeta = String(carpetaElegida || "").trim() || carpetaFijada();
   let aviso = "";
   const guardados = [];
 

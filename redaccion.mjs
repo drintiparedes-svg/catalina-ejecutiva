@@ -12,9 +12,19 @@
 // acabara «mejorando» lo que se dijo, que es justo lo que no puede pasar.
 //
 // El material entra separado por procedencia —lo hablado, los documentos que se
-// añadieron y las notas editoriales del usuario— y esa separación se mantiene
-// hasta la minuta: una nota editorial pesa en cómo se ordena, pero nunca puede
-// convertirse en algo que alguien dijo.
+// añadieron y el cuaderno de notas del usuario— y esa separación se mantiene
+// hasta el papel, pero cada documento la resuelve de una manera distinta y a
+// propósito:
+//
+//   En la MINUTA las notas se integran en la redacción y desaparecen como
+//   notas. Quien lee una minuta ejecutiva no necesita saber que ese énfasis
+//   salió de un apunte al margen; necesita el énfasis.
+//
+//   En la TRANSCRIPCIÓN se conservan aparte, al final, como notas personales
+//   corregidas. Ahí sí importa la trazabilidad: el Word es el registro.
+//
+// Lo que no cambia nunca es que una nota no puede convertirse en algo que
+// alguien dijo.
 
 const MODELO = "gemini-3.1-flash";
 const TIEMPO = 60_000;
@@ -23,10 +33,11 @@ const TOPE_MATERIAL = 120_000;   // caracteres que se le entregan al modelo
 export const hayRedaccion = () => Boolean(process.env.GEMINI_API_KEY?.trim());
 
 const PROCEDENCIAS = {
-  CONVERSACION: "lo que se dijo en la reunión",
-  DOCUMENTO: "el contenido de un documento adjuntado",
-  NOTA_EDITORIAL: "una instrucción del usuario sobre cómo redactar, no algo dicho en la reunión",
-  ASISTENTE: "una intervención de la propia asistente al ser invocada"
+  "LO QUE SE DIJO": "lo que se habló en la reunión, transcrito automáticamente",
+  "DOCUMENTOS ADJUNTADOS": "el contenido de los archivos que se aportaron",
+  "CUADERNO DE NOTAS DEL USUARIO": "lo que la persona apuntó por su cuenta; indica énfasis, no es algo dicho en la sala",
+  "INTERVENCIONES DE LA ASISTENTE": "lo que dijo la propia asistente al ser invocada",
+  "ANTECEDENTE": "la minuta de una reunión anterior, cuando ésta es de seguimiento"
 };
 
 // ── Petición a Gemini ────────────────────────────────────────────────────────
@@ -105,12 +116,27 @@ function componerMaterial(reunion) {
     }
   }
 
-  const notas = reunion.notas ?? [];
-  if (notas.length) {
-    partes.push("", "=== NOTAS EDITORIALES DEL USUARIO ===",
-      "Son indicaciones sobre qué destacar o cómo redactar. NO son cosas dichas en la reunión",
-      "y NUNCA deben aparecer como declaraciones de un participante.");
-    for (const n of notas) partes.push(`[${reloj(n.t, reunion.inicio)}] ${n.texto}`);
+  const cuaderno = String(reunion.cuaderno ?? "").trim();
+  if (cuaderno) {
+    partes.push("", "=== CUADERNO DE NOTAS DEL USUARIO ===",
+      "Lo que la persona fue apuntando durante la reunión: qué destacar, qué le pareció importante,",
+      "recordatorios suyos. NO son cosas dichas en la reunión y NUNCA deben aparecer como",
+      "declaraciones de un participante. Sí deben pesar en qué se destaca y cómo se ordena la minuta.",
+      cuaderno);
+  }
+
+  const antecedente = reunion.antecedente;
+  if (antecedente) {
+    partes.push("", "=== ANTECEDENTE: MINUTA DE LA REUNIÓN ANTERIOR ===",
+      `Esta reunión da seguimiento a «${antecedente.titulo}». Lo de abajo es lo que quedó de aquélla,`,
+      "no de ésta. Úsalo para entender de qué se viene hablando y para decir qué avanzó o qué sigue",
+      "pendiente, pero no lo repitas como si se hubiera dicho hoy.",
+      antecedente.resumen ? `Resumen: ${antecedente.resumen}` : "",
+      (antecedente.acuerdos ?? []).length ? `Acuerdos previos: ${antecedente.acuerdos.join(" · ")}` : "",
+      (antecedente.pendientes ?? []).length ? `Quedaba pendiente: ${antecedente.pendientes.join(" · ")}` : "",
+      (antecedente.acciones ?? []).length
+        ? `Acciones comprometidas antes: ${antecedente.acciones.map(a => `${a.accion} (${a.responsable}, ${a.fecha})`).join(" · ")}`
+        : "");
   }
 
   const entero = partes.join("\n");
@@ -168,6 +194,42 @@ export async function revisarTranscripcion(reunion) {
   // exactamente lo que se dijo: quedarse sin documento sería mucho peor.
   if (!salida.ok) return { ok: true, revisada: false, texto: bruto, motivo: salida.error };
   return { ok: true, revisada: true, texto: salida.texto.trim() };
+}
+
+// ── 1b. Cuaderno de notas corregido ──────────────────────────────────────────
+//
+// Va al Word, al final, como «Notas personales del usuario». Se corrige igual
+// que la transcripción y por el mismo motivo: son apuntes tomados deprisa en
+// mitad de una reunión, y nadie escribe bien mientras escucha. Lo que no se
+// hace es interpretarlas ni completarlas.
+
+export async function corregirCuaderno(reunion) {
+  const cuaderno = String(reunion.cuaderno ?? "").trim();
+  if (!cuaderno) return { ok: true, corregido: false, texto: "" };
+  if (!hayRedaccion()) return { ok: true, corregido: false, texto: cuaderno, motivo: "Sin GEMINI_API_KEY: van tal cual." };
+
+  const prompt = [
+    "Eres una correctora de estilo. Recibes las notas que alguien tomó a mano durante una reunión,",
+    "deprisa y mientras escuchaba, así que están mal escritas y abreviadas.",
+    "",
+    "Corrige ortografía, tildes, gramática y puntuación, y desarrolla las abreviaturas evidentes",
+    "(«ppto» → «presupuesto», «rrhh» → «recursos humanos»). Ordena cada apunte en una línea propia.",
+    "",
+    "PROHIBIDO:",
+    "- Cambiar el significado de un apunte, aunque esté incompleto o suene raro.",
+    "- Añadir información, conclusiones o contexto que la nota no traiga.",
+    "- Juntar dos apuntes distintos en uno, ni inventar la relación entre ellos.",
+    "- Quitar apuntes: si algo no se entiende, déjalo tal cual y añade [sic] detrás.",
+    "",
+    "Devuelve sólo las notas corregidas, una por línea, sin encabezado ni comentarios.",
+    "",
+    "=== NOTAS A CORREGIR ===",
+    cuaderno
+  ].join("\n");
+
+  const salida = await pedir(prompt, { temperatura: 0.1 });
+  if (!salida.ok) return { ok: true, corregido: false, texto: cuaderno, motivo: salida.error };
+  return { ok: true, corregido: true, texto: salida.texto.trim() };
 }
 
 // ── 2. Minuta ejecutiva ──────────────────────────────────────────────────────
@@ -228,8 +290,11 @@ export async function redactarMinuta(reunion) {
     "",
     "Reglas que no puedes romper:",
     "1. Sólo puedes afirmar lo que está en el material. No completes con lo que suele pasar en reuniones así.",
-    "2. Una nota editorial indica qué destacar o cómo ordenar la minuta. Puede cambiar el énfasis, el orden y el detalle.",
-    "   NUNCA puede convertirse en una decisión, un acuerdo o una declaración de un participante.",
+    "2. El cuaderno de notas del usuario indica qué destacar. Puede cambiar el énfasis, el orden y el detalle.",
+    "   Su contenido relevante se INTEGRA en la redacción de las secciones que le correspondan, con tus palabras.",
+    "   NO hagas una sección de notas ni las cites como tales: quien lee la minuta no debe distinguir de dónde salió el énfasis.",
+    "   Y NUNCA puede convertirse en una decisión, un acuerdo o una declaración de un participante:",
+    "   si la nota dice «ojo con el presupuesto», eso es un énfasis, no un problema que alguien planteó en la sala.",
     "3. Lo que viene de un documento se atribuye al documento, no a una persona. Menciona el nombre del archivo.",
     "4. Una acción sólo lleva responsable si alguien se comprometió de forma explícita. Si no, «Sin asignar».",
     "   Lo mismo con las fechas: «Sin fecha» antes que inventar un plazo.",
@@ -237,6 +302,9 @@ export async function redactarMinuta(reunion) {
     "6. Si una sección no tiene contenido, devuélvela vacía. Una minuta corta y cierta vale más que una larga y adornada.",
     "7. La transcripción es automática y tiene errores. Si algo es dudoso, dilo («según se entendió», «no quedó claro si»).",
     "",
+    reunion.antecedente
+      ? `Esta es una reunión de seguimiento de «${reunion.antecedente.titulo}». Di explícitamente qué avanzó y qué sigue igual.`
+      : "",
     reunion.titulo ? `Título que dio el usuario para esta reunión: ${reunion.titulo}` : "",
     reunion.objetivo ? `Objetivo que dio el usuario: ${reunion.objetivo}` : "",
     (reunion.participantes ?? []).length
@@ -306,7 +374,7 @@ export function minutaSinModelo(reunion) {
     acuerdos: [],
     desacuerdos: [],
     acciones: [],
-    pendientes: (reunion.notas ?? []).map(n => `Nota del usuario: ${n.texto}`),
+    pendientes: [],
     proximos_pasos: [],
     participantes: reunion.participantes ?? [],
     // Marca para que quien compone el documento avise en la portada.

@@ -13,6 +13,7 @@ import { ElevenLabsSession } from "./realtime/elevenlabs-session.js";
 import { dibujarRuta } from "./mapa.js";
 import { EscuchaDeReunion, escuchaDisponible } from "./escucha.js";
 import { MemoriaDeReunion, leerDocumento, ESTADOS, ROTULOS } from "./reunion.js";
+import { guardarReunion, listarReuniones, leerReunion, borrarReunion, comoAntecedente, historialDisponible } from "./historial.js";
 
 const canvas = document.querySelector("#avatar");
 const ctx = canvas.getContext("2d");
@@ -36,6 +37,10 @@ const ui = {
   reunionCancelar: document.querySelector("#reunionCancelar"),
   reunionParticipar: document.querySelector("#reunionParticipar"),
   reunionNota: document.querySelector("#reunionNota"),
+  reunionCuaderno: document.querySelector("#reunionCuaderno"),
+  reunionNotas: document.querySelector("#reunionNotas"),
+  reunionCerrarNotas: document.querySelector("#reunionCerrarNotas"),
+  reunionHistorial: document.querySelector("#reunionHistorial"),
   reunionDocumento: document.querySelector("#reunionDocumento"),
   reunionArchivo: document.querySelector("#reunionArchivo"),
   reunionFinalizar: document.querySelector("#reunionFinalizar"),
@@ -139,7 +144,9 @@ const manejadores = {
     hayActividad();
     // En reunión deja de apuntar en cuanto empieza a hablar: lo que salga por
     // los altavoces es suyo, no de la reunión.
-    if (enModoMeet && phase === "speaking") {
+    // Con la reunión cerrada esto es una conversación normal: no hay sala que
+    // dejar de apuntar ni estado de reunión que cambiar.
+    if (enModoMeet && phase === "speaking" && estadoReunion !== ESTADOS.POSTERIOR) {
       escucha.ensordecer(true);
       fijarEstado(ESTADOS.HABLANDO);
     }
@@ -362,7 +369,12 @@ if (ui.abrirMarcador && ui.marcador) {
 // un caché viejo, que no se lleve por delante el resto de la aplicación.
 if (ui.reunion) {
   ui.reunionParticipar.addEventListener("click", () => participar());
-  ui.reunionNota.addEventListener("click", () => pedirNota());
+  ui.reunionNota.addEventListener("click", () => alternarCuaderno());
+  ui.reunionCerrarNotas.addEventListener("click", () => alternarCuaderno(false));
+  // Se guarda mientras se escribe: una recarga a mitad de reunión no puede
+  // llevarse por delante lo apuntado.
+  ui.reunionNotas.addEventListener("input", () => guardarCuaderno());
+  ui.reunionHistorial.addEventListener("click", () => mostrarHistorial());
   ui.reunionDocumento.addEventListener("click", () => ui.reunionArchivo.click());
   ui.reunionFinalizar.addEventListener("click", () => pedirCierre());
   ui.reunionArchivo.addEventListener("change", async evento => {
@@ -450,6 +462,9 @@ let relojReunion = null;
 let campoAbierto = "";          // qué está pidiendo el campo de texto de la tira
 let documentoPendiente = null;  // documento leído, a la espera de su descripción
 let colaDeArchivos = [];        // los que faltan por leer, si alguno pidió descripción
+// La reunión ya cerrada sobre la que se puede seguir preguntando. Es lo que
+// convierte «finalizar» en un cambio de estado y no en un final.
+let reunionConsultable = null;
 
 // ── Señales en pantalla ──────────────────────────────────────────────────────
 
@@ -470,7 +485,8 @@ function refrescarCuenta() {
   if (!ui.reunionCuenta) return;
   const piezas = [`${memoria.minutosTranscurridos()} min`];
   if (memoria.turnos.length) piezas.push(`${memoria.turnos.length} interv.`);
-  if (memoria.notas.length) piezas.push(`${memoria.notas.length} nota${memoria.notas.length === 1 ? "" : "s"}`);
+  const lineas = memoria.lineasDeCuaderno();
+  if (lineas) piezas.push(`${lineas} nota${lineas === 1 ? "" : "s"}`);
   if (memoria.documentos.length) piezas.push(`${memoria.documentos.length} doc.`);
   ui.reunionCuenta.textContent = piezas.join(" · ");
 }
@@ -488,6 +504,8 @@ function entrarEnModoMeet() {
   // el peor fallo posible de este modo.
   if (!memoria.abierta || memoria.vacia()) memoria.abrir();
   if (ui.reunionQuien) ui.reunionQuien.value = memoria.hablante;
+  if (ui.reunionNotas) ui.reunionNotas.value = memoria.cuaderno;
+  ajustarBotonesDeReunion();
   clearInterval(relojReunion);
   relojReunion = setInterval(refrescarCuenta, 20_000);
   refrescarCuenta();
@@ -532,7 +550,9 @@ function salirDeModoMeet() {
     ui.mute.textContent = "Silenciar micrófono";
   }
   micCortadoPorMeet = false;
-  setStatus(connected ? "Te escucho" : "Lista para comenzar");
+  // La reunión cerrada sigue cargada aunque se salga del modo: se puede seguir
+  // preguntando por ella desde la conversación normal.
+  setStatus(connected ? (reunionConsultable ? "Te escucho · reunión cargada" : "Te escucho") : "Lista para comenzar");
 }
 
 // ── Participar ───────────────────────────────────────────────────────────────
@@ -595,6 +615,137 @@ function invocar(peticion) {
   }
 }
 
+// Los botones dicen lo que se puede hacer AHORA. Con la reunión cerrada, seguir
+// enseñando «Participar» y «Tomar nota» sería ofrecer cosas que ya no aplican, y
+// «Finalizar reunión» pasa a ser «Nueva reunión», que es lo que toca.
+function ajustarBotonesDeReunion() {
+  if (!ui.reunionParticipar) return;
+  const cerrada = estadoReunion === ESTADOS.POSTERIOR;
+  // Con la reunión cerrada ya no hay a quién atribuir nada.
+  ui.reunionQuien.closest(".reunion-hablante").hidden = cerrada;
+  ui.reunionParticipar.hidden = cerrada;
+  ui.reunionNota.hidden = cerrada;
+  ui.reunionDocumento.hidden = cerrada;
+  ui.reunionFinalizar.textContent = cerrada ? "Empezar otra reunión" : "Finalizar reunión";
+}
+
+// La carpeta de Drive se elige en /reunion.html y se guarda aquí mismo, en el
+// navegador. Así se puede cambiar sin volver a desplegar; si no hay ninguna,
+// manda la de las variables de entorno.
+function carpetaDeDrive() {
+  try { return localStorage.getItem("catalina.reunion.carpetaDrive") || ""; }
+  catch { return ""; }
+}
+
+// ── Historial ────────────────────────────────────────────────────────────────
+//
+// Una reunión no termina en dos archivos: termina en algo que se consulta
+// después y que puede servir de antecedente para la siguiente. El historial vive
+// en este navegador (IndexedDB) porque el disco de Vercel es de sólo lectura y
+// montar una base de datos para algo que sólo lee su dueño sería desproporcionado.
+
+async function mostrarHistorial() {
+  if (!historialDisponible()) {
+    mostrarCierre("Reuniones anteriores", "<p class=\"cierre-aviso\">Este navegador no guarda el historial.</p>");
+    return;
+  }
+  const reuniones = await listarReuniones();
+  mostrarCierre("Reuniones anteriores", "");
+  const cuerpo = ui.cierreCuerpo;
+
+  if (!reuniones.length) {
+    cuerpo.innerHTML = "<p>Todavía no hay ninguna reunión cerrada. Las que cierres aparecerán aquí, "
+      + "y podrás usarlas como antecedente de una reunión de seguimiento.</p>";
+    return;
+  }
+
+  const nota = document.createElement("p");
+  nota.textContent = enModoMeet && memoria.abierta && !memoria.vacia()
+    ? "Elige una para usarla como antecedente de la reunión en curso, o ábrela para preguntar sobre ella."
+    : "Ábrela para preguntarle a Catalina sobre esa reunión, o úsala como antecedente al empezar la siguiente.";
+  cuerpo.append(nota);
+
+  const lista = document.createElement("div");
+  lista.className = "historial";
+  for (const r of reuniones) lista.append(fichaDeReunion(r));
+  cuerpo.append(lista);
+}
+
+function fichaDeReunion(r) {
+  const ficha = document.createElement("article");
+  ficha.className = "historial-ficha";
+
+  const fecha = new Date(r.inicio).toLocaleDateString("es-CL", { day: "2-digit", month: "short", year: "numeric" });
+  const cifras = [
+    `${r.acuerdos} acuerdo${r.acuerdos === 1 ? "" : "s"}`,
+    `${r.acciones} ${r.acciones === 1 ? "acción" : "acciones"}`,
+    r.pendientes ? `${r.pendientes} pendiente${r.pendientes === 1 ? "" : "s"}` : ""
+  ].filter(Boolean).join(" · ");
+
+  const cabecera = document.createElement("div");
+  cabecera.className = "historial-cabecera";
+  cabecera.innerHTML = `<time>${escaparHtml(fecha)}</time><strong>${escaparHtml(r.titulo)}</strong>`;
+
+  const detalle = document.createElement("p");
+  detalle.className = "historial-detalle";
+  detalle.textContent = [r.participantes.join(", "), cifras].filter(Boolean).join(" — ");
+
+  const acciones = document.createElement("div");
+  acciones.className = "historial-acciones";
+
+  const consultar = document.createElement("button");
+  consultar.textContent = "Preguntar sobre ella";
+  consultar.addEventListener("click", async () => {
+    const completa = await leerReunion(r.id);
+    if (!completa) return;
+    reunionConsultable = completa;
+    ui.cierre.dataset.estado = "oculto";
+    avisarAlAgente([
+      `[Aviso del sistema] Se abrió una reunión anterior para consultarla: «${completa.titulo}».`,
+      "Es tu contexto ahora. Contesta lo que te pregunten sobre ella; si necesitas más detalle, usa consultar_reunion.",
+      "Di en una frase que la tienes cargada y ofrécete a responder.",
+      "",
+      "=== LA REUNIÓN ===",
+      memoria.contextoPosterior(completa)
+    ].join("\n"));
+  });
+  acciones.append(consultar);
+
+  const antecedente = document.createElement("button");
+  antecedente.textContent = "Usar como antecedente";
+  antecedente.addEventListener("click", async () => {
+    const completa = await leerReunion(r.id);
+    if (!completa) return;
+    memoria.antecedente = comoAntecedente(completa);
+    ui.cierre.dataset.estado = "oculto";
+    eco(`Esta reunión da seguimiento a «${completa.titulo}».`);
+    avisarAlAgente(`[Aviso del sistema] Esta reunión es de seguimiento de «${completa.titulo}». `
+      + `Lo que quedó de aquélla: ${JSON.stringify(comoAntecedente(completa)).slice(0, 3000)}. `
+      + "Tenlo en cuenta si te preguntan, y dilo en una frase corta.");
+  });
+  acciones.append(antecedente);
+
+  const borrar = document.createElement("button");
+  borrar.className = "historial-borrar";
+  borrar.textContent = "Borrar";
+  borrar.addEventListener("click", async () => {
+    // Dos pulsaciones: borrar una reunión no se deshace y los archivos de Drive
+    // no la reconstruyen —no traen la transcripción consultable—.
+    if (borrar.dataset.seguro !== "si") {
+      borrar.dataset.seguro = "si";
+      borrar.textContent = "¿Seguro? Pulsa otra vez";
+      return;
+    }
+    await borrarReunion(r.id);
+    if (reunionConsultable?.id === r.id) reunionConsultable = null;
+    ficha.remove();
+  });
+  acciones.append(borrar);
+
+  ficha.append(cabecera, detalle, acciones);
+  return ficha;
+}
+
 // ── Notas y documentos ───────────────────────────────────────────────────────
 
 // Un único campo de texto para las tres cosas que hay que escribir: la nota, la
@@ -629,16 +780,6 @@ function descartarCampo() {
 function aceptarCampo() {
   const valor = ui.reunionEntrada.value.trim();
 
-  if (campoAbierto === "nota") {
-    if (valor) {
-      memoria.anotarNota(valor);
-      eco(`Anotado: «${valor}»`);
-      refrescarCuenta();
-    }
-    cerrarCampo();
-    return;
-  }
-
   if (campoAbierto === "documento") {
     const documento = documentoPendiente;
     cerrarCampo();
@@ -658,9 +799,37 @@ function aceptarCampo() {
   }
 }
 
-function pedirNota() {
-  if (!enModoMeet) return;
-  abrirCampo("nota", "Nota para la minuta", "", "Destacar que el consentimiento es el punto crítico");
+// El cuaderno se abre y se cierra; no se «guarda una nota». Lo que hay escrito
+// sigue ahí al volver, que es como funciona un cuaderno y como QA pidió que
+// funcionara esto: abrir, escribir, cerrar, seguir la reunión, volver a abrir y
+// encontrarlo todo.
+function alternarCuaderno(abrir) {
+  if (!enModoMeet || !ui.reunionCuaderno) return;
+  const abierto = abrir ?? ui.reunionCuaderno.hidden;
+  if (abierto) {
+    cerrarCampo();
+    ui.reunionNotas.value = memoria.cuaderno;
+    ui.reunionCuaderno.hidden = false;
+    ui.reunionNota.setAttribute("aria-pressed", "true");
+    ui.reunionNotas.focus();
+    // El cursor al final: quien reabre el cuaderno viene a añadir debajo, no a
+    // reescribir desde el principio.
+    ui.reunionNotas.setSelectionRange(ui.reunionNotas.value.length, ui.reunionNotas.value.length);
+  } else {
+    guardarCuaderno();
+    ui.reunionCuaderno.hidden = true;
+    ui.reunionNota.setAttribute("aria-pressed", "false");
+    const lineas = memoria.lineasDeCuaderno();
+    eco(lineas ? `Cuaderno guardado: ${lineas} nota${lineas === 1 ? "" : "s"}.` : "Sigo escuchando.");
+  }
+}
+
+// Se guarda en cada tecla, no sólo al cerrar: si el navegador se recarga en
+// mitad de una reunión, lo escrito no se pierde por no haber pulsado nada.
+function guardarCuaderno() {
+  if (!ui.reunionNotas) return;
+  memoria.escribirCuaderno(ui.reunionNotas.value);
+  refrescarCuenta();
 }
 
 async function recibirArchivos(archivos) {
@@ -700,6 +869,10 @@ async function seguirConLosArchivos() {
 
 function pedirCierre() {
   if (!enModoMeet) return;
+  // Con la reunión ya cerrada el botón empieza otra: lo anterior queda en el
+  // historial y se puede volver a él cuando se quiera.
+  if (estadoReunion === ESTADOS.POSTERIOR) return empezarOtraReunion();
+  guardarCuaderno();
   if (memoria.vacia()) {
     eco("La reunión está vacía: no hay nada que resumir todavía.");
     return;
@@ -707,9 +880,43 @@ function pedirCierre() {
   abrirCampo("titulo", "Título de la reunión", memoria.titulo, "Comité de innovación clínica");
 }
 
+function empezarOtraReunion() {
+  const anterior = reunionConsultable;
+  memoria.abrir();
+  reunionConsultable = null;
+  if (ui.reunionQuien) ui.reunionQuien.value = "";
+  if (ui.reunionNotas) ui.reunionNotas.value = "";
+  ui.cierre.dataset.estado = "oculto";
+  refrescarCuenta();
+
+  if (sesion && !sesion.muted) {
+    sesion.pausarEnvio(true);
+    micCortadoPorMeet = true;
+    ui.mute.textContent = "Activar micrófono";
+  }
+  clearInterval(relojReunion);
+  relojReunion = setInterval(refrescarCuenta, 20_000);
+  if (escuchaDisponible() && connected && escucha.empezar()) {
+    fijarEstado(ESTADOS.ESCUCHANDO, anterior
+      ? `Reunión nueva. La anterior («${anterior.titulo}») quedó en el historial.`
+      : "Reunión nueva. Escuchando.");
+    setStatus("En reunión");
+  } else {
+    fijarEstado(ESTADOS.ESCUCHANDO, "No se pudo reanudar la escucha.", "problema");
+  }
+  // Después de fijar el estado, no antes: los botones se dibujan según el
+  // estado, y ajustarlos primero los dejaba con el rótulo de la reunión vieja.
+  ajustarBotonesDeReunion();
+}
+
 async function cerrarLaReunion() {
+  guardarCuaderno();
+  alternarCuaderno(false);
   fijarEstado(ESTADOS.CERRANDO, "Redactando la transcripción y la minuta…");
+  // Se corta la captura de la sala, no la sesión. La diferencia es todo el
+  // punto: la reunión deja de grabarse pero sigue estando ahí para hablar de ella.
   escucha.parar();
+  escucha.ensordecer(false);
   clearInterval(relojReunion);
   memoria.cerrar();
   mostrarCierre("Cerrando la reunión", "<p>Corrigiendo la transcripción y redactando la minuta. Tarda unos segundos.</p>");
@@ -719,31 +926,84 @@ async function cerrarLaReunion() {
     const respuesta = await fetch("/reunion/cerrar", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(memoria.paraEnviar())
+      body: JSON.stringify({ ...memoria.paraEnviar(), carpetaDrive: carpetaDeDrive() })
     });
     datos = await respuesta.json();
     if (!respuesta.ok) throw new Error(datos?.error || `El servidor respondió ${respuesta.status}`);
   } catch (error) {
     console.error(error);
-    fijarEstado(ESTADOS.ESCUCHANDO, "No se pudo cerrar la reunión.", "problema");
-    mostrarCierre("No se pudo cerrar", `<p class="cierre-aviso">${escaparHtml(error.message)}</p>`
-      + "<p>La reunión sigue en memoria: vuelve a pulsar «Finalizar reunión» para intentarlo otra vez.</p>");
+    // Se vuelve a escuchar: la reunión no se cerró, así que sigue en curso.
     memoria.abierta = true;
+    fijarEstado(ESTADOS.ESCUCHANDO, "No se pudo cerrar la reunión, sigo escuchando.", "problema");
+    if (escuchaDisponible() && connected) escucha.empezar();
+    relojReunion = setInterval(refrescarCuenta, 20_000);
+    mostrarCierre("No se pudo cerrar", `<p class="cierre-aviso">${escaparHtml(error.message)}</p>`
+      + "<p>La reunión sigue en memoria y se sigue transcribiendo: vuelve a pulsar «Finalizar reunión» para intentarlo otra vez.</p>");
     return;
   }
 
+  // La reunión pasa a ser un objeto consultable.
+  const registro = memoria.registroCompleto(datos);
+  reunionConsultable = registro;
+
+  // Primero se devuelve la voz y se pinta el resultado; el historial se guarda
+  // después y sin bloquear. El orden importa: si se esperaba al guardado y el
+  // navegador no dejaba escribir —ventana privada, almacenamiento bloqueado—,
+  // la promesa no resolvía nunca y el cierre se quedaba colgado en «Cerrando la
+  // reunión» con el micrófono todavía cortado. Guardar el historial no puede
+  // ser lo que impida volver a hablar.
   pintarCierre(datos);
-  fijarEstado(ESTADOS.ESCUCHANDO, "Reunión cerrada.");
-  // Que lo cuente en voz alta: quien está en la reunión no está mirando la
-  // pantalla, y el cierre es justo el momento en que hay que decir qué pasó.
+  entrarEnPosterior(registro);
+
+  guardarReunion(registro).then(guardado => anotarElHistorial(guardado));
+}
+
+// El aviso del historial se rellena cuando el guardado termina, sea como sea.
+function anotarElHistorial(guardado) {
+  const hueco = ui.cierreCuerpo?.querySelector("#cierreHistorial");
+  if (!hueco) return;
+  hueco.textContent = guardado.ok
+    ? "La reunión quedó guardada en este navegador: puedes volver a ella desde «Reuniones anteriores», "
+      + "preguntarle a Catalina sobre lo que se dijo, o usarla como antecedente de una reunión de seguimiento."
+    : "No se pudo guardar en el historial de este navegador, así que esta reunión no quedará para consultarla "
+      + "mañana. Los archivos sí están, y puedes seguir preguntando por ella mientras no cierres la pestaña.";
+  hueco.className = guardado.ok ? "" : "cierre-aviso";
+}
+
+// Después de la reunión.
+//
+// Esto es lo que faltaba y lo que dejaba la voz muerta: al cerrar se paraba la
+// escucha de la sala pero NUNCA se devolvía el micrófono al modelo, que seguía
+// cortado desde que se entró en modo reunión. El resultado era una pantalla que
+// decía «Escuchando» sin que escuchara nadie, ni el navegador ni ella.
+function entrarEnPosterior(registro) {
+  fijarEstado(ESTADOS.POSTERIOR, "Reunión cerrada. Pregúntame lo que quieras sobre ella.");
+  setStatus("Reunión cerrada");
+  ajustarBotonesDeReunion();
+
+  // El micrófono vuelve al modelo: a partir de aquí es una conversación normal.
+  if (micCortadoPorMeet && sesion?.muted) {
+    sesion.pausarEnvio(false);
+    ui.mute.textContent = "Silenciar micrófono";
+  }
+  micCortadoPorMeet = false;
+
+  // Y se le entrega la reunión entera, para que conteste sobre ella sin tener
+  // que ir a buscarla. Lo que no cabe aquí lo puede pedir con consultar_reunion.
   avisarAlAgente([
-    "[Aviso del sistema] La reunión terminó y ya están listos los dos documentos.",
-    datos.drive?.ok ? "Quedaron guardados en Google Drive." : "No se guardaron en Drive.",
-    datos.avisos?.length ? `Incidencias: ${datos.avisos.join(" ")}` : "",
-    "Dilo AHORA en voz alta, en dos frases: que la minuta está lista, cuántos acuerdos y acciones salieron,",
-    `y si hay algo que revisar. Acciones: ${(datos.minuta?.acciones ?? []).length}. Acuerdos: ${(datos.minuta?.acuerdos ?? []).length}.`,
-    "Después pregunta si quiere que la mande por correo."
-  ].filter(Boolean).join(" "));
+    "[Aviso del sistema] La reunión terminó. La transcripción y la minuta ya están listas y en pantalla.",
+    registro.drive?.length ? "Quedaron guardadas en Google Drive." : "No se guardaron en Drive.",
+    "",
+    "A partir de ahora estás en conversación normal y esta reunión es tu contexto. Puedes responder",
+    "cualquier pregunta sobre ella: acuerdos, decisiones, pendientes, quién dijo qué, qué documentos se usaron.",
+    "Si te preguntan algo que no está aquí, usa consultar_reunion para ver el detalle completo.",
+    "",
+    "AHORA, en voz alta y en dos frases: di que la minuta está lista, cuántos acuerdos y cuántas acciones",
+    "salieron, y ofrécete a responder preguntas sobre la reunión.",
+    "",
+    "=== LA REUNIÓN ===",
+    memoria.contextoPosterior(registro)
+  ].join("\n"));
 }
 
 // ── La tarjeta de cierre ─────────────────────────────────────────────────────
@@ -824,10 +1084,16 @@ function pintarCierre(datos) {
     bloque("Guardado en Drive", parrafo(datos.drive?.error || "No se pudieron guardar en Drive.", "cierre-aviso"));
   }
 
-  // 3. Lo que no salió como debía.
+  // 3. El historial. Se dice que quedó guardada porque es lo que permite volver
+  // a preguntar por ella mañana, no sólo hoy.
+  const avisoHistorial = parrafo("Guardando en el historial…");
+  avisoHistorial.id = "cierreHistorial";
+  bloque("Historial", avisoHistorial);
+
+  // 4. Lo que no salió como debía.
   for (const aviso of datos.avisos ?? []) bloque("", parrafo(aviso, "cierre-aviso"));
 
-  // 4. El correo. Se propone entero y no se manda: guardar en la carpeta de
+  // 5. El correo. Se propone entero y no se manda: guardar en la carpeta de
   // siempre es reversible, mandarle la reunión a un tercero no lo es.
   const correo = document.createElement("form");
   correo.className = "cierre-correo";
@@ -907,16 +1173,19 @@ function pintarCierre(datos) {
 // memoria de la reunión vive aquí y no en el servidor.
 
 function anotarEnLaReunion({ texto } = {}) {
-  if (!enModoMeet) return { ok: false, error: "No hay ninguna reunión en curso." };
+  if (!enModoMeet || !memoria.abierta) return { ok: false, error: "No hay ninguna reunión en curso." };
   const nota = memoria.anotarNota(texto);
   if (!nota) return { ok: false, error: "La nota venía vacía." };
-  eco(`Anotado: «${nota.texto}»`);
+  // Si el cuaderno está abierto se refleja al momento: ver aparecer la línea es
+  // la única prueba de que la anotó.
+  if (ui.reunionNotas && !ui.reunionCuaderno.hidden) ui.reunionNotas.value = memoria.cuaderno;
+  eco(`Anotado: «${nota}»`);
   refrescarCuenta();
-  return { ok: true, anotado: nota.texto, total: memoria.notas.length };
+  return { ok: true, anotado: nota, total: memoria.lineasDeCuaderno() };
 }
 
 function registrarHablante({ nombre } = {}) {
-  if (!enModoMeet) return { ok: false, error: "No hay ninguna reunión en curso." };
+  if (!enModoMeet || !memoria.abierta) return { ok: false, error: "No hay ninguna reunión en curso." };
   const puesto = memoria.fijarHablante(nombre);
   if (!puesto) return { ok: false, error: "No entendí el nombre." };
   if (ui.reunionQuien) ui.reunionQuien.value = puesto;
@@ -927,20 +1196,67 @@ function registrarHablante({ nombre } = {}) {
 // Para que pueda contestar «¿qué llevamos acordado?» sin que se le mande la
 // reunión entera cada vez.
 function contarEstadoDeLaReunion() {
-  if (!enModoMeet) return { ok: false, error: "No hay ninguna reunión en curso." };
+  if (enModoMeet && memoria.abierta) {
+    return {
+      ok: true,
+      enCurso: true,
+      minutos: memoria.minutosTranscurridos(),
+      participantes: memoria.participantes(),
+      intervenciones: memoria.turnos.length,
+      documentos: memoria.documentos.map(d => d.nombre),
+      cuaderno: memoria.cuaderno,
+      estado: memoria.resumenVivo(20)
+    };
+  }
+  // Ya cerrada: se contesta con la que está cargada en vez de decir que no hay
+  // ninguna. Es justo el caso que dejaba a Catalina muda después del cierre.
+  if (reunionConsultable) {
+    const m = reunionConsultable.minuta ?? {};
+    return {
+      ok: true,
+      enCurso: false,
+      titulo: reunionConsultable.titulo,
+      participantes: reunionConsultable.participantes,
+      resumen: m.resumen || "",
+      acuerdos: m.acuerdos ?? [],
+      decisiones: m.decisiones ?? [],
+      acciones: m.acciones ?? [],
+      pendientes: m.pendientes ?? []
+    };
+  }
+  return { ok: false, error: "No hay ninguna reunión en curso ni cargada." };
+}
+
+// El detalle completo de la reunión cargada: la transcripción, los documentos y
+// las notas. Es lo que le permite contestar «¿qué dijo Juan del presupuesto?»
+// en vez de quedarse en lo que cupo en el resumen.
+function consultarLaReunion({ sobre } = {}) {
+  if (!reunionConsultable) {
+    return {
+      ok: false,
+      error: enModoMeet && memoria.abierta
+        ? "La reunión sigue en curso; usa estado_de_la_reunion."
+        : "No hay ninguna reunión cargada. Se puede abrir una desde «Reuniones anteriores»."
+    };
+  }
   return {
     ok: true,
-    minutos: memoria.minutosTranscurridos(),
-    participantes: memoria.participantes(),
-    intervenciones: memoria.turnos.length,
-    documentos: memoria.documentos.map(d => d.nombre),
-    notas: memoria.notas.map(n => n.texto),
-    estado: memoria.resumenVivo(20)
+    sobre: sobre || "",
+    titulo: reunionConsultable.titulo,
+    fecha: new Date(reunionConsultable.inicio).toLocaleDateString("es-CL"),
+    detalle: memoria.contextoPosterior(reunionConsultable),
+    documentos: (reunionConsultable.documentos ?? []).map(d => ({
+      nombre: d.nombre,
+      descripcion: d.descripcion || "",
+      // Un trozo de cada uno: el documento entero podría no caber en la respuesta.
+      extracto: String(d.texto || "").slice(0, 4000)
+    }))
   };
 }
 
 async function finalizarPorVoz({ titulo, enviar_a: enviarA } = {}) {
-  if (!enModoMeet) return { ok: false, error: "No hay ninguna reunión en curso." };
+  if (!enModoMeet || !memoria.abierta) return { ok: false, error: "No hay ninguna reunión en curso." };
+  guardarCuaderno();
   if (memoria.vacia()) return { ok: false, error: "La reunión está vacía: no hay nada que resumir." };
   if (titulo) memoria.titulo = String(titulo).trim();
   // El destinatario sólo se apunta: el correo sigue necesitando que alguien lo
@@ -1015,6 +1331,7 @@ async function despacharHerramienta(nombre, argumentos) {
   if (nombre === "tomar_nota") return anotarEnLaReunion(argumentos);
   if (nombre === "quien_habla") return registrarHablante(argumentos);
   if (nombre === "estado_de_la_reunion") return contarEstadoDeLaReunion();
+  if (nombre === "consultar_reunion") return consultarLaReunion(argumentos);
   if (nombre === "finalizar_reunion") return await finalizarPorVoz(argumentos);
   // Cualquier otro nombre viene de un conector definido en el administrador.
   // Se manda el nombre, no la dirección: el servidor la resuelve.
@@ -2264,7 +2581,9 @@ function cerrarTurno() {
   // Lo que dijo en una reunión queda en la memoria de la reunión, marcado como
   // suyo. Sin esto, la minuta no sabría que la asistente intervino y sus
   // aportes se perderían o —peor— se atribuirían a un participante.
-  if (dicho && enModoMeet && memoria.abierta) memoria.anotarIntervencion(dicho);
+  if (dicho && enModoMeet && memoria.abierta && estadoReunion !== ESTADOS.POSTERIOR) {
+    memoria.anotarIntervencion(dicho);
+  }
   turnoVivo = null;
 }
 
@@ -2308,11 +2627,12 @@ function seguirFinDeTurno(lectura, now) {
     respuestaCerrada = false;
     silencioDesde = 0;
     director.setState(faseDeSesion === "idle" ? "listening" : faseDeSesion);
-    setStatus(enModoMeet ? "En reunión" : "Te escucho");
+    setStatus(enModoMeet && estadoReunion !== ESTADOS.POSTERIOR ? "En reunión"
+      : (reunionConsultable ? "Te escucho · reunión cargada" : "Te escucho"));
     // Terminó de hablar de verdad —lo decide el silencio real de la pista, no
     // el fin de la generación—, así que vuelve a escuchar la reunión y se
     // vuelve a callar. El margen extra deja pasar la cola de su voz en la sala.
-    if (enModoMeet && estadoReunion !== ESTADOS.CERRANDO) {
+    if (enModoMeet && estadoReunion !== ESTADOS.CERRANDO && estadoReunion !== ESTADOS.POSTERIOR) {
       setTimeout(() => {
         escucha.ensordecer(false);
         fijarEstado(ESTADOS.ESCUCHANDO, "Sigo escuchando. Pulsa «Participar» cuando me necesites.");

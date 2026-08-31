@@ -236,7 +236,8 @@ button.primary { border-color: rgba(109,228,255,.45); background: linear-gradien
      los rótulos no cabían y los botones quedaban ilegibles. */
   .reunion { left: 12px; right: 12px; width: auto; }
   .reunion-botones { grid-template-columns: 1fr; }
-  .reunion-botones #reunionDocumento, .reunion-botones .reunion-fin { grid-column: span 1; }
+  .reunion-botones #reunionDocumento, .reunion-botones #reunionHistorial,
+  .reunion-botones .reunion-fin { grid-column: span 1; }
   .cierre { left: 12px; right: 12px; width: auto; transform: none; top: calc(14px + env(safe-area-inset-top)); max-height: 82dvh; }
   .cierre[data-estado="visible"] { transform: none; }
 }
@@ -276,7 +277,7 @@ button.primary { border-color: rgba(109,228,255,.45); background: linear-gradien
 .meet .reunion { display: flex; }
 /* `display:flex` gana al atributo `hidden` del navegador, así que hay que
    decirlo: sin esto el campo de texto se quedaba abierto después de guardar. */
-.reunion[hidden], .reunion-campo[hidden] { display: none; }
+.reunion[hidden], .reunion-campo[hidden], .reunion-cuaderno[hidden], .reunion-hablante[hidden] { display: none; }
 
 .reunion-estado { display: flex; align-items: center; gap: 8px; color: #a9d8ec; font-size: 10px; font-weight: 700; letter-spacing: .18em; text-transform: uppercase; }
 .reunion-punto { flex: none; width: 7px; height: 7px; border-radius: 50%; background: #34C759; animation: pulse 1.8s infinite; }
@@ -312,11 +313,42 @@ button.primary { border-color: rgba(109,228,255,.45); background: linear-gradien
 .reunion-campo-acciones button { flex: 1; min-height: 32px; font-size: 12px; }
 .reunion-si { border-color: rgba(109,228,255,.4); background: rgba(25,134,173,.4); }
 
+/* El cuaderno. Es un campo grande a propósito: se abre para releer lo apuntado
+   y seguir escribiendo debajo, no para meter una línea suelta. */
+.reunion-cuaderno { display: flex; flex-direction: column; gap: 7px; }
+.reunion-cuaderno > label { color: rgba(169,216,236,.62); font-size: 10px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; }
+.reunion-cuaderno textarea {
+  min-height: 128px; max-height: 34dvh; resize: vertical; padding: 9px 11px;
+  border: 1px solid rgba(180,225,245,.2); border-radius: 10px;
+  background: rgba(255,255,255,.05); color: #eaf6fc; font: inherit; font-size: 13px;
+  line-height: 1.5; box-sizing: border-box;
+}
+.reunion-cuaderno textarea:focus { outline: none; border-color: rgba(109,228,255,.55); background: rgba(255,255,255,.08); }
+.reunion-cuaderno textarea::placeholder { color: rgba(209,229,239,.35); }
+
+/* Historial de reuniones, dentro de la tarjeta de cierre. */
+.historial { display: flex; flex-direction: column; gap: 9px; }
+.historial-ficha {
+  display: flex; flex-direction: column; gap: 6px; padding: 11px 13px;
+  border: 1px solid rgba(180,225,245,.16); border-radius: 13px; background: rgba(255,255,255,.04);
+}
+.historial-cabecera { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.historial-cabecera time { flex: none; color: rgba(169,216,236,.6); font-size: 10.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; font-variant-numeric: tabular-nums; }
+.historial-cabecera strong { font-size: 14px; font-weight: 600; color: #eaf6fc; }
+.historial-detalle { margin: 0; color: rgba(209,229,239,.6); font-size: 12px; line-height: 1.45; }
+.historial-acciones { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; }
+.historial-acciones button { min-height: 30px; padding: 0 11px; font-size: 11.5px; }
+.historial-borrar { border-color: rgba(255,159,10,.28); color: #ffd9a0; }
+
 .reunion-botones { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
 .reunion-botones button { min-height: 34px; padding: 0 10px; font-size: 12px; white-space: nowrap; }
 /* Las dos acciones de cada momento arriba; las dos que ocupan toda la fila son
    las que no se pulsan a menudo. */
-.reunion-botones #reunionDocumento, .reunion-botones .reunion-fin { grid-column: span 2; }
+.reunion-botones #reunionDocumento, .reunion-botones #reunionHistorial,
+.reunion-botones .reunion-fin { grid-column: span 2; }
+/* Con la reunión cerrada los botones que sobran se van; `hidden` lo pide el
+   JavaScript y aquí se le hace caso pese al grid. */
+.reunion-botones button[hidden] { display: none; }
 .reunion-botones .reunion-fin { border-color: rgba(255,159,10,.35); color: #ffd9a0; }
 .reunion-botones button[aria-pressed="true"] { border-color: rgba(109,228,255,.55); background: rgba(25,134,173,.45); color: #eaf6fc; }
 

@@ -140,10 +140,23 @@
         </div>
       </div>
 
+      <!-- El cuaderno de notas. Es acumulativo y se queda con todo lo escrito
+           durante la reunión: al reabrirlo aparece lo de antes, para releerlo y
+           seguir escribiendo debajo. -->
+      <div class="reunion-cuaderno" id="reunionCuaderno" hidden>
+        <label for="reunionNotas">Cuaderno de notas</label>
+        <textarea id="reunionNotas" spellcheck="true"
+                  placeholder="Lo que quieras destacar en la minuta. Se guarda solo."></textarea>
+        <div class="reunion-campo-acciones">
+          <button id="reunionCerrarNotas" class="reunion-si">Seguir con la reunión</button>
+        </div>
+      </div>
+
       <nav class="reunion-botones" aria-label="Acciones de la reunión">
         <button id="reunionParticipar">Participar</button>
-        <button id="reunionNota">Tomar nota</button>
+        <button id="reunionNota" aria-pressed="false">Tomar nota</button>
         <button id="reunionDocumento">Agregar documento</button>
+        <button id="reunionHistorial">Reuniones anteriores</button>
         <button id="reunionFinalizar" class="reunion-fin">Finalizar reunión</button>
       </nav>
       <input type="file" id="reunionArchivo" multiple hidden
@@ -163,6 +176,6 @@
     <button class="exit-meet" id="exitMeet" aria-label="Salir del modo Meet">Mostrar controles</button>
   </main>
   <audio id="remoteAudio" autoplay></audio>
-  <script type="module" src="app.js?v=34"></script>
+  <script type="module" src="app.js?v=35"></script>
 </body>
 </html>

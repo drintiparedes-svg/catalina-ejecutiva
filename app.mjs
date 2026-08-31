@@ -23,7 +23,7 @@ import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // Se sube a mano con cada arreglo que el usuario tiene que descargar.
-export const VERSION = "2026-08-31.1";
+export const VERSION = "2026-08-31.2";
 
 const root = fileURLToPath(new URL("./public", import.meta.url));
 // El .env se lee de forma síncrona a propósito. Con `await` aquí arriba, en el
@@ -290,7 +290,7 @@ export async function atender(req, res) {
     if (req.method === "POST" && req.url === "/reunion/cerrar") {
       let datos = {};
       try { datos = JSON.parse(await readBody(req) || "{}"); } catch {}
-      if (!Array.isArray(datos.turnos) && !Array.isArray(datos.notas) && !Array.isArray(datos.documentos)) {
+      if (!Array.isArray(datos.turnos) && !datos.cuaderno && !Array.isArray(datos.documentos)) {
         return json(res, 400, { ok: false, error: "No llegó el material de la reunión.", code: "REUNION_VACIA" });
       }
       return json(res, 200, await cerrarReunion(datos));
@@ -442,6 +442,9 @@ const USO_DE_LA_REUNION = [
   "Usa quien_habla cuando quede claro quién toma la palabra; si no lo sabes, no lo inventes.",
   "Al terminar, finalizar_reunion prepara la transcripción corregida en Word y la minuta en PDF y las guarda en Drive.",
   "El correo no lo mandas tú: queda propuesto en pantalla y lo confirma una persona. Dilo así, sin prometer que ya se envió.",
+  "Cerrar la reunión NO la borra: sigue siendo tu contexto y puedes conversar sobre ella con normalidad.",
+  "Después del cierre te preguntarán por acuerdos, pendientes, quién dijo qué o qué decía un documento: contesta con consultar_reunion.",
+  "Si te preguntan algo que no está en la reunión, dilo en vez de deducirlo.",
   "Nunca conviertas una nota del usuario en algo que alguien dijo, ni atribuyas a una persona lo que venía en un documento."
 ].join(" ");
 
@@ -773,6 +776,19 @@ const HERRAMIENTAS_REUNION = [
       + "aportaron, qué notas hay y las últimas intervenciones transcritas. Úsala cuando te pregunten "
       + "«¿qué llevamos?», «¿qué acordamos?» o «¿de qué hemos hablado?».",
     parametros: { type: "object", properties: {} }
+  },
+  {
+    nombre: "consultar_reunion",
+    descripcion: "Devuelve el detalle completo de la reunión que esté cargada: la transcripción de lo que se "
+      + "dijo, la minuta, las notas del usuario y los documentos aportados. Úsala DESPUÉS de cerrar una reunión "
+      + "o al abrir una del historial, cuando te pregunten algo concreto que no recuerdes: qué dijo alguien, "
+      + "quién quedó a cargo de qué, qué decía un documento. Responde con lo que encuentres; si no está ahí, dilo.",
+    parametros: {
+      type: "object",
+      properties: {
+        sobre: { type: "string", description: "Qué estás buscando, para dejar constancia: «lo que dijo Juan del presupuesto»." }
+      }
+    }
   },
   {
     nombre: "finalizar_reunion",

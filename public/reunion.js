@@ -26,7 +26,10 @@ export const ESTADOS = {
   HABILITADA: "habilitada",
   INVOCADA: "invocada",
   HABLANDO: "hablando",
-  CERRANDO: "cerrando"
+  CERRANDO: "cerrando",
+  // Cerrar la reunión no apaga la sesión: apaga la captura de la sala y deja la
+  // reunión como algo que se puede seguir consultando de viva voz.
+  POSTERIOR: "posterior"
 };
 
 export const ROTULOS = {
@@ -34,7 +37,8 @@ export const ROTULOS = {
   [ESTADOS.HABILITADA]: "Puedes hablarme",
   [ESTADOS.INVOCADA]: "Me lo estoy pensando",
   [ESTADOS.HABLANDO]: "Hablando",
-  [ESTADOS.CERRANDO]: "Cerrando la reunión"
+  [ESTADOS.CERRANDO]: "Cerrando la reunión",
+  [ESTADOS.POSTERIOR]: "Reunión cerrada"
 };
 
 const SIN_NOMBRE = "Sin identificar";
@@ -53,17 +57,25 @@ export class MemoriaDeReunion {
     this.hablante = "";
     this.nombresVistos = [];
     this.turnos = [];
-    this.notas = [];
+    // Un cuaderno, no una lista de notas sueltas. Quien toma notas en una
+    // reunión vuelve sobre lo que ya escribió: releerlo, matizarlo, añadir
+    // debajo. Con una lista de entradas cerradas eso era imposible.
+    this.cuaderno = "";
     this.documentos = [];
     this.intervenciones = [];
+    // Minuta de una reunión anterior, cuando ésta es de seguimiento.
+    this.antecedente = null;
+    // Lo que quedó al cerrar, para poder seguir conversando sobre ello.
+    this.cierre = null;
   }
 
-  abrir({ titulo = "", objetivo = "" } = {}) {
+  abrir({ titulo = "", objetivo = "", antecedente = null } = {}) {
     this.olvidar();
     this.abierta = true;
     this.inicio = Date.now();
     this.titulo = titulo;
     this.objetivo = objetivo;
+    this.antecedente = antecedente;
   }
 
   cerrar() {
@@ -89,12 +101,23 @@ export class MemoriaDeReunion {
     return turno;
   }
 
+  // Añade una línea al cuaderno sin tocar lo que ya había. Es lo que usa la voz
+  // («Catalina, apunta que…»); a mano se edita el cuaderno entero.
   anotarNota(texto) {
     const limpio = String(texto ?? "").trim();
     if (!limpio) return null;
-    const nota = { t: Date.now(), texto: limpio, origen: "NOTA_EDITORIAL" };
-    this.notas.push(nota);
-    return nota;
+    this.cuaderno = this.cuaderno ? `${this.cuaderno}\n${limpio}` : limpio;
+    return limpio;
+  }
+
+  escribirCuaderno(texto) {
+    this.cuaderno = String(texto ?? "");
+    return this.cuaderno;
+  }
+
+  // Cuántas líneas escritas lleva, para la cuenta de la tira.
+  lineasDeCuaderno() {
+    return this.cuaderno.split("\n").filter(l => l.trim()).length;
   }
 
   anotarDocumento(documento) {
@@ -136,7 +159,8 @@ export class MemoriaDeReunion {
       this.documentos.length
         ? `Documentos aportados (${this.documentos.length}): ${this.documentos.map(d => d.nombre).join(", ")}`
         : "",
-      this.notas.length ? `Notas del usuario (${this.notas.length}): ${this.notas.map(n => n.texto).join(" · ")}` : "",
+      this.cuaderno.trim() ? `Cuaderno de notas del usuario:\n${this.cuaderno.trim()}` : "",
+      this.antecedente ? `Esta reunión da seguimiento a «${this.antecedente.titulo}».` : "",
       "",
       recientes ? `Últimas intervenciones transcritas:\n${recientes}` : "Todavía no se ha transcrito nada."
     ].filter(Boolean).join("\n");
@@ -153,14 +177,67 @@ export class MemoriaDeReunion {
       destinatario: this.destinatario,
       participantes: this.participantes(),
       turnos: this.turnos,
-      notas: this.notas,
+      cuaderno: this.cuaderno,
       documentos: this.documentos.map(({ nombre, tipo, texto, descripcion }) => ({ nombre, tipo, texto, descripcion })),
-      intervenciones: this.intervenciones
+      intervenciones: this.intervenciones,
+      antecedente: this.antecedente
     };
   }
 
   vacia() {
-    return !this.turnos.length && !this.notas.length && !this.documentos.length;
+    return !this.turnos.length && !this.cuaderno.trim() && !this.documentos.length;
+  }
+
+  // La reunión ya cerrada, tal como se guarda en el historial y como se le da a
+  // Catalina para que siga contestando sobre ella. Aquí está la diferencia entre
+  // «se generaron dos archivos» y «la reunión sigue siendo consultable».
+  registroCompleto(cierre) {
+    const m = cierre?.minuta ?? {};
+    return {
+      id: `r-${this.inicio}`,
+      inicio: this.inicio,
+      fin: this.fin || Date.now(),
+      titulo: this.titulo || m.titulo || "Reunión sin título",
+      objetivo: this.objetivo || m.objetivo || "",
+      participantes: this.participantes(),
+      minuta: m,
+      transcripcion: cierre?.transcripcion || "",
+      cuaderno: cierre?.cuadernoCorregido || this.cuaderno,
+      documentos: this.documentos.map(({ nombre, tipo, descripcion, texto }) => ({ nombre, tipo, descripcion, texto })),
+      intervenciones: this.intervenciones,
+      antecedente: this.antecedente,
+      archivos: [cierre?.archivos?.transcripcion?.nombre, cierre?.archivos?.minuta?.nombre].filter(Boolean),
+      drive: cierre?.drive?.ok ? (cierre.drive.archivos ?? []).map(a => ({ nombre: a.nombre, enlace: a.enlace })) : []
+    };
+  }
+
+  // Lo que se le entrega para conversar sobre una reunión ya cerrada. Va la
+  // minuta entera y la transcripción recortada: contestar «¿qué dijo Juan del
+  // presupuesto?» necesita lo que se dijo, no un resumen de lo que se dijo.
+  contextoPosterior(registro, topeTranscripcion = 24_000) {
+    if (!registro) return "";
+    const m = registro.minuta ?? {};
+    const lista = (titulo, items) => (items ?? []).length
+      ? `${titulo}:\n${items.map(i => `- ${typeof i === "string" ? i : `${i.accion} — ${i.responsable} (${i.fecha}, ${i.estado})`}`).join("\n")}`
+      : "";
+    const transcripcion = String(registro.transcripcion || "");
+    return [
+      `Reunión «${registro.titulo}» del ${new Date(registro.inicio).toLocaleDateString("es-CL", { day: "numeric", month: "long", year: "numeric" })}.`,
+      registro.objetivo ? `Objetivo: ${registro.objetivo}` : "",
+      registro.participantes.length ? `Participantes: ${registro.participantes.join(", ")}` : "",
+      m.resumen ? `\nResumen ejecutivo:\n${m.resumen}` : "",
+      lista("\nDecisiones", m.decisiones),
+      lista("\nAcuerdos", m.acuerdos),
+      lista("\nDesacuerdos", m.desacuerdos),
+      lista("\nAcciones comprometidas", m.acciones),
+      lista("\nPendientes", m.pendientes),
+      lista("\nPróximos pasos", m.proximos_pasos),
+      registro.documentos.length ? `\nDocumentos aportados: ${registro.documentos.map(d => d.nombre).join(", ")}` : "",
+      registro.cuaderno.trim() ? `\nNotas personales del usuario:\n${registro.cuaderno.trim()}` : "",
+      transcripcion
+        ? `\nTRANSCRIPCIÓN DE LO QUE SE DIJO:\n${transcripcion.length > topeTranscripcion ? `…${transcripcion.slice(-topeTranscripcion)}` : transcripcion}`
+        : ""
+    ].filter(Boolean).join("\n");
   }
 }
 
