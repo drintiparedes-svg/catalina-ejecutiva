@@ -14,6 +14,7 @@ import { dibujarRuta } from "./mapa.js";
 import { EscuchaDeReunion, escuchaDisponible } from "./escucha.js";
 import { MemoriaDeReunion, leerDocumento, ESTADOS, ROTULOS } from "./reunion.js";
 import { TIPOS, TIPO_POR_DEFECTO, tipoDeReunion } from "./tipos-de-reunion.js";
+import { carpetaGuardada, permisoDeCarpeta, escribirEnCarpeta, carpetaDisponible } from "./carpeta.js";
 import {
   guardarReunion, listarReuniones, leerReunion, borrarReunion, comoAntecedente, historialDisponible,
   guardarBorrador, borradorPendiente, olvidarBorrador
@@ -926,6 +927,15 @@ function permisoDeDrive() {
   catch { return ""; }
 }
 
+// Tu propio correo, si lo configuraste. Mandarte a ti mismo la minuta no es la
+// acción externa que exige confirmación —no sale de tu círculo— y convierte tu
+// bandeja en el archivo: buscable, en todos tus dispositivos y con copia de
+// seguridad, sin instalar ni conectar nada.
+function miCorreo() {
+  try { return localStorage.getItem("catalina.reunion.miCorreo") || ""; }
+  catch { return ""; }
+}
+
 // ── Historial ────────────────────────────────────────────────────────────────
 //
 // Una reunión no termina en dos archivos: termina en algo que se consulta
@@ -1455,12 +1465,62 @@ async function cerrarLaReunion() {
   pintarCierre(datos, integridad);
   entrarEnPosterior(registro, integridad);
 
+  // Copia en la carpeta del equipo, si hay una elegida. Va después de pintar y
+  // de devolver la voz: es un archivado, no puede retrasar el cierre.
+  archivarEnLaCarpeta(datos, registro);
+
   guardarReunion(registro).then(guardado => {
     anotarElHistorial(guardado);
     // El borrador sólo se descarta cuando la reunión está a salvo en el
     // historial. Borrarlo antes sería tirar la única copia que quedaba.
     if (guardado.ok && integridad.ok) olvidarBorrador(memoria.id);
   });
+}
+
+// Escribe los dos documentos y la reunión entera en la carpeta elegida.
+//
+// El JSON no es un extra: es lo que permite recuperar la reunión en otro equipo.
+// Si la carpeta está dentro de Google Drive o iCloud, esa copia se sincroniza
+// sola y el historial deja de vivir en un solo navegador.
+async function archivarEnLaCarpeta(datos, registro) {
+  const hueco = ui.cierreCuerpo?.querySelector("#cierreCarpeta");
+  const carpeta = await carpetaGuardada();
+  if (!carpeta) { if (hueco) hueco.closest(".cierre-bloque")?.remove(); return; }
+
+  const permiso = await permisoDeCarpeta(carpeta);
+  if (permiso !== "si") {
+    if (!hueco) return;
+    hueco.textContent = `El navegador pide permiso otra vez para escribir en «${carpeta.name}».`;
+    hueco.className = "cierre-aviso";
+    // Pedirlo exige que la persona acabe de pulsar algo: por eso un botón y no
+    // un intento a ciegas que el navegador rechazaría.
+    const boton = document.createElement("button");
+    boton.className = "cierre-enviar";
+    boton.textContent = `Guardar en «${carpeta.name}»`;
+    boton.addEventListener("click", async () => {
+      if (await permisoDeCarpeta(carpeta, true) !== "si") return;
+      boton.remove();
+      await escribirTodo(carpeta, datos, registro, hueco);
+    });
+    hueco.after(boton);
+    return;
+  }
+  await escribirTodo(carpeta, datos, registro, hueco);
+}
+
+async function escribirTodo(carpeta, datos, registro, hueco) {
+  const bytes = base64 => Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+  const escritos = await Promise.all([
+    escribirEnCarpeta(carpeta, datos.archivos.transcripcion.nombre, bytes(datos.archivos.transcripcion.base64)),
+    escribirEnCarpeta(carpeta, datos.archivos.minuta.nombre, bytes(datos.archivos.minuta.base64)),
+    escribirEnCarpeta(carpeta, `Reunion_${registro.id}.json`, JSON.stringify(registro, null, 2))
+  ]);
+  if (!hueco) return;
+  const fallaron = escritos.filter(e => !e.ok);
+  hueco.textContent = fallaron.length
+    ? `No se pudo escribir en «${carpeta.name}»: ${fallaron[0].error}`
+    : `Guardado en «${carpeta.name}»: los dos documentos y una copia de la reunión para poder recuperarla.`;
+  hueco.className = fallaron.length ? "cierre-aviso" : "cierre-ok";
 }
 
 // El aviso del historial se rellena cuando el guardado termina, sea como sea.
@@ -1628,17 +1688,55 @@ function pintarCierre(datos, integridad = { ok: true, comprobaciones: [], fallos
     bloque("Guardado en Drive", parrafo(datos.drive?.error || "No se pudieron guardar en Drive.", "cierre-aviso"));
   }
 
-  // 4. El historial. Se dice que quedó guardada porque es lo que permite volver
+  // 4. La carpeta del equipo, si la hay.
+  if (carpetaDisponible()) {
+    const avisoCarpeta = parrafo("Guardando en tu carpeta…");
+    avisoCarpeta.id = "cierreCarpeta";
+    bloque("En tu carpeta", avisoCarpeta);
+  }
+
+  // 5. El historial. Se dice que quedó guardada porque es lo que permite volver
   // a preguntar por ella mañana, no sólo hoy.
   const avisoHistorial = parrafo("Guardando en el historial…");
   avisoHistorial.id = "cierreHistorial";
   bloque("Historial", avisoHistorial);
 
-  // 5. Lo que no salió como debía.
+  // 6. Lo que no salió como debía.
   for (const aviso of datos.avisos ?? []) bloque("", parrafo(aviso, "cierre-aviso"));
 
-  // 6. El correo. Se propone entero y no se manda: guardar en la carpeta de
-  // siempre es reversible, mandarle la reunión a un tercero no lo es.
+  // 7a. Copia a tu propio correo, si la pediste. Sale sola: no es una acción
+  // externa, es archivarte a ti mismo lo que ya tienes delante.
+  const mio = miCorreo();
+  if (mio) {
+    const aviso = parrafo(`Mandándote copia a ${mio}…`);
+    bloque("Copia para ti", aviso);
+    fetch("/reunion/correo", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        confirmado: true,
+        destinatario: mio,
+        asunto: datos.correo.asunto,
+        cuerpo: datos.correo.cuerpo,
+        adjuntos: [
+          { nombre: datos.archivos.transcripcion.nombre, base64: datos.archivos.transcripcion.base64 },
+          { nombre: datos.archivos.minuta.nombre, base64: datos.archivos.minuta.base64 }
+        ]
+      })
+    })
+      .then(r => r.json())
+      .then(r => {
+        aviso.textContent = r.ok ? `Copia enviada a ${mio}.` : `No se pudo mandarte la copia: ${r.error}`;
+        aviso.className = r.ok ? "cierre-ok" : "cierre-aviso";
+      })
+      .catch(error => {
+        aviso.textContent = `No se pudo mandarte la copia: ${error.message}`;
+        aviso.className = "cierre-aviso";
+      });
+  }
+
+  // 7b. El correo a otros. Se propone entero y no se manda: archivarte a ti es
+  // reversible, mandarle la reunión a un tercero no lo es.
   const correo = document.createElement("form");
   correo.className = "cierre-correo";
   correo.innerHTML = `

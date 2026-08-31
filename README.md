@@ -579,6 +579,34 @@ preguntar por ella, o mientras se pregunta. También se usa como **antecedente**
 de una reunión de seguimiento: entonces la minuta nueva sabe de dónde viene y
 dice qué avanzó y qué sigue igual.
 
+### Dónde se archivan las minutas
+
+Tres vías, de menos a más piezas. Conviven: se pueden usar todas a la vez.
+
+**1. Una carpeta del equipo** (Chrome o Edge de escritorio). Se elige una vez y
+Catalina escribe ahí, en cada cierre, el Word, el PDF y una copia de la reunión
+en JSON. Sin cuentas, sin permisos, sin desplegar nada. Y resuelve lo de Drive
+por la puerta de al lado: **si la carpeta está dentro de «Google Drive»** —o de
+iCloud, o de Dropbox—, la aplicación de escritorio la sincroniza sola y las
+minutas acaban en el Drive personal sin que Catalina hable con Google.
+
+La copia en JSON no es un extra: es la reunión entera. En otro equipo se elige
+la misma carpeta sincronizada, se pulsa **Recuperar reuniones de la carpeta** y
+el historial vuelve. Es lo que saca la memoria de un solo navegador.
+
+El navegador pide permiso sobre la carpeta cada vez que se reinicia; cuando pasa,
+la pantalla de cierre lo dice y ofrece un botón en vez de fallar en silencio.
+
+**2. Copia a tu propio correo** (cualquier navegador, teléfono incluido). Cada
+reunión cerrada llega con los dos archivos adjuntos y la bandeja pasa a ser el
+archivo: buscable, en todos los dispositivos y con copia de seguridad. A uno
+mismo se manda sin preguntar —no es una acción externa—; a terceros sigue
+haciendo falta confirmarlo en dos pulsaciones.
+
+**3. Google Drive por internet**, abajo. Hace falta sólo para subir a Drive sin
+la aplicación de escritorio: desde el teléfono, o desde un navegador que no sea
+Chrome.
+
 ### Conectar Google Drive
 
 Google no deja que ninguna aplicación entre en un Drive sabiendo el correo —si

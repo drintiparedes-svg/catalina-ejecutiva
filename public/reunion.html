@@ -42,8 +42,34 @@
     <p class="detalle" id="resultadoVoz"></p>
   </section>
 
+  <section class="paso" id="pCarpetaEquipo">
+    <h2>Dónde se archivan las minutas</h2>
+    <p class="detalle">Lo más simple: elige <b>una carpeta de tu equipo</b> y Catalina escribe ahí los dos
+       documentos y una copia de la reunión cada vez que cierras una. Sin cuentas, sin permisos, sin desplegar nada.</p>
+    <p class="detalle"><b>Y si la eliges dentro de tu carpeta de «Google Drive»</b> —o de iCloud, o de Dropbox—,
+       la aplicación de escritorio la sincroniza sola. Tus minutas acaban en tu Drive personal sin que Catalina
+       llegue a hablar con Google, que es lo que complicaba la otra vía.</p>
+    <div id="carpetaEquipo"><p class="detalle">Comprobando…</p></div>
+  </section>
+
+  <section class="paso" id="pMiCorreo">
+    <h2>Copia a tu correo <span style="font-weight:400;color:#8B93A3;font-size:.85rem">(funciona en cualquier navegador)</span></h2>
+    <p class="detalle">La otra vía simple, y la única que funciona también en el teléfono: cada reunión cerrada te
+       llega por correo con los dos archivos adjuntos. Tu bandeja pasa a ser el archivo —buscable, en todos tus
+       dispositivos y con copia de seguridad— sin instalar ni conectar nada.</p>
+    <p class="detalle">A ti mismo se te manda sin preguntar: no es una acción externa. A terceros sigue haciendo
+       falta confirmarlo en dos pulsaciones desde la pantalla de cierre.</p>
+    <label for="miCorreo">Tu correo</label>
+    <input id="miCorreo" type="email" placeholder="tu@correo.cl" autocomplete="off">
+    <button id="guardarMiCorreo">Guardar</button>
+    <p class="detalle" id="avisoMiCorreo"></p>
+  </section>
+
   <section class="paso" id="pCuenta">
-    <h2>Tu cuenta de Google</h2>
+    <h2>Conectar Google Drive <span style="font-weight:400;color:#8B93A3;font-size:.85rem">(opcional)</span></h2>
+    <p class="detalle">Hace falta sólo si quieres que suba a Drive <b>por internet</b>, sin la aplicación de
+       escritorio: desde el teléfono, o desde un navegador que no sea Chrome. Si te basta con la carpeta de arriba,
+       puedes saltarte esto entero.</p>
     <div id="cuentaCuerpo"><p class="detalle">Comprobando…</p></div>
   </section>
 
@@ -222,6 +248,100 @@ async function pintarCarpetas() {
     carpetaCuerpo.append(pie);
   }
 }
+
+// ── Copia a tu propio correo ─────────────────────────────────────────────────
+
+const CLAVE_MI_CORREO = "catalina.reunion.miCorreo";
+const campoMio = document.querySelector("#miCorreo");
+const avisoMio = document.querySelector("#avisoMiCorreo");
+campoMio.value = guardado(CLAVE_MI_CORREO);
+document.querySelector("#guardarMiCorreo").addEventListener("click", () => {
+  const valor = campoMio.value.trim();
+  if (valor && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(valor)) {
+    avisoMio.innerHTML = "<span class=\"mal\">Eso no parece una dirección de correo.</span>";
+    return;
+  }
+  guardado(CLAVE_MI_CORREO, valor);
+  avisoMio.textContent = valor
+    ? `Cada reunión cerrada se te mandará a ${valor}.`
+    : "Sin copia automática: el correo habrá que mandarlo a mano desde la pantalla de cierre.";
+});
+
+// ── La carpeta del equipo ────────────────────────────────────────────────────
+
+const c = await import("/carpeta.js");
+const cajaCarpeta = document.querySelector("#carpetaEquipo");
+
+async function pintarCarpetaEquipo() {
+  cajaCarpeta.innerHTML = "";
+  if (!c.carpetaDisponible()) {
+    cajaCarpeta.innerHTML = "<p class=\"detalle\">Este navegador no puede escribir en carpetas: hace falta Chrome o "
+      + "Edge en el escritorio. En Safari, en Firefox o en el teléfono, usa el envío por correo o Google Drive.</p>";
+    return;
+  }
+
+  const carpeta = await c.carpetaGuardada();
+  if (!carpeta) {
+    const elegir = document.createElement("button");
+    elegir.textContent = "Elegir la carpeta";
+    elegir.addEventListener("click", async () => {
+      const r = await c.elegirCarpeta();
+      if (r.ok || r.cancelado) return pintarCarpetaEquipo();
+      cajaCarpeta.innerHTML = `<p class="detalle mal">${esc(r.error)}</p>`;
+    });
+    cajaCarpeta.innerHTML = "<p class=\"detalle\">Ninguna carpeta elegida todavía.</p>";
+    cajaCarpeta.append(elegir);
+    return;
+  }
+
+  const permiso = await c.permisoDeCarpeta(carpeta);
+  const estado = document.createElement("p");
+  estado.className = "detalle";
+  estado.innerHTML = permiso === "si"
+    ? `✓ Escribiendo en <b>${esc(carpeta.name)}</b>. Cada reunión deja ahí el Word, el PDF y una copia en JSON.`
+    : `Carpeta elegida: <b>${esc(carpeta.name)}</b>. El navegador pide permiso otra vez —lo hace cada vez que se `
+      + "reinicia—: púlsalo y se queda.";
+  cajaCarpeta.append(estado);
+
+  if (permiso !== "si") {
+    const dar = document.createElement("button");
+    dar.textContent = "Dar permiso";
+    dar.addEventListener("click", async () => { await c.permisoDeCarpeta(carpeta, true); pintarCarpetaEquipo(); });
+    cajaCarpeta.append(dar, " ");
+  }
+
+  const cambiar = document.createElement("button");
+  cambiar.textContent = "Cambiar de carpeta";
+  cambiar.addEventListener("click", async () => { await c.elegirCarpeta(); pintarCarpetaEquipo(); });
+
+  // Recuperar el historial desde la carpeta es lo que convierte esa copia en
+  // algo más que un respaldo: en otro equipo, se elige la misma carpeta
+  // sincronizada y vuelven todas las reuniones.
+  const recuperar = document.createElement("button");
+  recuperar.textContent = "Recuperar reuniones de la carpeta";
+  recuperar.addEventListener("click", async () => {
+    if (await c.permisoDeCarpeta(carpeta, true) !== "si") return;
+    recuperar.disabled = true;
+    recuperar.textContent = "Leyendo…";
+    const { ok, reuniones, error } = await c.reunionesEnCarpeta(carpeta);
+    const h = await import("/historial.js");
+    let puestas = 0;
+    for (const r of reuniones) if ((await h.guardarReunion(r)).ok) puestas += 1;
+    recuperar.disabled = false;
+    recuperar.textContent = "Recuperar reuniones de la carpeta";
+    estado.innerHTML += ok
+      ? `<br>Recuperadas ${puestas} de ${reuniones.length} reuniones al historial de este navegador.`
+      : `<br>No se pudieron leer: ${esc(error)}`;
+  });
+
+  const olvidar = document.createElement("button");
+  olvidar.textContent = "Dejar de usarla";
+  olvidar.addEventListener("click", async () => { await c.olvidarCarpeta(); pintarCarpetaEquipo(); });
+
+  cajaCarpeta.append(cambiar, " ", recuperar, " ", olvidar);
+}
+
+await pintarCarpetaEquipo();
 
 // Prueba del reconocimiento de voz, aislada de todo lo demás. Cuando la reunión
 // sale sin transcripción hay que poder saber si el problema es el navegador, el
