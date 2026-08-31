@@ -556,6 +556,18 @@ contesta. Con un nombre fijo, una cuenta sin ese modelo recibía un 404 y la
 minuta salía sin redactar sin que el motivo apareciera por ningún lado.
 `/reunion.html` dice qué modelo está usando, y `GEMINI_MODELO` fuerza uno.
 
+La cascada distingue dos fallos que se parecen y se arreglan al revés. Un **404**
+o un **400** significan que ese modelo no sirve: se pasa al siguiente sin perder
+tiempo. Un **503** o un **429** significan que Gemini está saturado: el mismo
+modelo probablemente conteste dentro de un segundo, así que se reintenta antes
+de descartarlo. Tratarlos igual hacía que una saturación pasajera —el fallo más
+común de todos— se reportara como si el modelo no existiera, y mandaba a cambiar
+un nombre que estaba bien.
+
+El diagnóstico enseña lo que se probó **de verdad**, con lo que dijo cada modelo
+y cuántas veces se intentó. Listaba los cinco candidatos aunque se hubiera
+parado en el primero, que es mandar a buscar el fallo donde no está.
+
 ### Cerrar no es terminar
 
 Finalizar la reunión **no destruye la sesión**: apaga la captura de la sala,

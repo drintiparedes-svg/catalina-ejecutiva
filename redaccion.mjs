@@ -59,6 +59,14 @@ const PROCEDENCIAS = {
 
 // ── Petición a Gemini ────────────────────────────────────────────────────────
 
+// Cuántas peticiones se permiten en total antes de rendirse. Acota la espera:
+// cinco modelos por dos intentos cada uno serían minutos antes de dar la mala
+// noticia, y quien acaba de cerrar una reunión está mirando la pantalla.
+const INTENTOS_MAXIMOS = 6;
+const REPOSO = 1500;
+
+const esperar = ms => new Promise(r => setTimeout(r, ms));
+
 async function pedir(prompt, { esquema = null, temperatura = 0.2 } = {}) {
   const clave = process.env.GEMINI_API_KEY?.trim();
   if (!clave) return { ok: false, code: "SIN_CLAVE", error: "Falta GEMINI_API_KEY para redactar la minuta." };
@@ -76,23 +84,42 @@ async function pedir(prompt, { esquema = null, temperatura = 0.2 } = {}) {
     ? [modeloQueFunciona, ...MODELOS.filter(m => m !== modeloQueFunciona)]
     : MODELOS;
 
+  // Lo que pasó con cada uno. Sin esto el diagnóstico decía «se probaron estos
+  // cinco» cuando en realidad se había parado en el primero: enseñar como
+  // probado algo que no se probó manda a buscar el fallo donde no está.
+  const intentos = [];
+  let gastados = 0;
   let ultimo = { ok: false, code: "SIN_MODELO", error: "No hay ningún modelo disponible." };
+
   for (const modelo of candidatos) {
-    const intento = await pedirA(modelo, clave, cuerpo);
-    if (intento.ok) {
-      if (modeloQueFunciona !== modelo) {
-        console.info(`Redacción: usando el modelo ${modelo}.`);
-        modeloQueFunciona = modelo;
+    // Un 503 es que Gemini está saturado, no que el modelo esté mal: se
+    // reintenta el mismo antes de descartarlo. Es el caso más común de todos.
+    for (let vuelta = 0; vuelta < 2 && gastados < INTENTOS_MAXIMOS; vuelta += 1) {
+      if (vuelta) await esperar(REPOSO);
+      gastados += 1;
+      const intento = await pedirA(modelo, clave, cuerpo);
+
+      if (intento.ok) {
+        if (modeloQueFunciona !== modelo) {
+          console.info(`Redacción: usando el modelo ${modelo}.`);
+          modeloQueFunciona = modelo;
+        }
+        return intento;
       }
-      return intento;
+
+      ultimo = intento;
+      intentos.push({ modelo, error: intento.error });
+      if (!intento.reintentable) break;   // no gana nada repetir lo mismo
     }
-    ultimo = intento;
-    // Sólo se pasa al siguiente si el problema es el modelo. Un fallo de red o
-    // una clave rechazada no se arregla probando otro nombre, y probarlos todos
-    // multiplicaría la espera antes de dar la mala noticia.
-    if (!intento.otroModelo) break;
+
+    if (!ultimo.otroModelo && !ultimo.reintentable) break;   // no lo arregla otro modelo
+    if (gastados >= INTENTOS_MAXIMOS) break;
   }
-  return ultimo;
+
+  // Si el que estaba funcionando dejó de hacerlo, se olvida: la próxima vez se
+  // empieza la cascada de cero en vez de insistir con el que ya no contesta.
+  if (intentos.some(i => i.modelo === modeloQueFunciona)) modeloQueFunciona = "";
+  return { ...ultimo, intentos };
 }
 
 async function pedirA(modelo, clave, cuerpo) {
@@ -110,30 +137,45 @@ async function pedirA(modelo, clave, cuerpo) {
     const texto = await upstream.text();
     if (!upstream.ok) {
       console.error("Gemini redacción:", modelo, upstream.status, texto.slice(0, 200));
+      // 400 y 404: ese modelo no sirve para esta cuenta o para esta petición.
+      // 429, 500, 502, 503 y 504: el servicio está saturado o caído; el mismo
+      // modelo probablemente conteste dentro de un momento.
+      const otroModelo = [400, 404].includes(upstream.status);
+      const reintentable = [429, 500, 502, 503, 504].includes(upstream.status);
+      const motivos = {
+        400: `El modelo ${modelo} no aceptó la petición.`,
+        404: `El modelo ${modelo} no existe para esta clave.`,
+        401: "Google rechazó la clave (401).",
+        403: "La clave no tiene permiso para este modelo (403).",
+        429: `Se agotó la cuota de ${modelo} (429).`,
+        503: `${modelo} está saturado ahora mismo (503).`
+      };
       return {
         ok: false,
         code: "RECHAZADO",
-        // 404: ese modelo no existe para esta cuenta. 400: no admite lo que se le
-        // pide (por ejemplo un esquema de respuesta). Los dos se arreglan con otro.
-        otroModelo: [400, 404].includes(upstream.status),
-        error: upstream.status === 404
-          ? `El modelo ${modelo} no existe para esta clave.`
-          : `El modelo respondió ${upstream.status}.`
+        otroModelo,
+        reintentable,
+        error: motivos[upstream.status] || `El modelo ${modelo} respondió ${upstream.status}.`
       };
     }
     datos = JSON.parse(texto);
   } catch (error) {
+    const tiempo = error.name === "TimeoutError";
     return {
       ok: false,
-      code: error.name === "TimeoutError" ? "TIEMPO" : "SIN_RED",
+      code: tiempo ? "TIEMPO" : "SIN_RED",
       otroModelo: false,
-      error: error.name === "TimeoutError" ? "La redacción tardó demasiado." : "No se pudo consultar al modelo."
+      // Un corte de red puede ser un parpadeo: merece un segundo intento.
+      reintentable: true,
+      error: tiempo ? `${modelo} tardó demasiado.` : "No se pudo llegar al modelo."
     };
   }
 
   const partes = datos?.candidates?.[0]?.content?.parts;
   const salida = Array.isArray(partes) ? partes.map(p => p?.text).filter(Boolean).join("") : "";
-  if (!salida.trim()) return { ok: false, code: "VACIO", otroModelo: false, error: "El modelo no devolvió nada." };
+  if (!salida.trim()) {
+    return { ok: false, code: "VACIO", otroModelo: true, reintentable: false, error: `${modelo} no devolvió nada.` };
+  }
   return { ok: true, texto: salida, modelo };
 }
 
@@ -143,8 +185,18 @@ export async function probarRedaccion() {
   if (!hayRedaccion()) return { ok: false, code: "SIN_CLAVE", error: "Falta GEMINI_API_KEY." };
   const salida = await pedir("Responde únicamente con la palabra: listo", { temperatura: 0 });
   return salida.ok
-    ? { ok: true, modelo: salida.modelo, probados: MODELOS.length }
-    : { ok: false, code: salida.code, error: salida.error, probados: MODELOS };
+    ? { ok: true, modelo: salida.modelo, disponibles: MODELOS }
+    // `intentos` es lo que se probó DE VERDAD, con lo que dijo cada uno. Se
+    // agrupa por modelo: leer el mismo nombre dos veces seguidas no informa de
+    // nada y hace pensar que se probaron más modelos de los que se probaron.
+    : {
+      ok: false, code: salida.code, error: salida.error, disponibles: MODELOS,
+      intentos: [...(salida.intentos ?? []).reduce((mapa, i) => {
+        const previo = mapa.get(i.modelo);
+        mapa.set(i.modelo, { modelo: i.modelo, error: i.error, veces: (previo?.veces ?? 0) + 1 });
+        return mapa;
+      }, new Map()).values()]
+    };
 }
 
 // ── Material de la reunión ───────────────────────────────────────────────────

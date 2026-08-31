@@ -439,10 +439,22 @@ try {
   } else if (m.ok) {
     marcar("#pRedaccion", "bien", `Lista. Redactando con <code>${esc(m.modelo)}</code>.`);
   } else {
-    marcar("#pRedaccion", "mal",
-      `La clave está, pero ningún modelo contestó: <code>${esc(m.error || "sin detalle")}</code>`,
-      `Se probaron: <code>${esc((m.probados || []).join(", "))}</code>`,
-      "Si tu cuenta usa otro nombre de modelo, ponlo en Vercel como <code>GEMINI_MODELO</code> y haz Redeploy.");
+    // Se enseña lo que pasó con CADA modelo, y se separa el «está saturado» del
+    // «no existe»: el primero se arregla esperando, el segundo cambiando el
+    // nombre. Confundirlos manda a buscar el fallo donde no está.
+    const saturado = /50\d|saturado|cuota|429/.test(m.error || "");
+    marcar("#pRedaccion", saturado ? "espera" : "mal",
+      saturado
+        ? `Gemini está saturado ahora mismo: <code>${esc(m.error)}</code>`
+        : `La clave está, pero ningún modelo contestó: <code>${esc(m.error || "sin detalle")}</code>`,
+      (m.intentos || []).length
+        ? "Se probó de verdad:<br>" + m.intentos.map(i =>
+          `· <code>${esc(i.modelo)}</code>${i.veces > 1 ? ` (${i.veces} intentos)` : ""} → ${esc(i.error)}`).join("<br>")
+        : "",
+      saturado
+        ? "No hay nada que arreglar: es de Google y se pasa solo. Vuelve a probar en unos minutos. "
+          + "Mientras tanto la reunión se cierra igual, pero la minuta sale sin redactar."
+        : "Si tu cuenta usa otro nombre de modelo, ponlo en Vercel como <code>GEMINI_MODELO</code> y haz Redeploy.");
   }
 
   marcar("#pCorreo", d.correo ? "bien" : "mal",
