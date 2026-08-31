@@ -140,12 +140,24 @@ export function versionTexto({ titulo, resumen, lamina, referencias = [] }) {
 }
 
 // Envío por Resend: una llamada HTTPS, sin dependencias que instalar.
-export async function enviarPorResend({ apiKey, remitente, destinatario, asunto, html, texto }) {
+//
+// `destinatario` admite una dirección o varias. `adjuntos` va como
+// [{ nombre, contenido }] con el contenido ya en base64, que es como lo quiere
+// Resend; se usa para mandar la minuta y la transcripción de una reunión.
+export async function enviarPorResend({ apiKey, remitente, destinatario, asunto, html, texto, adjuntos = [] }) {
+  const para = (Array.isArray(destinatario) ? destinatario : [destinatario]).filter(Boolean);
   const upstream = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ from: remitente, to: [destinatario], subject: asunto, html, text: texto }),
-    signal: AbortSignal.timeout(15000)
+    body: JSON.stringify({
+      from: remitente, to: para, subject: asunto, html, text: texto,
+      ...(adjuntos.length
+        ? { attachments: adjuntos.map(a => ({ filename: a.nombre, content: a.contenido })) }
+        : {})
+    }),
+    // Con adjuntos la subida tarda más: el plazo corto cortaba envíos que
+    // habrían salido bien.
+    signal: AbortSignal.timeout(adjuntos.length ? 30000 : 15000)
   });
 
   const cuerpo = await upstream.text();

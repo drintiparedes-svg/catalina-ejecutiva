@@ -435,7 +435,61 @@ micrófono arriba, los tres interruptores debajo— y el panel pasa a ocupar el
 ancho completo por encima de ellos. En horizontal el panel se estira de arriba
 abajo y la identidad se reduce al nombre.
 
-## Usarlo en Google Meet
+## Modo reunión
+
+En reunión Catalina no es una interlocutora: es la secretaria. **Escucha y calla
+por defecto**, y sólo habla cuando alguien le da la palabra desde la pantalla.
+Oír su nombre ya no basta —una asistente que contesta cada vez que la nombran
+interrumpe una reunión de verdad—, así que el nombre sólo sirve para recordarle
+a quien la llamó que hay que pulsar **Participar**.
+
+Los cinco estados se ven en la tira de arriba a la izquierda:
+`Escuchando → Puedes hablarme → Me lo estoy pensando → Hablando → Escuchando`.
+
+La memoria de la reunión (`public/reunion.js`) es **aparte** de la conversación
+con ella, y todo lo que entra queda marcado con su procedencia:
+
+| Marca | Qué es |
+| --- | --- |
+| `CONVERSACION` | lo que se dijo en la sala, transcrito por el navegador |
+| `DOCUMENTO` | lo que traía un archivo aportado |
+| `NOTA_EDITORIAL` | una indicación del usuario sobre qué destacar |
+| `ASISTENTE` | lo que dijo Catalina al ser invocada |
+
+La marca sobrevive hasta el papel. Una nota editorial puede cambiar el énfasis y
+el orden de la minuta, pero **nunca** puede acabar convertida en algo que alguien
+dijo, y lo que venía en un PDF se atribuye al PDF, no a una persona.
+
+Las cuatro acciones son **Participar**, **Tomar nota**, **Agregar documento** y
+**Finalizar reunión**; las cuatro se pueden pedir también de viva voz
+(`tomar_nota`, `quien_habla`, `estado_de_la_reunion`, `finalizar_reunion`).
+
+Los documentos se leen en el propio navegador —PDF, Word, Excel, PowerPoint y
+texto— con `DecompressionStream`, sin subirlos: el archivo ya está ahí y Vercel
+tiene un tope de tamaño por petición que un PowerPoint se salta sin esfuerzo. De
+una imagen o de un PDF escaneado no se puede sacar texto: en vez de inventarlo,
+pide una descripción y la usa como tal.
+
+Al finalizar se generan dos documentos, **sin instalar ninguna dependencia**
+(`documentos.mjs` escribe el ZIP de OOXML con `zlib` y el PDF con las fuentes
+base-14 que todo lector trae incorporadas):
+
+- `Transcripcion_[fecha]_[nombre].docx` — lo dicho, corregido en ortografía,
+  gramática y puntuación, organizado por participante. El sentido no se toca.
+- `Minuta_[fecha]_[nombre].pdf` — resumen ejecutivo, temas, antecedentes,
+  problemas, decisiones, acuerdos, desacuerdos, la tabla de acciones
+  (Acción · Responsable · Fecha · Estado), pendientes y próximos pasos.
+
+Los dos se guardan solos en la carpeta de Google Drive configurada. El correo se
+**propone** con todo a la vista y no sale hasta que alguien lo confirma en dos
+pulsaciones: guardar en la carpeta de siempre es reversible, mandarle la reunión
+a un tercero no lo es. Sin `GEMINI_API_KEY` la reunión se cierra igual, pero la
+transcripción va sin corregir y la minuta sale con el material ordenado y sin
+resumen; se dice en pantalla en vez de disimularlo.
+
+Puesta a punto y diagnóstico en **`/reunion.html`**.
+
+### Capturarlo en Google Meet
 
 1. Abre Catalina y activa **Modo Meet** (o presiona `H`).
 2. En OBS, agrega una fuente **Captura de ventana** y selecciona la ventana de Catalina.

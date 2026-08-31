@@ -16,11 +16,14 @@ import {
   telefoniaElevenLabsLista, originarLlamadaElevenLabs, estadoLlamadaElevenLabs,
   terminarLlamadaElevenLabs, diagnosticoElevenLabs
 } from "./llamadas.mjs";
+import { cerrarReunion } from "./reunion.mjs";
+import { hayRedaccion } from "./redaccion.mjs";
+import { estadoDrive, urlDeConsentimiento, canjearCodigo, driveConfigurado } from "./drive.mjs";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // Se sube a mano con cada arreglo que el usuario tiene que descargar.
-export const VERSION = "2026-08-29.1";
+export const VERSION = "2026-08-31.1";
 
 const root = fileURLToPath(new URL("./public", import.meta.url));
 // El .env se lee de forma síncrona a propósito. Con `await` aquí arriba, en el
@@ -279,6 +282,57 @@ export async function atender(req, res) {
       return await enviarResumen(req, res);
     }
 
+    // ── Reunión ────────────────────────────────────────────────────────────
+    //
+    // La memoria de la reunión vive en el navegador (el disco de Vercel es de
+    // sólo lectura y cada petición cae en una instancia distinta). Aquí llega
+    // entera una sola vez, al cerrar.
+    if (req.method === "POST" && req.url === "/reunion/cerrar") {
+      let datos = {};
+      try { datos = JSON.parse(await readBody(req) || "{}"); } catch {}
+      if (!Array.isArray(datos.turnos) && !Array.isArray(datos.notas) && !Array.isArray(datos.documentos)) {
+        return json(res, 400, { ok: false, error: "No llegó el material de la reunión.", code: "REUNION_VACIA" });
+      }
+      return json(res, 200, await cerrarReunion(datos));
+    }
+
+    // El envío exige `confirmado`. Guardar en la carpeta de siempre es
+    // reversible; mandarle la reunión a un tercero no lo es, así que la
+    // confirmación no puede quedar sólo en la interfaz: se exige también aquí.
+    if (req.method === "POST" && req.url === "/reunion/correo") {
+      return await enviarReunionPorCorreo(req, res);
+    }
+
+    if (req.method === "GET" && req.url === "/reunion/diagnostico") {
+      return json(res, 200, {
+        redaccion: hayRedaccion(),
+        correo: Boolean(process.env.RESEND_API_KEY?.trim()),
+        drive: await estadoDrive()
+      });
+    }
+
+    // Autorización de Drive. Sólo desde el propio despliegue: abre una pantalla
+    // de consentimiento de Google y devuelve el permiso permanente para pegarlo
+    // en las variables de entorno.
+    if (req.method === "GET" && req.url.startsWith("/drive/autorizar")) {
+      const destino = urlDeConsentimiento(`${origenDe(req)}/drive/callback`);
+      if (!destino) {
+        return json(res, 503, { error: "Falta GOOGLE_CLIENT_ID.", code: "DRIVE_SIN_CLIENTE" });
+      }
+      res.writeHead(302, { Location: destino });
+      return res.end();
+    }
+
+    if (req.method === "GET" && req.url.startsWith("/drive/callback")) {
+      const parametros = new URL(req.url, origenDe(req)).searchParams;
+      const fallo = parametros.get("error");
+      if (fallo) return paginaDeDrive(res, `Google canceló la autorización (${fallo}).`, "");
+      const canje = await canjearCodigo(parametros.get("code") || "", `${origenDe(req)}/drive/callback`);
+      return canje.ok
+        ? paginaDeDrive(res, "", canje.refresco)
+        : paginaDeDrive(res, canje.error, "");
+    }
+
     if (req.method === "POST" && req.url === "/conector") {
       return await usarConector(req, res);
     }
@@ -378,11 +432,25 @@ const USO_DEL_TELEFONO = [
 // Las instrucciones completas se arman en cada sesión: lo editable viene del
 // panel, lo de arriba es fijo. Los dos proveedores reciben exactamente lo mismo,
 // para que Catalina no cambie de carácter al pasar de uno a otro.
+// En reunión no eres una interlocutora, eres la secretaria: eso cambia tanto lo
+// que hace como cuándo abre la boca, y por eso va aparte.
+const USO_DE_LA_REUNION = [
+  "En modo reunión escuchas y callas. NO intervienes aunque oigas tu nombre: sólo hablas cuando te dan la palabra desde la pantalla.",
+  "Cuando te la den, contesta en dos o tres frases, como quien interviene en una reunión, y calla de nuevo.",
+  "Lo que se habla se transcribe solo: no tienes que apuntarlo.",
+  "Usa tomar_nota sólo para las indicaciones sobre la minuta —«apunta que esto es lo crítico»—, no para registrar lo hablado.",
+  "Usa quien_habla cuando quede claro quién toma la palabra; si no lo sabes, no lo inventes.",
+  "Al terminar, finalizar_reunion prepara la transcripción corregida en Word y la minuta en PDF y las guarda en Drive.",
+  "El correo no lo mandas tú: queda propuesto en pantalla y lo confirma una persona. Dilo así, sin prometer que ya se envió.",
+  "Nunca conviertas una nota del usuario en algo que alguien dijo, ni atribuyas a una persona lo que venía en un documento."
+].join(" ");
+
 async function instruccionesDeSesion(config) {
   const puedeLlamar = (telefoniaElevenLabsLista() || telefoniaLista()) && config.telefono?.activo !== false;
   return [
     componerInstrucciones(config),
     USO_DE_HERRAMIENTAS,
+    USO_DE_LA_REUNION,
     puedeLlamar ? USO_DEL_TELEFONO : ""
   ].filter(Boolean).join(" ");
 }
@@ -670,6 +738,58 @@ const HERRAMIENTAS = [
   { nombre: "enviar_resumen", descripcion: DESCRIPCION_CORREO, parametros: PARAMETROS_CORREO }
 ];
 
+// Las de la reunión. Se resuelven en el navegador, que es donde vive la memoria
+// de la reunión, y por eso responden «no hay ninguna reunión en curso» fuera del
+// modo Meet en vez de no existir: el modelo tiene que poder decir por qué no
+// pudo, y una herramienta que aparece y desaparece según el modo lo confundía.
+const HERRAMIENTAS_REUNION = [
+  {
+    nombre: "tomar_nota",
+    descripcion: "Anota una indicación editorial para la minuta de la reunión en curso: qué destacar, qué "
+      + "matizar, a qué darle importancia. Úsala cuando te digan «toma nota de que…» o «apunta que…». "
+      + "NO es para registrar lo que se habla —eso se transcribe solo— sino para las indicaciones sobre "
+      + "cómo debe quedar la minuta. Confirma en una frase corta lo que anotaste.",
+    parametros: {
+      type: "object",
+      properties: { texto: { type: "string", description: "La indicación, tal como te la dijeron, en una frase." } },
+      required: ["texto"]
+    }
+  },
+  {
+    nombre: "quien_habla",
+    descripcion: "Fija a quién se le atribuye lo que se diga a partir de ahora en la reunión. Úsala cuando "
+      + "alguien se presente («soy Marcela»), cuando le den la palabra a alguien («adelante, Andrés») o "
+      + "cuando te lo digan directamente. Sin esto las intervenciones quedan como «Sin identificar». "
+      + "No adivines el nombre: úsala sólo cuando quede claro quién toma la palabra.",
+    parametros: {
+      type: "object",
+      properties: { nombre: { type: "string", description: "El nombre de quien habla ahora." } },
+      required: ["nombre"]
+    }
+  },
+  {
+    nombre: "estado_de_la_reunion",
+    descripcion: "Dice cómo va la reunión en curso: cuánto lleva, quiénes participan, qué documentos se "
+      + "aportaron, qué notas hay y las últimas intervenciones transcritas. Úsala cuando te pregunten "
+      + "«¿qué llevamos?», «¿qué acordamos?» o «¿de qué hemos hablado?».",
+    parametros: { type: "object", properties: {} }
+  },
+  {
+    nombre: "finalizar_reunion",
+    descripcion: "Cierra la reunión: genera la transcripción revisada en Word y la minuta ejecutiva en PDF, "
+      + "y las guarda en la carpeta de Google Drive configurada. Tarda unos segundos. "
+      + "El correo NO se manda desde aquí: si te dan un destinatario, queda propuesto en pantalla y alguien "
+      + "tiene que confirmarlo. Dilo así cuando informes del resultado.",
+    parametros: {
+      type: "object",
+      properties: {
+        titulo: { type: "string", description: "Título de la reunión, breve. Pregúntalo si no lo sabes." },
+        enviar_a: { type: "string", description: "Correo de quien debe recibirla, si te lo dieron. Sólo se propone, no se envía." }
+      }
+    }
+  }
+];
+
 // Las de llamada sólo se le ofrecen al modelo si la telefonía está de verdad
 // configurada. Declararlas siempre hacía que Catalina se ofreciera a llamar en
 // un despliegue donde no puede —Vercel no sostiene la conexión que hace falta—,
@@ -683,6 +803,7 @@ const HERRAMIENTAS_TELEFONO = [
 function todasLasHerramientas(config) {
   return [
     ...HERRAMIENTAS,
+    ...HERRAMIENTAS_REUNION,
     ...((telefoniaElevenLabsLista() || telefoniaLista()) && config.telefono?.activo !== false ? HERRAMIENTAS_TELEFONO : []),
     ...herramientasDeConectores(config)
   ];
@@ -1753,6 +1874,122 @@ async function enviarResumen(req, res) {
   }
   // El destinatario se devuelve para que Catalina pueda confirmarlo en voz alta.
   json(res, 200, { ok: true, destinatario: correo.destinatario });
+}
+
+// Envío de la minuta y la transcripción. A diferencia del guardado en Drive,
+// que pasa solo, esto exige `confirmado`: el correo sale del círculo del usuario
+// y va a un tercero, y una acción así no puede desencadenarse por descuido ni
+// por una frase suelta dicha en una sala. La interfaz ya pide dos pulsaciones;
+// esta comprobación está aquí para que no dependa sólo de la interfaz.
+async function enviarReunionPorCorreo(req, res) {
+  const apiKey = process.env.RESEND_API_KEY?.trim();
+  if (!apiKey) {
+    return json(res, 503, { ok: false, error: "Falta RESEND_API_KEY: no hay forma de enviar correo.", code: "CORREO_SIN_CLAVE" });
+  }
+
+  let peticion = {};
+  try { peticion = JSON.parse(await readBody(req) || "{}"); } catch {}
+
+  if (peticion.confirmado !== true) {
+    return json(res, 400, { ok: false, error: "El envío no venía confirmado.", code: "CORREO_SIN_CONFIRMAR" });
+  }
+
+  const destinatarios = String(peticion.destinatario || "")
+    .split(/[,;]+/).map(d => d.trim()).filter(Boolean);
+  if (!destinatarios.length || !destinatarios.every(d => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(d))) {
+    return json(res, 400, { ok: false, error: "El destinatario no es una dirección válida.", code: "CORREO_SIN_DESTINO" });
+  }
+
+  const asunto = String(peticion.asunto || "").trim() || "Minuta de reunión";
+  const cuerpo = String(peticion.cuerpo || "").trim();
+  if (!cuerpo) return json(res, 400, { ok: false, error: "El mensaje está vacío.", code: "CORREO_INCOMPLETO" });
+
+  const adjuntos = (Array.isArray(peticion.adjuntos) ? peticion.adjuntos : [])
+    .filter(a => a?.nombre && a?.base64)
+    .slice(0, 4)
+    .map(a => ({ nombre: String(a.nombre), contenido: String(a.base64) }));
+
+  const config = await cargarConfig();
+  const resultado = await enviarPorResend({
+    apiKey,
+    remitente: config.correo?.remitente || "Catalina <onboarding@resend.dev>",
+    destinatario: destinatarios,
+    asunto,
+    html: correoDeReunionEnHtml(asunto, cuerpo, adjuntos),
+    texto: cuerpo,
+    adjuntos
+  });
+
+  if (!resultado.ok) {
+    console.error("Correo de reunión:", resultado.estado, resultado.error);
+    return json(res, 502, { ok: false, error: resultado.error, code: "CORREO_RECHAZADO" });
+  }
+  json(res, 200, { ok: true, destinatarios, adjuntos: adjuntos.map(a => a.nombre) });
+}
+
+// El cuerpo lo escribe la persona en un cuadro de texto, así que va tal cual:
+// sólo se escapa y se respetan sus saltos de línea. Meterle una maqueta encima
+// convertiría su mensaje en otro.
+function correoDeReunionEnHtml(asunto, cuerpo, adjuntos) {
+  const escapar = t => String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  const parrafos = cuerpo.split(/\n/).map(linea =>
+    linea.trim()
+      ? `<p style="margin:0 0 12px;font-size:15px;line-height:1.6;color:#1D1D1F">${escapar(linea)}</p>`
+      : `<div style="height:8px"></div>`).join("");
+  return `<!doctype html><html><body style="margin:0;padding:0;background:#F5F5F7">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td align="center" style="padding:28px 14px">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
+       style="max-width:620px;background:#FFFFFF;border-radius:16px;overflow:hidden">
+  <tr><td style="padding:26px 30px 6px">
+    <p style="margin:0 0 16px;font-size:11px;font-weight:700;letter-spacing:.12em;color:#0071E3;text-transform:uppercase">Minuta de reunión</p>
+    <h1 style="margin:0 0 18px;font-size:21px;line-height:1.3;color:#051C2C">${escapar(asunto)}</h1>
+    ${parrafos}
+  </td></tr>
+  <tr><td style="padding:14px 30px 28px">
+    <div style="border-top:1px solid #E5E5EA;padding-top:14px">
+      <p style="margin:0;font-size:12px;line-height:1.6;color:#6E6E73">
+        ${adjuntos.length ? `Adjuntos: ${adjuntos.map(a => escapar(a.nombre)).join(", ")}.<br>` : ""}
+        Preparada por Catalina, asistente ejecutiva del Dr. Inti Paredes, a partir de la transcripción de la reunión.
+      </p>
+    </div>
+  </td></tr>
+</table></td></tr></table></body></html>`;
+}
+
+// De dónde se sirve esto, para poder decírselo a Google como dirección de
+// retorno. Sin esto habría que fijar el dominio a mano y dejaría de funcionar
+// en local.
+function origenDe(req) {
+  const protocolo = req.headers["x-forwarded-proto"] || "http";
+  return `${protocolo}://${req.headers.host}`;
+}
+
+// Página de vuelta de Google. Enseña el permiso una sola vez, aquí, y no lo
+// guarda en ningún sitio: el único lugar donde debe quedar es en las variables
+// de entorno del despliegue.
+function paginaDeDrive(res, error, refresco) {
+  const escapar = t => String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const cuerpo = error
+    ? `<h1>No se pudo autorizar</h1><p class="mal">${escapar(error)}</p>
+       <p><a href="/reunion.html">Volver</a></p>`
+    : `<h1>Autorizado</h1>
+       <p>Copia esto y guárdalo en Vercel como la variable <code>GOOGLE_REFRESH_TOKEN</code>.
+          Luego haz un <em>Redeploy</em>. No se guarda en ningún otro sitio: si cierras esta
+          página sin copiarlo, hay que volver a autorizar.</p>
+       <textarea readonly rows="3" onclick="this.select()">${escapar(refresco)}</textarea>
+       <p><a href="/reunion.html">Volver a la puesta a punto</a></p>`;
+
+  res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
+  res.end(`<!doctype html><html lang="es"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Google Drive · Catalina</title><style>
+body{margin:0;padding:40px 22px;background:#050b12;color:#e9f6fc;font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+main{max-width:620px;margin:0 auto}h1{font-size:22px;margin:0 0 14px}
+p{color:rgba(233,246,252,.8)}code{background:rgba(255,255,255,.08);padding:2px 6px;border-radius:5px}
+textarea{width:100%;box-sizing:border-box;padding:12px;border-radius:12px;border:1px solid rgba(180,225,245,.25);
+background:rgba(255,255,255,.05);color:#e9f6fc;font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}
+a{color:#6de4ff}.mal{color:#ffb84d}</style></head><body><main>${cuerpo}</main></body></html>`);
 }
 
 // Uso de un conector durante la conversación. El navegador manda el nombre, no

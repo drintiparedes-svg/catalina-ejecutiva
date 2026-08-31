@@ -114,16 +114,55 @@
       <button id="togglePanel" aria-pressed="false" title="Abre el historial de la conversación">Historial</button>
       <button id="meetMode" title="Oculta los controles para capturar la ventana">Modo Meet</button>
     </nav>
-    <!-- Señal de escucha del modo reunión. Es lo único que se ve en ese modo
-         aparte de la cara: sin ella no hay forma de saber si está oyendo. -->
-    <div class="oyendo" id="oyendo" hidden>
-      <span class="oyendo-punto"></span>
-      <span id="oyendoTexto">Escuchando…</span>
+    <!-- Modo reunión. Es lo único que se ve en ese modo aparte de la cara, así
+         que lleva justo lo imprescindible: en qué estado está, lo último que
+         entendió, y las cuatro cosas que se pueden pedir. -->
+    <div class="reunion" id="reunion" hidden>
+      <div class="reunion-estado" id="reunionEstado" data-fase="escuchando">
+        <span class="reunion-punto"></span>
+        <span id="reunionEstadoTexto">Escuchando</span>
+        <span class="reunion-cuenta" id="reunionCuenta"></span>
+      </div>
+      <p class="reunion-eco" id="reunionEco">Escuchando la reunión. No voy a intervenir hasta que me lo pidas.</p>
+
+      <label class="reunion-hablante">
+        <span>Habla</span>
+        <input id="reunionQuien" placeholder="Sin identificar" autocomplete="off"
+               spellcheck="false" aria-label="Quién está hablando ahora">
+      </label>
+
+      <div class="reunion-campo" id="reunionCampo" hidden>
+        <label id="reunionCampoTitulo" for="reunionEntrada">Nota</label>
+        <input id="reunionEntrada" autocomplete="off" aria-labelledby="reunionCampoTitulo">
+        <div class="reunion-campo-acciones">
+          <button id="reunionAceptar" class="reunion-si">Guardar</button>
+          <button id="reunionCancelar">Cancelar</button>
+        </div>
+      </div>
+
+      <nav class="reunion-botones" aria-label="Acciones de la reunión">
+        <button id="reunionParticipar">Participar</button>
+        <button id="reunionNota">Tomar nota</button>
+        <button id="reunionDocumento">Agregar documento</button>
+        <button id="reunionFinalizar" class="reunion-fin">Finalizar reunión</button>
+      </nav>
+      <input type="file" id="reunionArchivo" multiple hidden
+             accept=".pdf,.docx,.xlsx,.pptx,.doc,.xls,.ppt,.txt,.md,.csv,.json,image/*">
     </div>
+
+    <!-- Resultado del cierre: los dos documentos, dónde quedaron guardados y el
+         correo propuesto. El correo NO sale de aquí sin que alguien lo confirme. -->
+    <aside class="cierre" id="cierre" data-estado="oculto" aria-label="Cierre de la reunión">
+      <header class="cierre-cabecera">
+        <span id="cierreTitulo">Cerrando la reunión</span>
+        <button class="cierre-cerrar" id="cierreCerrar" aria-label="Cerrar">&times;</button>
+      </header>
+      <div class="cierre-cuerpo" id="cierreCuerpo"></div>
+    </aside>
 
     <button class="exit-meet" id="exitMeet" aria-label="Salir del modo Meet">Mostrar controles</button>
   </main>
   <audio id="remoteAudio" autoplay></audio>
-  <script type="module" src="app.js?v=33"></script>
+  <script type="module" src="app.js?v=34"></script>
 </body>
 </html>
