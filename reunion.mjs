@@ -13,6 +13,7 @@
 import { construirDocx, construirPdf, bloque as b } from "./documentos.mjs";
 import { revisarTranscripcion, corregirCuaderno, redactarMinuta, minutaSinModelo, hayRedaccion } from "./redaccion.mjs";
 import { guardarEnDrive, driveConfigurado } from "./drive.mjs";
+import { tipoDeReunion } from "./public/tipos-de-reunion.js";
 
 const TIPO_DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 const TIPO_PDF = "application/pdf";
@@ -126,8 +127,66 @@ export function componerTranscripcion(reunion, revision, minuta, cuaderno = { te
 
 // La minuta ejecutiva. Las secciones vacías no se imprimen: una minuta con seis
 // epígrafes que dicen «ninguno» se lee peor y da la impresión de que faltó algo.
+// Cómo se pinta cada sección de la minuta. El TIPO de reunión decide cuáles
+// aparecen y en qué orden (tipos-de-reunion.js); esto sólo sabe dibujarlas.
+// Las vacías no se imprimen: una minuta con ocho epígrafes que dicen «ninguno»
+// se lee peor y hace pensar que faltó algo.
+const SECCIONES = {
+  resumen: (b, m) => m.resumen ? [b.seccion("Resumen ejecutivo"), b.parrafo(m.resumen)] : [],
+  temas: (b, m) => m.temas?.length
+    ? [b.seccion("Temas tratados"), ...m.temas.flatMap(t => [
+      t.titulo ? b.parrafo(t.titulo) : null, t.detalle ? b.vineta(t.detalle) : null].filter(Boolean))]
+    : [],
+  conceptos: (b, m) => lista(b, "Conceptos", m.conceptos),
+  datos: (b, m) => lista(b, "Datos y cifras", m.datos),
+  referencias: (b, m) => lista(b, "Referencias mencionadas", m.referencias),
+  conclusiones: (b, m) => lista(b, "Conclusiones", m.conclusiones),
+  preguntas: (b, m) => lista(b, "Preguntas", m.preguntas),
+  antecedentes: (b, m) => lista(b, "Antecedentes", m.antecedentes),
+  problemas: (b, m) => lista(b, "Problemas identificados", m.problemas),
+  bloqueos: (b, m) => lista(b, "Bloqueos", m.bloqueos),
+  decision_central: (b, m) => m.decision_central
+    ? [b.seccion("La decisión"), b.parrafo(m.decision_central)] : [],
+  posiciones: (b, m) => lista(b, "Posiciones de los participantes", m.posiciones),
+  alternativas: (b, m) => lista(b, "Alternativas evaluadas", m.alternativas),
+  riesgos: (b, m) => lista(b, "Riesgos", m.riesgos),
+  problema: (b, m) => m.problema ? [b.seccion("Problema"), b.parrafo(m.problema)] : [],
+  estado_actual: (b, m) => m.estado_actual ? [b.seccion("Estado actual"), b.parrafo(m.estado_actual)] : [],
+  desperdicios: (b, m) => lista(b, "Desperdicios e ineficiencias", m.desperdicios),
+  causas: (b, m) => lista(b, "Causas", m.causas),
+  actores: (b, m) => lista(b, "Actores del proceso", m.actores),
+  oportunidades: (b, m) => lista(b, "Oportunidades de mejora", m.oportunidades),
+  contramedidas: (b, m) => m.contramedidas?.length
+    ? [b.seccion("Contramedidas"),
+      b.tabla(["Problema", "Causa", "Contramedida", "Responsable", "Fecha", "Indicador"],
+        m.contramedidas.map(c => [c.problema, c.causa, c.contramedida, c.responsable, c.fecha, c.indicador]))]
+    : [],
+  ideas: (b, m) => lista(b, "Ideas", m.ideas),
+  hipotesis: (b, m) => lista(b, "Hipótesis y supuestos", m.hipotesis),
+  oportunidades_creativas: (b, m) => lista(b, "Oportunidades y asociaciones", m.oportunidades_creativas),
+  divergencias: (b, m) => lista(b, "Divergencias", m.divergencias),
+  descartadas: (b, m) => lista(b, "Ideas descartadas", m.descartadas),
+  experimentos: (b, m) => lista(b, "Próximos experimentos", m.experimentos),
+  decisiones: (b, m) => lista(b, "Decisiones", m.decisiones),
+  acuerdos: (b, m) => lista(b, "Acuerdos", m.acuerdos),
+  desacuerdos: (b, m) => lista(b, "Desacuerdos", m.desacuerdos),
+  acciones: (b, m) => m.acciones?.length
+    ? [b.seccion("Acciones comprometidas"),
+      b.tabla(["Acción", "Responsable", "Fecha", "Estado"],
+        m.acciones.map(a => [a.accion, a.responsable, a.fecha, a.estado]))]
+    : [],
+  pendientes: (b, m) => lista(b, "Puntos pendientes", m.pendientes),
+  proximos_pasos: (b, m) => lista(b, "Próximos pasos", m.proximos_pasos)
+};
+
+const lista = (b, titulo, items) => items?.length
+  ? [b.seccion(titulo), ...items.map(i => b.vineta(i))]
+  : [];
+
 export function componerMinuta(reunion, minuta) {
+  const tipo = tipoDeReunion(reunion.tipo);
   const bloques = portada(reunion, minuta, minuta.titulo || reunion.titulo || "Minuta de reunión");
+  bloques.push(b.dato("Tipo de reunión", tipo.nombre));
   if (reunion.antecedente?.titulo) {
     bloques.push(b.dato("Da seguimiento a", `${reunion.antecedente.titulo}`
       + (reunion.antecedente.fecha ? ` (${fechaCorta(reunion.antecedente.fecha)})` : "")));
@@ -139,38 +198,18 @@ export function componerMinuta(reunion, minuta) {
       + "reunión ordenado por procedencia, sin interpretar."));
   }
 
-  const seccionDeLista = (titulo, items) => {
-    if (!items?.length) return;
-    bloques.push(b.seccion(titulo));
-    items.forEach(item => bloques.push(b.vineta(item)));
-  };
-
-  if (minuta.resumen) {
-    bloques.push(b.seccion("Resumen ejecutivo"), b.parrafo(minuta.resumen));
+  // Primero las secciones que este tipo pide, en su orden. Después, cualquier
+  // otra que traiga contenido: si en una clase alguien acabó comprometiéndose a
+  // algo, esa acción no se pierde por no estar en el guion del tipo.
+  const puestas = new Set();
+  for (const nombre of tipo.secciones) {
+    puestas.add(nombre);
+    bloques.push(...(SECCIONES[nombre]?.(b, minuta) ?? []));
   }
-
-  if (minuta.temas?.length) {
-    bloques.push(b.seccion("Temas tratados"));
-    minuta.temas.forEach(t => {
-      if (t.titulo) bloques.push(b.parrafo(t.titulo));
-      if (t.detalle) bloques.push(b.vineta(t.detalle));
-    });
+  for (const [nombre, pintar] of Object.entries(SECCIONES)) {
+    if (puestas.has(nombre)) continue;
+    bloques.push(...pintar(b, minuta));
   }
-
-  seccionDeLista("Antecedentes", minuta.antecedentes);
-  seccionDeLista("Problemas identificados", minuta.problemas);
-  seccionDeLista("Decisiones", minuta.decisiones);
-  seccionDeLista("Acuerdos", minuta.acuerdos);
-  seccionDeLista("Desacuerdos", minuta.desacuerdos);
-
-  if (minuta.acciones?.length) {
-    bloques.push(b.seccion("Acciones comprometidas"));
-    bloques.push(b.tabla(["Acción", "Responsable", "Fecha", "Estado"],
-      minuta.acciones.map(a => [a.accion, a.responsable, a.fecha, a.estado])));
-  }
-
-  seccionDeLista("Puntos pendientes", minuta.pendientes);
-  seccionDeLista("Próximos pasos", minuta.proximos_pasos);
 
   if (minuta.crudo?.length) {
     bloques.push(b.seccion("Material sin interpretar"));
@@ -220,6 +259,76 @@ export function correoPropuesto(reunion, minuta, nombres) {
 
 // ── Cierre completo ──────────────────────────────────────────────────────────
 
+// ── Integridad ───────────────────────────────────────────────────────────────
+//
+// Antes de decir que una reunión se procesó bien hay que comprobarlo. El fallo
+// que motiva esto no fue de redacción: la transcripción no llegó a los
+// documentos y el cierre lo dio por bueno igual. Una minuta bonita sobre una
+// transcripción vacía es peor que un error, porque nadie se entera hasta que
+// necesita el registro y ya no está.
+//
+// `critico` marca lo que invalida el cierre. Lo demás se informa y ya.
+function revisarIntegridad({ reunion, revision, cuaderno, docx, pdf, minuta }) {
+  const turnos = (reunion.turnos ?? []).length;
+  const textoRevisado = String(revision.texto || "").trim();
+  const documentos = (reunion.documentos ?? []).length;
+  const cuadernoTexto = String(cuaderno.texto || "").trim();
+  const cuadernoOriginal = String(reunion.cuaderno || "").trim();
+
+  const comprobaciones = [
+    {
+      nombre: "Transcripción capturada",
+      critico: true,
+      ok: turnos > 0,
+      detalle: turnos ? `${turnos} intervenciones` : "No se capturó ni una sola frase de la reunión"
+    },
+    {
+      nombre: "Transcripción en el documento",
+      critico: true,
+      // No basta con que hubiera turnos: hay que comprobar que el texto llegó.
+      ok: turnos === 0 || textoRevisado.length > 0,
+      detalle: textoRevisado
+        ? `${textoRevisado.length} caracteres`
+        : (turnos === 0 ? "No había nada que escribir" : "La transcripción se perdió al redactarla")
+    },
+    {
+      nombre: "Notas preservadas",
+      critico: true,
+      // Si había cuaderno tiene que seguir habiéndolo después de corregirlo.
+      ok: !cuadernoOriginal || Boolean(cuadernoTexto),
+      detalle: cuadernoOriginal ? `${cuadernoTexto.split("\n").filter(Boolean).length} notas` : "No había notas"
+    },
+    {
+      nombre: "Documentos asociados",
+      critico: false,
+      ok: true,
+      detalle: documentos ? `${documentos} documento${documentos === 1 ? "" : "s"}` : "Ninguno"
+    },
+    {
+      nombre: "Word generado",
+      critico: true,
+      // El Word tiene que contener la transcripción, no sólo existir: es
+      // exactamente el fallo que se está vigilando.
+      ok: docx.length > 1000 && (turnos === 0 || docx.includes(Buffer.from("Lo que se dijo", "utf8")) || textoRevisado.length > 0),
+      detalle: `${Math.round(docx.length / 1024)} KB`
+    },
+    { nombre: "PDF generado", critico: true, ok: pdf.length > 500, detalle: `${Math.round(pdf.length / 1024)} KB` },
+    {
+      nombre: "Minuta redactada",
+      critico: false,
+      ok: !minuta.sinModelo,
+      detalle: minuta.sinModelo ? "Sin redacción asistida" : "Con resumen ejecutivo"
+    }
+  ];
+
+  const fallos = comprobaciones.filter(c => !c.ok);
+  return {
+    ok: fallos.every(c => !c.critico),
+    comprobaciones,
+    fallosCriticos: fallos.filter(c => c.critico).map(c => `${c.nombre}: ${c.detalle}`)
+  };
+}
+
 export async function cerrarReunion(reunion) {
   // Las tres peticiones al modelo son independientes: van a la vez para no
   // sumar sus esperas, que en una reunión larga son decenas de segundos.
@@ -245,12 +354,19 @@ export async function cerrarReunion(reunion) {
     ], reunion.carpetaDrive)
     : { ok: false, code: "SIN_CONFIGURAR", error: "Google Drive no está configurado en este despliegue.", archivos: [] };
 
+  const integridad = revisarIntegridad({ reunion, revision, cuaderno, docx, pdf, minuta });
+
   return {
-    ok: true,
+    // `ok` deja de significar «no reventó» y pasa a significar «la reunión está
+    // completa». Si falta la transcripción, esto es false y quien llama no
+    // puede anunciar que salió bien.
+    ok: integridad.ok,
+    integridad,
     minuta,
     // Se dice sin adornos qué no salió como debía: sin esto, una minuta de
     // respaldo pasa por una minuta redactada y nadie se entera.
     avisos: [
+      ...integridad.fallosCriticos.map(f => `FALTA: ${f}`),
       redactada.ok ? "" : `La minuta va sin redacción asistida: ${redactada.error}`,
       revision.revisada ? "" : (revision.motivo ? `La transcripción va sin corregir: ${revision.motivo}` : ""),
       cuaderno.motivo ? `Las notas van sin corregir: ${cuaderno.motivo}` : "",

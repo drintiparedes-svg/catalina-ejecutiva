@@ -22,15 +22,35 @@ const normalizar = texto => String(texto ?? "")
 // Se aceptan variantes porque el reconocimiento se come sílabas a menudo.
 const NOMBRE = /\b(catalina|catalin|catlina|katalina)\b/;
 
+// Cuánto puede estar sorda como mucho. Es un seguro, no una temporización: la
+// sordera se quita cuando ella termina de hablar, pero eso lo decide el análisis
+// del audio, y si su voz nunca llega a sonar —el navegador bloqueó la
+// reproducción, la respuesta se cortó— ese aviso no llega nunca y la escucha se
+// queda sorda para el resto de la reunión sin que nadie se entere. Pasó: la
+// reunión seguía, la transcripción no.
+const SORDERA_MAXIMA = 45_000;
+
+// Si el reconocimiento lleva demasiado sin dar señales de vida se rearranca. El
+// navegador lo corta solo en silencios largos y `onend` casi siempre lo repone,
+// pero cuando `start()` falla la escucha muere en silencio.
+const LATIDO = 10_000;
+
 export class EscuchaDeReunion {
-  constructor({ alLlamarla, alTranscribir, alFallar } = {}) {
+  constructor({ alLlamarla, alTranscribir, alFallar, alRecuperarse } = {}) {
     this.alLlamarla = alLlamarla;
     this.alTranscribir = alTranscribir;
     this.alFallar = alFallar;
+    this.alRecuperarse = alRecuperarse;
     this.reconocimiento = null;
     this.activa = false;
     this.sorda = false;        // mientras Catalina habla, no se apunta nada
     this.transcripcion = [];
+    this.plazoDeSordera = null;
+    this.latido = null;
+    this.viva = false;         // ¿el reconocimiento dio señales desde el último latido?
+    this.arrancoAlgunaVez = false;
+    this.ultimoResultado = 0;
+    this.rearranques = 0;
   }
 
   empezar() {
@@ -54,6 +74,7 @@ export class EscuchaDeReunion {
         const texto = resultado[0].transcript.trim();
         if (!texto) continue;
 
+        this.ultimoResultado = Date.now();
         this.transcripcion.push({ momento: Date.now(), texto });
         this.alTranscribir?.(texto);
 
@@ -65,7 +86,13 @@ export class EscuchaDeReunion {
     // El reconocimiento se detiene solo cada cierto tiempo, y en silencios
     // largos. Sin volver a arrancarlo, la escucha muere a mitad de reunión sin
     // avisar.
-    r.onend = () => { if (this.activa) { try { r.start(); } catch {} } };
+    r.onstart = () => { this.viva = true; };
+    r.onaudiostart = () => { this.viva = true; };
+    r.onend = () => {
+      if (!this.activa) return;
+      this.viva = false;
+      try { r.start(); } catch { /* el latido lo reintenta */ }
+    };
     r.onerror = evento => {
       // «no-speech» y «aborted» son normales; el resto hay que enseñarlo. Que
       // fallara en silencio fue justo lo que hizo imposible saber por qué el
@@ -84,7 +111,41 @@ export class EscuchaDeReunion {
     this.reconocimiento = r;
     this.activa = true;
     try { r.start(); } catch { this.activa = false; return false; }
+    this.arrancoAlgunaVez = true;
+    this.#latir();
     return true;
+  }
+
+  // Comprueba cada pocos segundos que el reconocimiento sigue en pie y, si no,
+  // lo levanta. Sin esto, un `start()` fallido dejaba la reunión muda para
+  // siempre y no había forma de saberlo hasta abrir el documento vacío.
+  #latir() {
+    clearInterval(this.latido);
+    this.latido = setInterval(() => {
+      if (!this.activa) return;
+      if (this.viva) { this.viva = false; return; }
+      try {
+        this.reconocimiento?.start();
+        this.rearranques += 1;
+        // A la tercera se avisa: una vez es normal, tres seguidas es que algo
+        // pasa y quien está en la reunión tiene que saberlo antes del final.
+        if (this.rearranques === 3) this.alFallar?.("La escucha se está cortando; puede faltar transcripción");
+        if (this.rearranques > 3 && this.rearranques % 10 === 0) this.alRecuperarse?.(this.rearranques);
+      } catch { /* ya estaba arrancado */ this.viva = true; }
+    }, LATIDO);
+  }
+
+  // ¿Está capturando de verdad? Es lo que se comprueba antes de dar la reunión
+  // por buena, en vez de dar por hecho que sí porque se pulsó el botón.
+  diagnostico() {
+    return {
+      arrancoAlgunaVez: this.arrancoAlgunaVez,
+      activa: this.activa,
+      sorda: this.sorda,
+      frases: this.transcripcion.length,
+      rearranques: this.rearranques,
+      segundosSinOir: this.ultimoResultado ? Math.round((Date.now() - this.ultimoResultado) / 1000) : null
+    };
   }
 
   #atender(textoOriginal, plano) {
@@ -111,17 +172,33 @@ export class EscuchaDeReunion {
 
   // Se llama mientras Catalina habla y un momento después, para que la cola de
   // su propia voz no se cuele.
+  //
+  // Ensordecer SIEMPRE lleva plazo. Que se quite es responsabilidad de quien
+  // llama, pero no puede depender sólo de eso: si ese aviso no llega, la reunión
+  // se pierde entera y en silencio. Aquí la sordera se cae sola pase lo que pase.
   ensordecer(valor) {
+    clearTimeout(this.plazoDeSordera);
     this.sorda = Boolean(valor);
+    if (!this.sorda) return;
+    this.plazoDeSordera = setTimeout(() => {
+      if (!this.sorda) return;
+      this.sorda = false;
+      this.alRecuperarse?.(0);
+    }, SORDERA_MAXIMA);
   }
 
   parar() {
     this.activa = false;
+    clearInterval(this.latido);
+    clearTimeout(this.plazoDeSordera);
+    this.sorda = false;
     try { this.reconocimiento?.stop(); } catch {}
     this.reconocimiento = null;
   }
 
   olvidar() {
     this.transcripcion = [];
+    this.rearranques = 0;
+    this.ultimoResultado = 0;
   }
 }

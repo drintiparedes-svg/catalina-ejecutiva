@@ -17,7 +17,12 @@
 
 const BASE = "catalina-reuniones";
 const ALMACEN = "reuniones";
-const VERSION = 1;
+// Los borradores van en su propio almacén. Es la fuente primaria de la reunión
+// mientras ocurre: la transcripción se escribe aquí según se va capturando, y no
+// depende de que el navegador siga vivo al final. Antes vivía sólo en memoria y
+// bastaba con un cierre a medias para perder la reunión entera.
+const BORRADORES = "borradores";
+const VERSION = 2;
 
 let conexion = null;
 
@@ -36,6 +41,9 @@ function abrir() {
         // Por fecha, que es como se busca una reunión: «la del martes pasado».
         almacen.createIndex("inicio", "inicio");
       }
+      if (!db.objectStoreNames.contains(BORRADORES)) {
+        db.createObjectStore(BORRADORES, { keyPath: "id" });
+      }
     };
     peticion.onsuccess = () => resolver(peticion.result);
     peticion.onerror = () => rechazar(peticion.error || new Error("No se pudo abrir el historial."));
@@ -51,13 +59,46 @@ function abrir() {
   return conexion;
 }
 
-function transaccion(modo, trabajo) {
+function transaccion(modo, trabajo, almacen = ALMACEN) {
   return abrir().then(db => new Promise((resolver, rechazar) => {
-    const t = db.transaction(ALMACEN, modo);
-    const peticion = trabajo(t.objectStore(ALMACEN));
+    const t = db.transaction(almacen, modo);
+    const peticion = trabajo(t.objectStore(almacen));
     peticion.onsuccess = () => resolver(peticion.result);
     peticion.onerror = () => rechazar(peticion.error);
   }));
+}
+
+// ── Borrador en curso ────────────────────────────────────────────────────────
+//
+// Se escribe mientras la reunión ocurre, no al final. Es lo que convierte la
+// transcripción en un registro y no en un recuerdo: si el navegador se recarga,
+// se cierra la pestaña o falla el cierre, lo capturado sigue estando.
+
+export async function guardarBorrador(borrador) {
+  try {
+    await transaccion("readwrite", a => a.put(borrador), BORRADORES);
+    return { ok: true, momento: Date.now() };
+  } catch (error) {
+    return { ok: false, error: String(error?.message || error) };
+  }
+}
+
+export async function leerBorrador(id) {
+  try { return (await transaccion("readonly", a => a.get(id), BORRADORES)) || null; }
+  catch { return null; }
+}
+
+// El borrador sin cerrar más reciente, para poder ofrecer retomarlo.
+export async function borradorPendiente() {
+  try {
+    const todos = await transaccion("readonly", a => a.getAll(), BORRADORES);
+    return todos.sort((a, b) => (b.inicio ?? 0) - (a.inicio ?? 0))[0] || null;
+  } catch { return null; }
+}
+
+export async function olvidarBorrador(id) {
+  try { await transaccion("readwrite", a => a.delete(id), BORRADORES); return { ok: true }; }
+  catch { return { ok: false }; }
 }
 
 export const historialDisponible = () => typeof indexedDB !== "undefined" && indexedDB !== null;

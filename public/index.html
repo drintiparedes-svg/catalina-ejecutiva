@@ -117,6 +117,45 @@
     <!-- Modo reunión. Es lo único que se ve en ese modo aparte de la cara, así
          que lleva justo lo imprescindible: en qué estado está, lo último que
          entendió, y las cuatro cosas que se pueden pedir. -->
+    <!-- Preparación. Antes de escuchar nada hay que saber qué se va a escuchar:
+         el tipo de reunión cambia qué se prioriza y cómo queda la minuta. -->
+    <div class="preparar" id="preparar" hidden>
+      <header class="preparar-cabecera">
+        <span>Preparar la reunión</span>
+        <button class="preparar-cerrar" id="prepararCerrar" aria-label="Salir">&times;</button>
+      </header>
+
+      <div class="preparar-cuerpo">
+        <p class="preparar-pie" id="prepararRetomar" hidden></p>
+
+        <label class="preparar-rotulo">¿Qué tipo de reunión es?</label>
+        <div class="preparar-tipos" id="prepararTipos" role="radiogroup" aria-label="Tipo de reunión"></div>
+
+        <label class="preparar-rotulo" for="prepararTitulo">Título</label>
+        <input id="prepararTitulo" autocomplete="off" placeholder="Comité de innovación clínica">
+
+        <label class="preparar-rotulo" for="prepararObjetivo">Objetivo <span>(opcional)</span></label>
+        <input id="prepararObjetivo" autocomplete="off" placeholder="Definir el alcance del piloto">
+
+        <label class="preparar-rotulo" for="prepararNotas">Notas iniciales <span>(opcional)</span></label>
+        <textarea id="prepararNotas" placeholder="Lo que quieras tener presente durante la reunión"></textarea>
+
+        <div class="preparar-fila">
+          <button id="prepararDocumentos">Documentos previos</button>
+          <button id="prepararAntecedente">Reunión anterior</button>
+        </div>
+        <p class="preparar-pie" id="prepararAdjuntos"></p>
+
+        <label class="preparar-interruptor">
+          <input type="checkbox" id="prepararParticipa">
+          <span>Catalina puede participar si se lo pido</span>
+        </label>
+      </div>
+
+      <button class="preparar-empezar" id="prepararEmpezar">Iniciar reunión</button>
+      <button class="preparar-historial" id="prepararHistorial">Ver reuniones anteriores</button>
+    </div>
+
     <div class="reunion" id="reunion" hidden>
       <div class="reunion-estado" id="reunionEstado" data-fase="escuchando">
         <span class="reunion-punto"></span>
@@ -176,6 +215,6 @@
     <button class="exit-meet" id="exitMeet" aria-label="Salir del modo Meet">Mostrar controles</button>
   </main>
   <audio id="remoteAudio" autoplay></audio>
-  <script type="module" src="app.js?v=35"></script>
+  <script type="module" src="app.js?v=36"></script>
 </body>
 </html>

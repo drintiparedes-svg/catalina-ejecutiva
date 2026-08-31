@@ -260,6 +260,54 @@ button.primary { border-color: rgba(109,228,255,.45); background: linear-gradien
 }
 .referencia-nota { list-style: none; margin-left: -18px; margin-top: 12px; color: rgba(209,229,239,.5); font-size: 11.5px; line-height: 1.45; }
 
+/* ─── Preparación de la reunión ───────────────────────────────────────────
+   Ocupa el mismo sitio que la tira de reunión, porque es el paso anterior: se
+   elige el tipo, se pone título y se decide si puede participar. */
+.preparar {
+  position: absolute; top: calc(18px + env(safe-area-inset-top));
+  left: calc(20px + env(safe-area-inset-left));
+  display: none; flex-direction: column; gap: 11px;
+  width: min(400px, calc(100vw - 40px)); max-height: calc(100dvh - 60px);
+  padding: 14px 16px 16px; border: 1px solid rgba(180,225,245,.18); border-radius: 18px;
+  background: rgba(4,12,20,.74); backdrop-filter: blur(22px) saturate(1.15);
+  box-shadow: 0 20px 52px rgba(0,0,0,.45); z-index: 8;
+}
+.meet .preparar { display: flex; }
+.preparar[hidden] { display: none; }
+.preparar-cabecera { display: flex; align-items: center; justify-content: space-between; }
+.preparar-cabecera > span { color: #a9d8ec; font-size: 10px; font-weight: 700; letter-spacing: .2em; text-transform: uppercase; }
+.preparar-cerrar { min-height: 24px; padding: 0 7px; border-radius: 8px; border-color: transparent; background: transparent; color: #a9d8ec; font-size: 17px; line-height: 1; }
+.preparar-cuerpo { display: flex; flex-direction: column; gap: 6px; overflow-y: auto; overscroll-behavior: contain; padding-right: 2px; }
+.preparar-rotulo { margin-top: 5px; color: rgba(169,216,236,.62); font-size: 10px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; }
+.preparar-rotulo span { font-weight: 500; letter-spacing: .04em; text-transform: none; opacity: .7; }
+.preparar input[type="text"], .preparar input:not([type]), .preparar textarea {
+  width: 100%; padding: 8px 11px; border: 1px solid rgba(180,225,245,.2); border-radius: 10px;
+  background: rgba(255,255,255,.05); color: #eaf6fc; font: inherit; font-size: 13px; box-sizing: border-box;
+}
+.preparar textarea { min-height: 62px; max-height: 22dvh; resize: vertical; line-height: 1.5; }
+.preparar input:focus, .preparar textarea:focus { outline: none; border-color: rgba(109,228,255,.55); }
+
+/* Los tipos son tarjetas y no un desplegable: la diferencia entre ellos está en
+   lo que priorizan, y eso hay que poder leerlo antes de elegir. */
+.preparar-tipos { display: flex; flex-direction: column; gap: 5px; }
+.tipo-reunion {
+  display: flex; flex-direction: column; gap: 2px; padding: 9px 12px; text-align: left;
+  border: 1px solid rgba(180,225,245,.16); border-radius: 11px; background: rgba(255,255,255,.03);
+  color: #eaf6fc; font: inherit; cursor: pointer; min-height: 0;
+}
+.tipo-reunion:hover { background: rgba(255,255,255,.07); }
+.tipo-reunion[aria-checked="true"] { border-color: rgba(109,228,255,.55); background: rgba(25,134,173,.32); }
+.tipo-reunion b { font-size: 13px; font-weight: 600; }
+.tipo-reunion i { font-style: normal; font-size: 11.5px; line-height: 1.35; color: rgba(209,229,239,.6); }
+
+.preparar-fila { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-top: 8px; }
+.preparar-fila button { min-height: 32px; font-size: 12px; }
+.preparar-pie { margin: 4px 0 0; color: rgba(209,229,239,.6); font-size: 11.5px; line-height: 1.4; }
+.preparar-interruptor { display: flex; align-items: center; gap: 9px; margin-top: 10px; color: rgba(233,246,252,.85); font-size: 12.5px; }
+.preparar-interruptor input { width: 16px; height: 16px; accent-color: #2C6E72; }
+.preparar-empezar { border-color: rgba(109,228,255,.45); background: linear-gradient(135deg, rgba(25,134,173,.85), rgba(39,82,126,.9)); min-height: 38px; }
+.preparar-historial { min-height: 32px; font-size: 12px; }
+
 /* ─── Modo reunión ────────────────────────────────────────────────────────
    Todo el modo cabe en una tira arriba a la izquierda: el estado, lo último
    que se entendió y las cuatro acciones. Va arriba y no abajo porque en una
@@ -339,6 +387,29 @@ button.primary { border-color: rgba(109,228,255,.45); background: linear-gradien
 .historial-acciones { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; }
 .historial-acciones button { min-height: 30px; padding: 0 11px; font-size: 11.5px; }
 .historial-borrar { border-color: rgba(255,159,10,.28); color: #ffd9a0; }
+.historial-tipo { margin-left: auto; color: rgba(169,216,236,.5); font-size: 10.5px; }
+
+/* El expediente: lo que la reunión dejó, dentro de su propia ficha. En pestañas
+   porque la transcripción entera y la minuta no caben a la vez, y porque lo que
+   se busca casi siempre es una de las dos, no las dos. */
+.expediente { display: flex; flex-direction: column; gap: 9px; margin-top: 4px; padding-top: 10px; border-top: 1px solid rgba(180,225,245,.12); }
+.expediente[hidden] { display: none; }
+.expediente-pestanas { display: flex; flex-wrap: wrap; gap: 5px; }
+.expediente-pestanas button { min-height: 26px; padding: 0 10px; font-size: 11px; }
+.expediente-pestanas button[aria-pressed="true"] { border-color: rgba(109,228,255,.5); background: rgba(25,134,173,.35); }
+.expediente-contenido { display: flex; flex-direction: column; gap: 8px; font-size: 12.5px; line-height: 1.5; }
+.expediente-contenido h4 { margin: 6px 0 0; color: #a9d8ec; font-size: 10px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; }
+.expediente-contenido ul { margin: 0; padding-left: 17px; color: rgba(233,246,252,.85); }
+.expediente-contenido li { margin-bottom: 3px; }
+.expediente-texto {
+  margin: 0; padding: 10px 12px; max-height: 34dvh; overflow-y: auto; overscroll-behavior: contain;
+  border-radius: 10px; background: rgba(0,0,0,.28); color: rgba(233,246,252,.85);
+  font: inherit; font-size: 12px; line-height: 1.6; white-space: pre-wrap; word-break: break-word;
+}
+.expediente-tabla { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+.expediente-tabla th, .expediente-tabla td { padding: 5px 7px; text-align: left; border-bottom: 1px solid rgba(180,225,245,.12); vertical-align: top; }
+.expediente-tabla th { color: rgba(169,216,236,.6); font-weight: 600; font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
+.expediente-tabla td { color: rgba(233,246,252,.85); }
 
 .reunion-botones { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
 .reunion-botones button { min-height: 34px; padding: 0 10px; font-size: 12px; white-space: nowrap; }
@@ -383,6 +454,17 @@ button.primary { border-color: rgba(109,228,255,.45); background: linear-gradien
 .cierre-archivo:hover { background: rgba(255,255,255,.1); }
 .cierre-aviso { padding: 9px 12px; border-radius: 11px; background: rgba(255,159,10,.12); border: 1px solid rgba(255,159,10,.28); color: #ffd9a0; font-size: 12.5px; }
 .cierre-ok { color: #8fd0b0; }
+/* Lista de verificación del cierre. Es lo primero que se lee cuando algo falta,
+   así que el estado va en el color y en el símbolo, no sólo en el texto. */
+.verificacion { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 5px; }
+.verificacion li { display: flex; align-items: baseline; gap: 9px; font-size: 12.5px; line-height: 1.4; }
+.verificacion em { margin-left: auto; color: rgba(209,229,239,.5); font-style: normal; font-size: 11.5px; text-align: right; }
+.verificacion-marca { flex: none; width: 14px; font-weight: 700; }
+.verificacion li[data-estado="bien"] .verificacion-marca { color: #8fd0b0; }
+.verificacion li[data-estado="mal"] .verificacion-marca { color: #ff8f7a; }
+.verificacion li[data-estado="mal"] { color: #ffb9ac; }
+.verificacion li[data-estado="aviso"] .verificacion-marca { color: #ffd9a0; }
+
 .cierre-correo { display: flex; flex-direction: column; gap: 8px; }
 .cierre-correo input, .cierre-correo textarea {
   width: 100%; padding: 9px 12px; border: 1px solid rgba(180,225,245,.2);

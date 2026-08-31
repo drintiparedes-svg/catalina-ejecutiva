@@ -26,6 +26,8 @@
 // Lo que no cambia nunca es que una nota no puede convertirse en algo que
 // alguien dijo.
 
+import { tipoDeReunion } from "./public/tipos-de-reunion.js";
+
 const MODELO = "gemini-3.1-flash";
 const TIEMPO = 60_000;
 const TOPE_MATERIAL = 120_000;   // caracteres que se le entregan al modelo
@@ -271,9 +273,48 @@ const ESQUEMA_MINUTA = {
     },
     pendientes: lista("Preguntas que quedaron abiertas y asuntos que no se alcanzaron a tratar."),
     proximos_pasos: lista("Qué sigue después de esta reunión."),
-    participantes: lista("Nombres de quienes participaron, tal como aparecen en el material.")
+    participantes: lista("Nombres de quienes participaron, tal como aparecen en el material."),
+
+    // De aquí abajo, campos propios de cada tipo de reunión. Se piden siempre
+    // —un esquema por tipo multiplicaría por cinco lo que hay que mantener— pero
+    // sólo se rellenan y sólo se imprimen los que ese tipo usa.
+    conceptos: lista("Conferencia: conceptos explicados, con la definición que dio quien expuso."),
+    datos: lista("Conferencia: datos y cifras concretas que se mencionaron."),
+    referencias: lista("Conferencia: autores, papers, libros o fuentes citadas."),
+    conclusiones: lista("Conferencia: a qué conclusiones llegó la exposición."),
+    preguntas: lista("Preguntas del público o preguntas abiertas, con su respuesta si la hubo."),
+    bloqueos: lista("Operacional: qué impide avanzar y a quién le corresponde destrabarlo."),
+    decision_central: { type: "string", description: "Ejecutiva: el problema o la decisión que centró la reunión." },
+    posiciones: lista("Ejecutiva: la postura de cada participante, con su nombre. No las suavices."),
+    alternativas: lista("Ejecutiva: opciones que se pusieron sobre la mesa, con sus pros y contras si se dieron."),
+    riesgos: lista("Ejecutiva: riesgos identificados."),
+    problema: { type: "string", description: "Lean: el problema formulado con precisión." },
+    estado_actual: { type: "string", description: "Lean: cómo funciona hoy el proceso involucrado." },
+    desperdicios: lista("Lean: ineficiencias, esperas, retrabajos o desperdicios detectados."),
+    causas: lista("Lean: causas, distinguiendo raíz de síntoma sólo si en la reunión se distinguió."),
+    actores: lista("Lean: quiénes intervienen en el proceso y en qué parte."),
+    oportunidades: lista("Lean: oportunidades de mejora identificadas."),
+    contramedidas: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          problema: { type: "string" }, causa: { type: "string" }, contramedida: { type: "string" },
+          responsable: { type: "string" }, fecha: { type: "string" },
+          indicador: { type: "string", description: "Cómo se medirá. «Sin definir» si no se acordó." }
+        },
+        required: ["problema", "contramedida", "responsable", "fecha", "indicador"]
+      },
+      description: "Lean: Problema → Causa → Contramedida → Responsable → Fecha → Indicador."
+    },
+    ideas: lista("Creativa: las ideas que aparecieron, con la formulación de quien las dijo."),
+    hipotesis: lista("Creativa: hipótesis y supuestos que se pusieron en juego."),
+    oportunidades_creativas: lista("Creativa: oportunidades y asociaciones que surgieron."),
+    divergencias: lista("Creativa: puntos donde el grupo se abrió en direcciones distintas."),
+    descartadas: lista("Creativa: ideas descartadas y por qué se descartaron."),
+    experimentos: lista("Creativa: próximos experimentos o pruebas acordadas.")
   },
-  required: ["titulo", "objetivo", "resumen", "temas", "acciones"]
+  required: ["titulo", "objetivo", "resumen"]
 };
 
 export async function redactarMinuta(reunion) {
@@ -281,9 +322,16 @@ export async function redactarMinuta(reunion) {
   if (!material.trim()) return { ok: false, code: "SIN_MATERIAL", error: "No hay nada que resumir: la reunión quedó vacía." };
   if (!hayRedaccion()) return { ok: false, code: "SIN_CLAVE", error: "Falta GEMINI_API_KEY para redactar la minuta." };
 
+  const tipo = tipoDeReunion(reunion.tipo);
   const prompt = [
     "Eres la secretaria ejecutiva de una reunión. Redactas la minuta que leerán quienes no estuvieron.",
     "Escribes en español de Chile, en tono profesional y directo, sin relleno.",
+    "",
+    `TIPO DE REUNIÓN: ${tipo.nombre}. ${tipo.resumen}`,
+    "Lo que tienes que sacar de aquí, por orden de importancia:",
+    ...tipo.prioriza.map((p, i) => `  ${i + 1}. ${p}`),
+    tipo.guia,
+    "Rellena sólo los campos que este tipo de reunión necesita; los demás, déjalos vacíos.",
     "",
     "El material viene separado por procedencia y esa separación es lo más importante de tu trabajo:",
     ...Object.entries(PROCEDENCIAS).map(([clave, que]) => `- ${clave}: ${que}.`),
@@ -353,7 +401,37 @@ function normalizarMinuta(cruda) {
       .filter(a => a.accion),
     pendientes: listaDe(cruda.pendientes),
     proximos_pasos: listaDe(cruda.proximos_pasos),
-    participantes: listaDe(cruda.participantes)
+    participantes: listaDe(cruda.participantes),
+
+    conceptos: listaDe(cruda.conceptos),
+    datos: listaDe(cruda.datos),
+    referencias: listaDe(cruda.referencias),
+    conclusiones: listaDe(cruda.conclusiones),
+    preguntas: listaDe(cruda.preguntas),
+    bloqueos: listaDe(cruda.bloqueos),
+    decision_central: texto(cruda.decision_central),
+    posiciones: listaDe(cruda.posiciones),
+    alternativas: listaDe(cruda.alternativas),
+    riesgos: listaDe(cruda.riesgos),
+    problema: texto(cruda.problema),
+    estado_actual: texto(cruda.estado_actual),
+    desperdicios: listaDe(cruda.desperdicios),
+    causas: listaDe(cruda.causas),
+    actores: listaDe(cruda.actores),
+    oportunidades: listaDe(cruda.oportunidades),
+    contramedidas: (Array.isArray(cruda.contramedidas) ? cruda.contramedidas : [])
+      .map(c => ({
+        problema: texto(c?.problema), causa: texto(c?.causa) || "Sin determinar",
+        contramedida: texto(c?.contramedida), responsable: texto(c?.responsable) || "Sin asignar",
+        fecha: texto(c?.fecha) || "Sin fecha", indicador: texto(c?.indicador) || "Sin definir"
+      }))
+      .filter(c => c.contramedida),
+    ideas: listaDe(cruda.ideas),
+    hipotesis: listaDe(cruda.hipotesis),
+    oportunidades_creativas: listaDe(cruda.oportunidades_creativas),
+    divergencias: listaDe(cruda.divergencias),
+    descartadas: listaDe(cruda.descartadas),
+    experimentos: listaDe(cruda.experimentos)
   };
 }
 

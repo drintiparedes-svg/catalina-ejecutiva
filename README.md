@@ -474,6 +474,49 @@ Las acciones son **Participar**, **Tomar nota**, **Agregar documento**,
 (`tomar_nota`, `quien_habla`, `estado_de_la_reunion`, `consultar_reunion`,
 `finalizar_reunion`).
 
+### Antes de escuchar: qué reunión es
+
+Entrar en modo reunión abre primero una preparación —título, objetivo, notas
+iniciales, documentos previos, reunión anterior de la que ésta es seguimiento, y
+si Catalina puede participar—. Lo que más pesa ahí es el **tipo**:
+
+| Tipo | Qué prioriza | ¿Participa? |
+| --- | --- | --- |
+| Conferencia o clase | conceptos, datos, referencias, conclusiones, preguntas | no |
+| Operacional | problemas, decisiones, acuerdos, tareas con dueño y fecha, bloqueos | no |
+| Ejecutiva | la decisión central, posiciones, alternativas, riesgos | no |
+| Ejecutiva — Lean | problema, estado actual, desperdicios, causas, contramedidas con indicador | no |
+| Creativa | ideas, hipótesis, divergencias, descartadas, experimentos | sí |
+
+Lo que **no** cambia entre tipos es la captura: la transcripción se guarda igual
+y entera en los cinco. Lo que cambia es qué se mira al leerla y en qué orden se
+cuenta. Las secciones que un tipo no pide se imprimen igual si traen contenido:
+si en una clase alguien acabó comprometiéndose a algo, esa acción no se pierde.
+Los cinco tipos viven en `public/tipos-de-reunion.js`, que importan **los dos
+lados** —el navegador para la pantalla, el servidor para la minuta— porque con
+dos copias un día dejarían de coincidir sin que nadie lo notara.
+
+### La transcripción es un registro, no un recuerdo
+
+Cada frase capturada se escribe en IndexedDB en cuanto se oye, agrupando las
+escrituras en dos segundos. Si el navegador se recarga, se cierra la pestaña o
+falla el cierre, lo capturado sigue ahí y al volver a entrar se ofrece retomar la
+reunión. Antes vivía sólo en memoria, y bastaba un cierre a medias para perderla.
+
+Dos seguros más, porque la captura falla en silencio y eso es lo peor que puede
+hacer: **la sordera lleva plazo** —mientras Catalina habla no se apunta nada, y
+si el aviso de que terminó no llega, a los 45 segundos se quita sola— y un
+**latido** cada diez segundos comprueba que el reconocimiento sigue en pie y lo
+levanta si se cayó, avisando cuando se corta demasiado.
+
+### Verificación antes de dar la reunión por buena
+
+Al cerrar se comprueba, y se enseña: audio procesado, transcripción capturada,
+transcripción persistida, transcripción dentro del documento, notas preservadas,
+documentos asociados, Word, PDF e historial. Si falla algo crítico, la reunión
+**no** se declara correcta: se dice qué falló y se ofrece reintentar el
+procesamiento sin perder lo capturado.
+
 Los documentos se leen en el propio navegador —PDF, Word, Excel, PowerPoint y
 texto— con `DecompressionStream`, sin subirlos: el archivo ya está ahí y Vercel
 tiene un tope de tamaño por petición que un PowerPoint se salta sin esfuerzo. De
@@ -513,9 +556,12 @@ guardar nada, y montar una base de datos para algo que sólo lee su dueño serí
 desproporcionado. La consecuencia hay que decirla: **el historial vive en ese
 navegador y no se sincroniza**; lo que sí viaja son los documentos, en Drive.
 
-Desde el historial se abre una reunión pasada para preguntar por ella, o se usa
-como **antecedente** de una de seguimiento: entonces la minuta nueva sabe de
-dónde viene y dice qué avanzó y qué sigue igual.
+Cada reunión del historial es un **expediente**: fecha, título, tipo,
+participantes, y dentro —en pestañas— la minuta, la transcripción completa, las
+notas y el texto de los documentos que se aportaron. Se puede leer antes de
+preguntar por ella, o mientras se pregunta. También se usa como **antecedente**
+de una reunión de seguimiento: entonces la minuta nueva sabe de dónde viene y
+dice qué avanzó y qué sigue igual.
 
 La carpeta de Drive se elige en `/reunion.html` y se guarda en el navegador, así
 que cambiarla no exige volver a desplegar.

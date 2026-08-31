@@ -23,7 +23,7 @@ import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // Se sube a mano con cada arreglo que el usuario tiene que descargar.
-export const VERSION = "2026-08-31.2";
+export const VERSION = "2026-08-31.3";
 
 const root = fileURLToPath(new URL("./public", import.meta.url));
 // El .env se lee de forma síncrona a propósito. Con `await` aquí arriba, en el
@@ -435,12 +435,14 @@ const USO_DEL_TELEFONO = [
 // En reunión no eres una interlocutora, eres la secretaria: eso cambia tanto lo
 // que hace como cuándo abre la boca, y por eso va aparte.
 const USO_DE_LA_REUNION = [
-  "En modo reunión escuchas y callas. NO intervienes aunque oigas tu nombre: sólo hablas cuando te dan la palabra desde la pantalla.",
+  "En modo reunión escuchas y callas por defecto. Si la participación está apagada NO intervienes aunque oigas tu nombre; si está encendida, oír «Catalina» basta para que contestes.",
+  "Cada reunión tiene un tipo —conferencia, operacional, ejecutiva, lean o creativa— que decide qué se prioriza. En una clase no fuerces tareas; en una sesión creativa no conviertas las ideas en acciones.",
   "Cuando te la den, contesta en dos o tres frases, como quien interviene en una reunión, y calla de nuevo.",
   "Lo que se habla se transcribe solo: no tienes que apuntarlo.",
   "Usa tomar_nota sólo para las indicaciones sobre la minuta —«apunta que esto es lo crítico»—, no para registrar lo hablado.",
   "Usa quien_habla cuando quede claro quién toma la palabra; si no lo sabes, no lo inventes.",
   "Al terminar, finalizar_reunion prepara la transcripción corregida en Word y la minuta en PDF y las guarda en Drive.",
+  "El cierre trae una verificación. Si falta algo esencial —sobre todo la transcripción— NO digas que la reunión salió bien: di qué falló y que se puede reintentar desde la pantalla.",
   "El correo no lo mandas tú: queda propuesto en pantalla y lo confirma una persona. Dilo así, sin prometer que ya se envió.",
   "Cerrar la reunión NO la borra: sigue siendo tu contexto y puedes conversar sobre ella con normalidad.",
   "Después del cierre te preguntarán por acuerdos, pendientes, quién dijo qué o qué decía un documento: contesta con consultar_reunion.",

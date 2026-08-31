@@ -49,6 +49,8 @@ export class MemoriaDeReunion {
 
   olvidar() {
     this.abierta = false;
+    this.id = "";
+    this.tipo = "operacional";
     this.inicio = 0;
     this.fin = 0;
     this.titulo = "";
@@ -69,13 +71,57 @@ export class MemoriaDeReunion {
     this.cierre = null;
   }
 
-  abrir({ titulo = "", objetivo = "", antecedente = null } = {}) {
+  abrir({ titulo = "", objetivo = "", antecedente = null, tipo = "operacional", cuaderno = "" } = {}) {
     this.olvidar();
     this.abierta = true;
     this.inicio = Date.now();
+    this.id = `r-${this.inicio}`;
     this.titulo = titulo;
     this.objetivo = objetivo;
     this.antecedente = antecedente;
+    this.tipo = tipo;
+    this.cuaderno = cuaderno;
+  }
+
+  // Retoma un borrador guardado durante una reunión anterior que no llegó a
+  // cerrarse. Se restauran los turnos tal cual: son el registro.
+  retomar(borrador) {
+    this.olvidar();
+    Object.assign(this, {
+      abierta: true,
+      id: borrador.id,
+      inicio: borrador.inicio,
+      titulo: borrador.titulo || "",
+      objetivo: borrador.objetivo || "",
+      tipo: borrador.tipo || "operacional",
+      hablante: borrador.hablante || "",
+      nombresVistos: borrador.nombresVistos ?? [],
+      turnos: borrador.turnos ?? [],
+      cuaderno: borrador.cuaderno || "",
+      documentos: borrador.documentos ?? [],
+      intervenciones: borrador.intervenciones ?? [],
+      antecedente: borrador.antecedente || null
+    });
+    return this;
+  }
+
+  // Lo que se escribe en el almacén mientras la reunión ocurre.
+  borrador() {
+    return {
+      id: this.id || `r-${this.inicio}`,
+      inicio: this.inicio,
+      guardado: Date.now(),
+      titulo: this.titulo,
+      objetivo: this.objetivo,
+      tipo: this.tipo,
+      hablante: this.hablante,
+      nombresVistos: this.nombresVistos,
+      turnos: this.turnos,
+      cuaderno: this.cuaderno,
+      documentos: this.documentos,
+      intervenciones: this.intervenciones,
+      antecedente: this.antecedente
+    };
   }
 
   cerrar() {
@@ -174,6 +220,7 @@ export class MemoriaDeReunion {
       fin: this.fin || Date.now(),
       titulo: this.titulo,
       objetivo: this.objetivo,
+      tipo: this.tipo,
       destinatario: this.destinatario,
       participantes: this.participantes(),
       turnos: this.turnos,
@@ -194,9 +241,10 @@ export class MemoriaDeReunion {
   registroCompleto(cierre) {
     const m = cierre?.minuta ?? {};
     return {
-      id: `r-${this.inicio}`,
+      id: this.id || `r-${this.inicio}`,
       inicio: this.inicio,
       fin: this.fin || Date.now(),
+      tipo: this.tipo,
       titulo: this.titulo || m.titulo || "Reunión sin título",
       objetivo: this.objetivo || m.objetivo || "",
       participantes: this.participantes(),

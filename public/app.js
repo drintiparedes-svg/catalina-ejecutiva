@@ -13,7 +13,11 @@ import { ElevenLabsSession } from "./realtime/elevenlabs-session.js";
 import { dibujarRuta } from "./mapa.js";
 import { EscuchaDeReunion, escuchaDisponible } from "./escucha.js";
 import { MemoriaDeReunion, leerDocumento, ESTADOS, ROTULOS } from "./reunion.js";
-import { guardarReunion, listarReuniones, leerReunion, borrarReunion, comoAntecedente, historialDisponible } from "./historial.js";
+import { TIPOS, TIPO_POR_DEFECTO, tipoDeReunion } from "./tipos-de-reunion.js";
+import {
+  guardarReunion, listarReuniones, leerReunion, borrarReunion, comoAntecedente, historialDisponible,
+  guardarBorrador, borradorPendiente, olvidarBorrador
+} from "./historial.js";
 
 const canvas = document.querySelector("#avatar");
 const ctx = canvas.getContext("2d");
@@ -24,6 +28,19 @@ const ui = {
   status: document.querySelector("#status"),
   signal: document.querySelector("#signal"),
   caption: document.querySelector("#caption"),
+  preparar: document.querySelector("#preparar"),
+  prepararTipos: document.querySelector("#prepararTipos"),
+  prepararTitulo: document.querySelector("#prepararTitulo"),
+  prepararObjetivo: document.querySelector("#prepararObjetivo"),
+  prepararNotas: document.querySelector("#prepararNotas"),
+  prepararDocumentos: document.querySelector("#prepararDocumentos"),
+  prepararAntecedente: document.querySelector("#prepararAntecedente"),
+  prepararAdjuntos: document.querySelector("#prepararAdjuntos"),
+  prepararParticipa: document.querySelector("#prepararParticipa"),
+  prepararEmpezar: document.querySelector("#prepararEmpezar"),
+  prepararHistorial: document.querySelector("#prepararHistorial"),
+  prepararCerrar: document.querySelector("#prepararCerrar"),
+  prepararRetomar: document.querySelector("#prepararRetomar"),
   reunion: document.querySelector("#reunion"),
   reunionEstado: document.querySelector("#reunionEstado"),
   reunionEstadoTexto: document.querySelector("#reunionEstadoTexto"),
@@ -384,7 +401,7 @@ if (ui.reunion) {
     evento.target.value = "";
     await recibirArchivos(archivos);
   });
-  ui.reunionQuien.addEventListener("input", () => memoria.fijarHablante(ui.reunionQuien.value));
+  ui.reunionQuien.addEventListener("input", () => { memoria.fijarHablante(ui.reunionQuien.value); apuntarBorrador(); });
   ui.reunionAceptar.addEventListener("click", () => aceptarCampo());
   ui.reunionCancelar.addEventListener("click", () => descartarCampo());
   ui.reunionEntrada.addEventListener("keydown", evento => {
@@ -392,6 +409,15 @@ if (ui.reunion) {
     if (evento.key === "Escape") { evento.preventDefault(); descartarCampo(); }
   });
   ui.cierreCerrar.addEventListener("click", () => { ui.cierre.dataset.estado = "oculto"; });
+}
+
+if (ui.preparar) {
+  ui.prepararEmpezar.addEventListener("click", () => empezarLaReunion());
+  ui.prepararCerrar.addEventListener("click", () => salirDeModoMeet());
+  ui.prepararHistorial.addEventListener("click", () => mostrarHistorial());
+  ui.prepararDocumentos.addEventListener("click", () => ui.reunionArchivo.click());
+  ui.prepararAntecedente.addEventListener("click", () => mostrarHistorial({ paraElegir: true }));
+  ui.prepararTitulo.addEventListener("keydown", e => { if (e.key === "Enter") empezarLaReunion(); });
 }
 
 document.addEventListener("keydown", event => {
@@ -438,26 +464,49 @@ const escucha = new EscuchaDeReunion({
   alTranscribir: texto => {
     hayActividad();                       // la reunión cuenta como vida
     memoria.anotarTurno(texto);
+    // Cada frase capturada se persiste. Esto es lo que convierte la
+    // transcripción en un registro: deja de depender de que el navegador siga
+    // vivo al final de la reunión.
+    apuntarBorrador();
     refrescarCuenta();
     // Con la participación habilitada, lo primero que se diga es la pregunta.
     // Queda igualmente anotado como parte de la reunión: se dijo en la sala.
     if (estadoReunion === ESTADOS.HABILITADA) invocar(texto);
     else eco(texto);
   },
-  // El nombre por sí solo ya no la despierta. Se usa sólo para explicar por qué
-  // no contestó: sin esto, quien la nombra se queda esperando una respuesta que
-  // nunca iba a llegar.
-  alLlamarla: () => {
+  // Llamarla por su nombre.
+  //
+  // Con la participación permitida —se marca al preparar la reunión— decir
+  // «Catalina, …» basta y contesta. Sin ella no interrumpe, pero lo dice en vez
+  // de callar: quien la nombró se quedaba esperando una respuesta que no iba a
+  // llegar y no había forma de saber por qué.
+  alLlamarla: (peticion) => {
+    if (estadoReunion === ESTADOS.HABILITADA) return;   // ya lo tomó alTranscribir
     if (estadoReunion !== ESTADOS.ESCUCHANDO) return;
-    eco("Me nombraste. Pulsa «Participar» y te escucho.");
+    if (!participacionPermitida) {
+      eco("Me nombraste, pero tengo la participación apagada. Pulsa «Participar».");
+      return;
+    }
+    invocar(peticion);
   },
-  alFallar: motivo => fijarEstado(ESTADOS.ESCUCHANDO, motivo, "problema")
+  alFallar: motivo => fijarEstado(estadoReunion === ESTADOS.POSTERIOR ? ESTADOS.POSTERIOR : ESTADOS.ESCUCHANDO, motivo, "problema"),
+  // La escucha se recuperó sola de algo. Se dice, porque el usuario tiene
+  // derecho a saber que hubo un hueco antes de leer el documento.
+  alRecuperarse: rearranques => {
+    if (estadoReunion === ESTADOS.POSTERIOR || estadoReunion === ESTADOS.CERRANDO) return;
+    fijarEstado(ESTADOS.ESCUCHANDO, rearranques
+      ? `La escucha se cortó ${rearranques} veces y se repuso; puede faltar algo de transcripción.`
+      : "Volví a escuchar la sala.");
+  }
 });
 
 let enModoMeet = false;
 let micCortadoPorMeet = false;
 let estadoReunion = ESTADOS.ESCUCHANDO;
 let esperaParticipacion = null;
+// Si puede contestar cuando la nombran. Lo decide el tipo de reunión al
+// prepararla —en una clase no, en una sesión creativa sí— y se puede cambiar.
+let participacionPermitida = false;
 let relojReunion = null;
 let campoAbierto = "";          // qué está pidiendo el campo de texto de la tira
 let documentoPendiente = null;  // documento leído, a la espera de su descripción
@@ -465,6 +514,30 @@ let colaDeArchivos = [];        // los que faltan por leer, si alguno pidió des
 // La reunión ya cerrada sobre la que se puede seguir preguntando. Es lo que
 // convierte «finalizar» en un cambio de estado y no en un final.
 let reunionConsultable = null;
+let plazoDeBorrador = null;
+let ultimoBorrador = { ok: false, momento: 0, frases: 0 };
+
+// Persiste la reunión en curso. Se agrupa en dos segundos porque en una reunión
+// animada llegan varias frases seguidas y no hace falta una escritura por cada
+// una; lo que sí hace falta es que nunca pasen más de dos segundos entre lo que
+// se oyó y lo que está guardado.
+function apuntarBorrador() {
+  if (!memoria.abierta) return;
+  clearTimeout(plazoDeBorrador);
+  plazoDeBorrador = setTimeout(async () => {
+    const frases = memoria.turnos.length;
+    const r = await guardarBorrador(memoria.borrador());
+    ultimoBorrador = { ok: r.ok, momento: r.momento || Date.now(), frases, error: r.error };
+    // Si el almacén no acepta escrituras hay que decirlo AHORA, no al final:
+    // con esto roto la reunión sólo existe en memoria y un cierre de pestaña se
+    // la lleva entera.
+    if (!r.ok && !avisadoDelBorrador) {
+      avisadoDelBorrador = true;
+      fijarEstado(estadoReunion, "No puedo guardar la reunión en este navegador; sigo escuchando, pero no cierres la pestaña.", "problema");
+    }
+  }, 2000);
+}
+let avisadoDelBorrador = false;
 
 // ── Señales en pantalla ──────────────────────────────────────────────────────
 
@@ -493,34 +566,149 @@ function refrescarCuenta() {
 
 // ── Entrar y salir ───────────────────────────────────────────────────────────
 
+// ── Preparación ──────────────────────────────────────────────────────────────
+//
+// Entrar en modo reunión ya no arranca a escuchar de golpe. Primero se decide
+// qué reunión es: el tipo cambia qué se prioriza y cómo queda la minuta, y
+// decidirlo después, con la reunión ya empezada, no sirve de nada.
+//
+//   ENTRAR → PREPARANDO → (Iniciar) → ESCUCHANDO
+//
+// Y si algo falla al arrancar la escucha, se vuelve a PREPARANDO con el motivo
+// a la vista y un botón para reintentar. Nunca hace falta salir del modo.
+
+let preparando = false;
+let tipoElegido = TIPO_POR_DEFECTO;
+let antecedenteElegido = null;
+let documentosPrevios = [];
+
 function entrarEnModoMeet() {
   ui.stage.classList.add("meet");
   if (enModoMeet) return;
   enModoMeet = true;
-  if (ui.reunion) ui.reunion.hidden = false;
 
-  // Si se salió del modo con una reunión a medias —un Escape sin querer— se
-  // retoma en vez de empezar de cero. Perder media reunión por una tecla sería
-  // el peor fallo posible de este modo.
-  if (!memoria.abierta || memoria.vacia()) memoria.abrir();
+  // Con una reunión ya en marcha —se salió sin querer y se vuelve— se retoma
+  // donde estaba en vez de preguntar otra vez qué tipo de reunión es.
+  if (memoria.abierta && !memoria.vacia()) return volverALaReunion();
+  if (estadoReunion === ESTADOS.POSTERIOR && reunionConsultable) return volverALaReunion();
+  abrirPreparacion();
+}
+
+async function abrirPreparacion() {
+  preparando = true;
+  if (ui.reunion) ui.reunion.hidden = true;
+  if (!ui.preparar) return empezarLaReunion();   // marcado viejo en caché
+  ui.preparar.hidden = false;
+
+  pintarTipos();
+  ui.prepararTitulo.value = "";
+  ui.prepararObjetivo.value = "";
+  ui.prepararNotas.value = "";
+  antecedenteElegido = null;
+  documentosPrevios = [];
+  refrescarAdjuntosPrevios();
+
+  // ¿Quedó una reunión a medias de otra vez? Se ofrece retomarla antes que
+  // nada: tirar una transcripción capturada sería el peor error posible.
+  ui.prepararRetomar.hidden = true;
+  const pendiente = await borradorPendiente();
+  if (pendiente && (pendiente.turnos ?? []).length) {
+    ui.prepararRetomar.hidden = false;
+    ui.prepararRetomar.innerHTML = "";
+    const texto = document.createElement("span");
+    const cuando = new Date(pendiente.inicio).toLocaleString("es-CL", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+    texto.textContent = `Quedó una reunión sin cerrar («${pendiente.titulo || "sin título"}», ${cuando}) `
+      + `con ${pendiente.turnos.length} intervenciones capturadas. `;
+    const retomar = document.createElement("button");
+    retomar.textContent = "Retomarla";
+    retomar.addEventListener("click", () => {
+      memoria.retomar(pendiente);
+      tipoElegido = memoria.tipo;
+      empezarLaReunion({ retomada: true });
+    });
+    const descartar = document.createElement("button");
+    descartar.textContent = "Descartarla";
+    descartar.addEventListener("click", async () => {
+      await olvidarBorrador(pendiente.id);
+      ui.prepararRetomar.hidden = true;
+    });
+    ui.prepararRetomar.append(texto, retomar, descartar);
+  }
+}
+
+function pintarTipos() {
+  ui.prepararTipos.innerHTML = "";
+  for (const [id, tipo] of Object.entries(TIPOS)) {
+    const boton = document.createElement("button");
+    boton.className = "tipo-reunion";
+    boton.type = "button";
+    boton.role = "radio";
+    boton.setAttribute("aria-checked", String(id === tipoElegido));
+    boton.innerHTML = `<b>${escaparHtml(tipo.nombre)}</b><i>${escaparHtml(tipo.resumen)}</i>`;
+    boton.addEventListener("click", () => {
+      tipoElegido = id;
+      // Cada tipo trae su propia idea de si ella debería intervenir: en una
+      // clase no, en una sesión creativa sí. Se propone y se puede cambiar.
+      ui.prepararParticipa.checked = tipo.participacion;
+      pintarTipos();
+    });
+    ui.prepararTipos.append(boton);
+  }
+  ui.prepararParticipa.checked = tipoDeReunion(tipoElegido).participacion;
+}
+
+function refrescarAdjuntosPrevios() {
+  const piezas = [];
+  if (documentosPrevios.length) piezas.push(`${documentosPrevios.length} documento${documentosPrevios.length === 1 ? "" : "s"}`);
+  if (antecedenteElegido) piezas.push(`da seguimiento a «${antecedenteElegido.titulo}»`);
+  ui.prepararAdjuntos.textContent = piezas.join(" · ");
+}
+
+// Arranca la reunión de verdad. Devuelve si lo consiguió: si no, se queda en la
+// preparación con el motivo escrito, y se puede reintentar sin salir del modo.
+function empezarLaReunion({ retomada = false } = {}) {
+  if (!retomada) {
+    memoria.abrir({
+      titulo: ui.prepararTitulo?.value.trim() || "",
+      objetivo: ui.prepararObjetivo?.value.trim() || "",
+      tipo: tipoElegido,
+      antecedente: antecedenteElegido,
+      cuaderno: ui.prepararNotas?.value.trim() || ""
+    });
+    for (const documento of documentosPrevios) memoria.anotarDocumento(documento);
+  }
+  participacionPermitida = ui.prepararParticipa ? ui.prepararParticipa.checked : false;
+
+  preparando = false;
+  if (ui.preparar) ui.preparar.hidden = true;
+  if (ui.reunion) ui.reunion.hidden = false;
   if (ui.reunionQuien) ui.reunionQuien.value = memoria.hablante;
   if (ui.reunionNotas) ui.reunionNotas.value = memoria.cuaderno;
   ajustarBotonesDeReunion();
   clearInterval(relojReunion);
   relojReunion = setInterval(refrescarCuenta, 20_000);
   refrescarCuenta();
-  fijarEstado(ESTADOS.ESCUCHANDO, "Escuchando la reunión. No voy a intervenir hasta que me lo pidas.");
+  apuntarBorrador();
 
+  const arrancada = arrancarLaEscucha();
+  if (arrancada.ok) {
+    fijarEstado(ESTADOS.ESCUCHANDO, retomada
+      ? `Reunión retomada: ${memoria.turnos.length} intervenciones ya capturadas. Sigo escuchando.`
+      : "Escuchando la reunión. No voy a intervenir hasta que me lo pidas.");
+    setStatus("En reunión");
+  } else {
+    fijarEstado(ESTADOS.ESCUCHANDO, arrancada.motivo, "problema");
+    ofrecerReintento(arrancada.motivo);
+  }
+  return arrancada.ok;
+}
+
+// Todo lo que puede impedir escuchar, en un solo sitio y con un motivo legible.
+function arrancarLaEscucha() {
   if (!escuchaDisponible()) {
-    // Sin reconocimiento de voz el modo sirve para capturar la pantalla y para
-    // las notas y los documentos, pero no puede oír. Mejor decirlo que fingir.
-    fijarEstado(ESTADOS.ESCUCHANDO, "Este navegador no transcribe. Usa Chrome; las notas y los documentos sí funcionan.", "problema");
-    return;
+    return { ok: false, motivo: "Este navegador no transcribe. Usa Chrome; las notas y los documentos sí funcionan." };
   }
-  if (!connected) {
-    fijarEstado(ESTADOS.ESCUCHANDO, "Inicia la conversación antes de entrar en reunión.", "problema");
-    return;
-  }
+  if (!connected) return { ok: false, motivo: "La conversación está cerrada: pulsa «Iniciar conversación» y reintenta." };
 
   // Se deja de enviar audio al modelo sin apagar la pista: quien escucha ahora
   // es el navegador, y con la pista apagada no oiría nada.
@@ -529,8 +717,58 @@ function entrarEnModoMeet() {
     micCortadoPorMeet = true;
     ui.mute.textContent = "Activar micrófono";
   }
-  if (escucha.empezar()) setStatus("En reunión");
-  else fijarEstado(ESTADOS.ESCUCHANDO, "No se pudo iniciar la escucha.", "problema");
+  escucha.ensordecer(false);
+  if (!escucha.empezar()) return { ok: false, motivo: "El navegador no dejó arrancar el reconocimiento de voz." };
+  return { ok: true };
+}
+
+// Un fallo al arrancar no puede obligar a salir del modo y volver a entrar, que
+// es justo lo que había que hacer antes. Se ofrece reintentar donde está.
+function ofrecerReintento(motivo) {
+  eco(`${motivo} `);
+  const reintentar = document.createElement("button");
+  reintentar.className = "reunion-si";
+  reintentar.style.marginLeft = "6px";
+  reintentar.style.minHeight = "24px";
+  reintentar.style.padding = "0 10px";
+  reintentar.style.fontSize = "11.5px";
+  reintentar.textContent = "Reintentar";
+  reintentar.addEventListener("click", () => {
+    const otra = arrancarLaEscucha();
+    if (otra.ok) {
+      fijarEstado(ESTADOS.ESCUCHANDO, "Ya te escucho. Sigue la reunión.");
+      setStatus("En reunión");
+    } else {
+      fijarEstado(ESTADOS.ESCUCHANDO, otra.motivo, "problema");
+      ofrecerReintento(otra.motivo);
+    }
+  });
+  ui.reunionEco.append(reintentar);
+}
+
+// Volver a una reunión que ya estaba en marcha, sin pasar por la preparación.
+function volverALaReunion() {
+  preparando = false;
+  if (ui.preparar) ui.preparar.hidden = true;
+  if (ui.reunion) ui.reunion.hidden = false;
+  if (ui.reunionQuien) ui.reunionQuien.value = memoria.hablante;
+  if (ui.reunionNotas) ui.reunionNotas.value = memoria.cuaderno;
+  ajustarBotonesDeReunion();
+  refrescarCuenta();
+  if (estadoReunion === ESTADOS.POSTERIOR) {
+    fijarEstado(ESTADOS.POSTERIOR, "Reunión cerrada. Pregúntame lo que quieras sobre ella.");
+    return;
+  }
+  clearInterval(relojReunion);
+  relojReunion = setInterval(refrescarCuenta, 20_000);
+  const arrancada = arrancarLaEscucha();
+  if (arrancada.ok) {
+    fijarEstado(ESTADOS.ESCUCHANDO, "Sigo con la reunión donde la dejamos.");
+    setStatus("En reunión");
+  } else {
+    fijarEstado(ESTADOS.ESCUCHANDO, arrancada.motivo, "problema");
+    ofrecerReintento(arrancada.motivo);
+  }
 }
 
 function salirDeModoMeet() {
@@ -573,15 +811,37 @@ function participar() {
     return;
   }
 
+  // Pulsarlo también deja la participación encendida para el resto de la
+  // reunión: quien la usa una vez normalmente la quiere disponible.
+  participacionPermitida = true;
   fijarEstado(ESTADOS.HABILITADA, "Dime qué necesitas. Te escucho a ti, no a la sala.");
   clearTimeout(esperaParticipacion);
   // Si nadie dice nada, vuelve a callarse sola. Quedarse habilitada indefinida-
   // mente haría que respondiera a lo primero que oyera diez minutos después.
   esperaParticipacion = setTimeout(() => {
-    if (estadoReunion === ESTADOS.HABILITADA) {
-      fijarEstado(ESTADOS.ESCUCHANDO, "Nadie me pidió nada, sigo escuchando.");
-    }
+    if (estadoReunion === ESTADOS.HABILITADA) volverAEscuchar("Nadie me pidió nada.");
   }, 25_000);
+}
+
+// Vuelve a escuchar la sala y COMPRUEBA que de verdad se está escuchando. No
+// basta con quitar la sordera: si el reconocimiento murió mientras ella hablaba,
+// dejarlo así significaba perder el resto de la reunión sin avisar.
+function volverAEscuchar(mensaje) {
+  escucha.ensordecer(false);
+  const estado = escucha.diagnostico();
+  if (!estado.activa) {
+    const otra = arrancarLaEscucha();
+    if (!otra.ok) {
+      fijarEstado(ESTADOS.ESCUCHANDO, otra.motivo, "problema");
+      ofrecerReintento(otra.motivo);
+      return;
+    }
+    fijarEstado(ESTADOS.ESCUCHANDO, "Volví a escuchar la sala.");
+    return;
+  }
+  fijarEstado(ESTADOS.ESCUCHANDO, participacionPermitida
+    ? `${mensaje} Dime «Catalina» cuando me necesites.`
+    : `${mensaje} Pulsa «Participar» cuando me necesites.`);
 }
 
 function invocar(peticion) {
@@ -644,7 +904,7 @@ function carpetaDeDrive() {
 // en este navegador (IndexedDB) porque el disco de Vercel es de sólo lectura y
 // montar una base de datos para algo que sólo lee su dueño sería desproporcionado.
 
-async function mostrarHistorial() {
+async function mostrarHistorial({ paraElegir = false } = {}) {
   if (!historialDisponible()) {
     mostrarCierre("Reuniones anteriores", "<p class=\"cierre-aviso\">Este navegador no guarda el historial.</p>");
     return;
@@ -655,75 +915,114 @@ async function mostrarHistorial() {
 
   if (!reuniones.length) {
     cuerpo.innerHTML = "<p>Todavía no hay ninguna reunión cerrada. Las que cierres aparecerán aquí, "
-      + "y podrás usarlas como antecedente de una reunión de seguimiento.</p>";
+      + "con su minuta y su transcripción, y podrás usarlas como antecedente de una reunión de seguimiento.</p>";
     return;
   }
 
   const nota = document.createElement("p");
-  nota.textContent = enModoMeet && memoria.abierta && !memoria.vacia()
-    ? "Elige una para usarla como antecedente de la reunión en curso, o ábrela para preguntar sobre ella."
-    : "Ábrela para preguntarle a Catalina sobre esa reunión, o úsala como antecedente al empezar la siguiente.";
+  nota.textContent = paraElegir
+    ? "Elige la reunión de la que ésta es seguimiento."
+    : "Abre una para leer su minuta y su transcripción, preguntarle a Catalina sobre ella o usarla de antecedente.";
   cuerpo.append(nota);
 
   const lista = document.createElement("div");
   lista.className = "historial";
-  for (const r of reuniones) lista.append(fichaDeReunion(r));
+  for (const r of reuniones) lista.append(fichaDeReunion(r, paraElegir));
   cuerpo.append(lista);
 }
 
-function fichaDeReunion(r) {
+// La ficha es el expediente de la reunión, no un enlace a ella: fecha, título,
+// participantes, y dentro la minuta, la transcripción, las notas y los
+// documentos. Poder preguntar por una reunión sin poder leerla antes obligaba a
+// adivinar qué preguntar.
+function fichaDeReunion(r, paraElegir = false) {
   const ficha = document.createElement("article");
   ficha.className = "historial-ficha";
 
   const fecha = new Date(r.inicio).toLocaleDateString("es-CL", { day: "2-digit", month: "short", year: "numeric" });
-  const cifras = [
-    `${r.acuerdos} acuerdo${r.acuerdos === 1 ? "" : "s"}`,
-    `${r.acciones} ${r.acciones === 1 ? "acción" : "acciones"}`,
-    r.pendientes ? `${r.pendientes} pendiente${r.pendientes === 1 ? "" : "s"}` : ""
-  ].filter(Boolean).join(" · ");
+  const tipo = tipoDeReunion(r.tipo);
 
   const cabecera = document.createElement("div");
   cabecera.className = "historial-cabecera";
-  cabecera.innerHTML = `<time>${escaparHtml(fecha)}</time><strong>${escaparHtml(r.titulo)}</strong>`;
+  cabecera.innerHTML = `<time>${escaparHtml(fecha)}</time><strong>${escaparHtml(r.titulo)}</strong>`
+    + `<span class="historial-tipo">${escaparHtml(tipo.nombre)}</span>`;
 
   const detalle = document.createElement("p");
   detalle.className = "historial-detalle";
-  detalle.textContent = [r.participantes.join(", "), cifras].filter(Boolean).join(" — ");
+  detalle.textContent = [
+    r.participantes.length ? r.participantes.join(", ") : "Sin participantes identificados",
+    [`${r.acuerdos} acuerdo${r.acuerdos === 1 ? "" : "s"}`,
+      `${r.acciones} ${r.acciones === 1 ? "acción" : "acciones"}`,
+      r.pendientes ? `${r.pendientes} pendiente${r.pendientes === 1 ? "" : "s"}` : ""].filter(Boolean).join(" · ")
+  ].join(" — ");
 
   const acciones = document.createElement("div");
   acciones.className = "historial-acciones";
+  const expediente = document.createElement("div");
+  expediente.className = "expediente";
+  expediente.hidden = true;
 
-  const consultar = document.createElement("button");
-  consultar.textContent = "Preguntar sobre ella";
-  consultar.addEventListener("click", async () => {
-    const completa = await leerReunion(r.id);
-    if (!completa) return;
-    reunionConsultable = completa;
-    ui.cierre.dataset.estado = "oculto";
-    avisarAlAgente([
-      `[Aviso del sistema] Se abrió una reunión anterior para consultarla: «${completa.titulo}».`,
-      "Es tu contexto ahora. Contesta lo que te pregunten sobre ella; si necesitas más detalle, usa consultar_reunion.",
-      "Di en una frase que la tienes cargada y ofrécete a responder.",
-      "",
-      "=== LA REUNIÓN ===",
-      memoria.contextoPosterior(completa)
-    ].join("\n"));
-  });
-  acciones.append(consultar);
+  if (paraElegir) {
+    const elegir = document.createElement("button");
+    elegir.className = "reunion-si";
+    elegir.textContent = "Usar como antecedente";
+    elegir.addEventListener("click", async () => {
+      const completa = await leerReunion(r.id);
+      if (!completa) return;
+      antecedenteElegido = comoAntecedente(completa);
+      refrescarAdjuntosPrevios();
+      ui.cierre.dataset.estado = "oculto";
+    });
+    acciones.append(elegir);
+  } else {
+    const abrir = document.createElement("button");
+    abrir.className = "reunion-si";
+    abrir.textContent = "Abrir";
+    abrir.addEventListener("click", async () => {
+      if (!expediente.hidden) { expediente.hidden = true; abrir.textContent = "Abrir"; return; }
+      abrir.textContent = "Cargando…";
+      const completa = await leerReunion(r.id);
+      abrir.textContent = "Cerrar";
+      if (!completa) { expediente.textContent = "No se pudo leer esta reunión."; expediente.hidden = false; return; }
+      pintarExpediente(expediente, completa);
+      expediente.hidden = false;
+    });
+    acciones.append(abrir);
 
-  const antecedente = document.createElement("button");
-  antecedente.textContent = "Usar como antecedente";
-  antecedente.addEventListener("click", async () => {
-    const completa = await leerReunion(r.id);
-    if (!completa) return;
-    memoria.antecedente = comoAntecedente(completa);
-    ui.cierre.dataset.estado = "oculto";
-    eco(`Esta reunión da seguimiento a «${completa.titulo}».`);
-    avisarAlAgente(`[Aviso del sistema] Esta reunión es de seguimiento de «${completa.titulo}». `
-      + `Lo que quedó de aquélla: ${JSON.stringify(comoAntecedente(completa)).slice(0, 3000)}. `
-      + "Tenlo en cuenta si te preguntan, y dilo en una frase corta.");
-  });
-  acciones.append(antecedente);
+    const preguntar = document.createElement("button");
+    preguntar.textContent = "Preguntar sobre ella";
+    preguntar.addEventListener("click", async () => {
+      const completa = await leerReunion(r.id);
+      if (!completa) return;
+      reunionConsultable = completa;
+      // Se abre el expediente además de cargarla: poder leer la minuta mientras
+      // se pregunta por ella es la mitad de la utilidad.
+      pintarExpediente(expediente, completa);
+      expediente.hidden = false;
+      avisarAlAgente([
+        `[Aviso del sistema] Se abrió una reunión anterior para consultarla: «${completa.titulo}».`,
+        "Es tu contexto ahora. Contesta lo que te pregunten sobre ella; si necesitas más detalle, usa consultar_reunion.",
+        "Di en una frase que la tienes cargada y ofrécete a responder.",
+        "",
+        "=== LA REUNIÓN ===",
+        memoria.contextoPosterior(completa)
+      ].join("\n"));
+    });
+    acciones.append(preguntar);
+
+    const antecedente = document.createElement("button");
+    antecedente.textContent = "Usar de antecedente";
+    antecedente.addEventListener("click", async () => {
+      const completa = await leerReunion(r.id);
+      if (!completa) return;
+      const resumen = comoAntecedente(completa);
+      if (preparando) { antecedenteElegido = resumen; refrescarAdjuntosPrevios(); }
+      else memoria.antecedente = resumen;
+      ui.cierre.dataset.estado = "oculto";
+      eco(`Esta reunión da seguimiento a «${completa.titulo}».`);
+    });
+    acciones.append(antecedente);
+  }
 
   const borrar = document.createElement("button");
   borrar.className = "historial-borrar";
@@ -742,8 +1041,123 @@ function fichaDeReunion(r) {
   });
   acciones.append(borrar);
 
-  ficha.append(cabecera, detalle, acciones);
+  ficha.append(cabecera, detalle, acciones, expediente);
   return ficha;
+}
+
+// Todo lo que la reunión dejó, en pestañas. La transcripción va entera: es el
+// registro, y consultarlo es justo para lo que se guardó.
+function pintarExpediente(caja, reunion) {
+  caja.innerHTML = "";
+  const m = reunion.minuta ?? {};
+
+  const paginas = [];
+  const contenido = document.createElement("div");
+  contenido.className = "expediente-contenido";
+
+  const anadir = (nombre, pintar) => paginas.push({ nombre, pintar });
+
+  anadir("Minuta", caja2 => {
+    const trozos = [];
+    if (m.resumen) trozos.push(["Resumen ejecutivo", [m.resumen]]);
+    const listas = {
+      "Decisiones": m.decisiones, "Acuerdos": m.acuerdos, "Desacuerdos": m.desacuerdos,
+      "Conceptos": m.conceptos, "Ideas": m.ideas, "Problemas": m.problemas,
+      "Pendientes": m.pendientes, "Próximos pasos": m.proximos_pasos
+    };
+    for (const [titulo, items] of Object.entries(listas)) if (items?.length) trozos.push([titulo, items]);
+    if (!trozos.length && !m.acciones?.length) {
+      caja2.innerHTML = "<p>Esta reunión no tiene minuta redactada.</p>";
+      return;
+    }
+    for (const [titulo, items] of trozos) {
+      const h = document.createElement("h4");
+      h.textContent = titulo;
+      const ul = document.createElement("ul");
+      for (const i of items) { const li = document.createElement("li"); li.textContent = i; ul.append(li); }
+      caja2.append(h, ul);
+    }
+    if (m.acciones?.length) {
+      const h = document.createElement("h4");
+      h.textContent = "Acciones";
+      const tabla = document.createElement("table");
+      tabla.className = "expediente-tabla";
+      tabla.innerHTML = "<thead><tr><th>Acción</th><th>Responsable</th><th>Fecha</th><th>Estado</th></tr></thead>";
+      const cuerpo = document.createElement("tbody");
+      for (const a of m.acciones) {
+        const fila = document.createElement("tr");
+        for (const celda of [a.accion, a.responsable, a.fecha, a.estado]) {
+          const td = document.createElement("td");
+          td.textContent = celda;
+          fila.append(td);
+        }
+        cuerpo.append(fila);
+      }
+      tabla.append(cuerpo);
+      caja2.append(h, tabla);
+    }
+  });
+
+  anadir("Transcripción", caja2 => {
+    const texto = String(reunion.transcripcion || "").trim();
+    const pre = document.createElement("pre");
+    pre.className = "expediente-texto";
+    pre.textContent = texto || "No quedó transcripción de esta reunión.";
+    caja2.append(pre);
+  });
+
+  if (String(reunion.cuaderno || "").trim()) {
+    anadir("Notas", caja2 => {
+      const pre = document.createElement("pre");
+      pre.className = "expediente-texto";
+      pre.textContent = reunion.cuaderno.trim();
+      caja2.append(pre);
+    });
+  }
+
+  if ((reunion.documentos ?? []).length) {
+    anadir(`Documentos (${reunion.documentos.length})`, caja2 => {
+      for (const d of reunion.documentos) {
+        const h = document.createElement("h4");
+        h.textContent = d.nombre + (d.descripcion ? ` — ${d.descripcion}` : "");
+        const pre = document.createElement("pre");
+        pre.className = "expediente-texto";
+        pre.textContent = String(d.texto || "").trim() || "No se pudo extraer texto de este archivo.";
+        caja2.append(h, pre);
+      }
+    });
+  }
+
+  if ((reunion.drive ?? []).length) {
+    anadir("En Drive", caja2 => {
+      for (const a of reunion.drive) {
+        const enlace = document.createElement("a");
+        enlace.className = "cierre-archivo";
+        enlace.href = a.enlace;
+        enlace.target = "_blank";
+        enlace.rel = "noopener noreferrer";
+        enlace.textContent = a.nombre;
+        caja2.append(enlace);
+      }
+    });
+  }
+
+  const pestanas = document.createElement("div");
+  pestanas.className = "expediente-pestanas";
+  paginas.forEach((pagina, i) => {
+    const boton = document.createElement("button");
+    boton.textContent = pagina.nombre;
+    boton.setAttribute("aria-pressed", String(i === 0));
+    boton.addEventListener("click", () => {
+      [...pestanas.children].forEach(b => b.setAttribute("aria-pressed", String(b === boton)));
+      contenido.innerHTML = "";
+      pagina.pintar(contenido);
+    });
+    pestanas.append(boton);
+  });
+
+  caja.append(pestanas, contenido);
+  paginas[0]?.pintar(contenido);
 }
 
 // ── Notas y documentos ───────────────────────────────────────────────────────
@@ -786,6 +1200,7 @@ function aceptarCampo() {
     if (documento) {
       memoria.anotarDocumento({ ...documento, descripcion: valor });
       eco(`Añadido «${documento.nombre}»${valor ? ` — ${valor}` : ""}.`);
+      apuntarBorrador();
       refrescarCuenta();
     }
     seguirConLosArchivos();
@@ -829,6 +1244,7 @@ function alternarCuaderno(abrir) {
 function guardarCuaderno() {
   if (!ui.reunionNotas) return;
   memoria.escribirCuaderno(ui.reunionNotas.value);
+  apuntarBorrador();
   refrescarCuenta();
 }
 
@@ -850,13 +1266,28 @@ async function seguirConLosArchivos() {
     // reunión por ella. Sin texto se pide, porque es lo único que va a quedar
     // de ese archivo en la minuta.
     if (leido.texto) {
+      // Antes de empezar se guardan aparte; entran a la reunión al iniciarla.
+      if (preparando) {
+        documentosPrevios.push({ ...leido, descripcion: "" });
+        refrescarAdjuntosPrevios();
+        continue;
+      }
       memoria.anotarDocumento({ ...leido, descripcion: "" });
       eco(`Añadido «${leido.nombre}» (${leido.texto.length} caracteres de texto).`);
+      apuntarBorrador();
       refrescarCuenta();
       continue;
     }
 
     documentoPendiente = leido;
+    if (preparando) {
+      // En la preparación no hay tira donde pedir la descripción; se guarda con
+      // el aviso como descripción y se puede matizar durante la reunión.
+      documentosPrevios.push({ ...leido, descripcion: "" });
+      documentoPendiente = null;
+      refrescarAdjuntosPrevios();
+      continue;
+    }
     abrirCampo("documento", `¿De qué trata «${leido.nombre}»?`, "", leido.aviso || "Descríbelo en una frase");
     eco(colaDeArchivos.length
       ? `${leido.aviso || "No se pudo leer el archivo."} Quedan ${colaDeArchivos.length} por añadir.`
@@ -942,8 +1373,42 @@ async function cerrarLaReunion() {
     return;
   }
 
+  // La integridad se comprueba con lo que sabe el navegador además de lo que
+  // dice el servidor: si la escucha nunca arrancó o se quedó sorda, el servidor
+  // no puede saberlo —a él le llega una reunión sin turnos y no distingue «no
+  // habló nadie» de «no se capturó nada»—.
+  const captura = escucha.diagnostico();
+  const integridad = {
+    ...datos.integridad,
+    comprobaciones: [
+      {
+        nombre: "Audio procesado",
+        critico: true,
+        ok: captura.arrancoAlgunaVez && captura.frases > 0,
+        detalle: !captura.arrancoAlgunaVez
+          ? "El reconocimiento de voz nunca llegó a arrancar"
+          : `${captura.frases} frases oídas${captura.rearranques ? `, ${captura.rearranques} cortes` : ""}`
+      },
+      {
+        nombre: "Transcripción persistida",
+        // Sin nada capturado no hay nada que persistir: decir que falló sería
+        // acusar al almacén de un fallo que fue de la escucha.
+        critico: memoria.turnos.length > 0,
+        ok: ultimoBorrador.ok || memoria.turnos.length === 0,
+        detalle: ultimoBorrador.ok
+          ? `Guardada durante la reunión (${ultimoBorrador.frases} frases)`
+          : (memoria.turnos.length === 0 ? "No había nada que guardar" : "No se pudo guardar durante la reunión")
+      },
+      ...(datos.integridad?.comprobaciones ?? [])
+    ]
+  };
+  integridad.fallosCriticos = integridad.comprobaciones.filter(c => c.critico && !c.ok)
+    .map(c => `${c.nombre}: ${c.detalle}`);
+  integridad.ok = integridad.fallosCriticos.length === 0;
+
   // La reunión pasa a ser un objeto consultable.
   const registro = memoria.registroCompleto(datos);
+  registro.integridad = integridad;
   reunionConsultable = registro;
 
   // Primero se devuelve la voz y se pinta el resultado; el historial se guarda
@@ -952,10 +1417,15 @@ async function cerrarLaReunion() {
   // la promesa no resolvía nunca y el cierre se quedaba colgado en «Cerrando la
   // reunión» con el micrófono todavía cortado. Guardar el historial no puede
   // ser lo que impida volver a hablar.
-  pintarCierre(datos);
-  entrarEnPosterior(registro);
+  pintarCierre(datos, integridad);
+  entrarEnPosterior(registro, integridad);
 
-  guardarReunion(registro).then(guardado => anotarElHistorial(guardado));
+  guardarReunion(registro).then(guardado => {
+    anotarElHistorial(guardado);
+    // El borrador sólo se descarta cuando la reunión está a salvo en el
+    // historial. Borrarlo antes sería tirar la única copia que quedaba.
+    if (guardado.ok && integridad.ok) olvidarBorrador(memoria.id);
+  });
 }
 
 // El aviso del historial se rellena cuando el guardado termina, sea como sea.
@@ -976,8 +1446,11 @@ function anotarElHistorial(guardado) {
 // escucha de la sala pero NUNCA se devolvía el micrófono al modelo, que seguía
 // cortado desde que se entró en modo reunión. El resultado era una pantalla que
 // decía «Escuchando» sin que escuchara nadie, ni el navegador ni ella.
-function entrarEnPosterior(registro) {
-  fijarEstado(ESTADOS.POSTERIOR, "Reunión cerrada. Pregúntame lo que quieras sobre ella.");
+function entrarEnPosterior(registro, integridad = { ok: true, fallosCriticos: [] }) {
+  fijarEstado(ESTADOS.POSTERIOR, integridad.ok
+    ? "Reunión cerrada. Pregúntame lo que quieras sobre ella."
+    : "Reunión cerrada con problemas. Mira la pantalla antes de darla por buena.",
+    integridad.ok ? "" : "problema");
   setStatus("Reunión cerrada");
   ajustarBotonesDeReunion();
 
@@ -991,7 +1464,10 @@ function entrarEnPosterior(registro) {
   // Y se le entrega la reunión entera, para que conteste sobre ella sin tener
   // que ir a buscarla. Lo que no cabe aquí lo puede pedir con consultar_reunion.
   avisarAlAgente([
-    "[Aviso del sistema] La reunión terminó. La transcripción y la minuta ya están listas y en pantalla.",
+    integridad.ok
+      ? "[Aviso del sistema] La reunión terminó bien. La transcripción y la minuta ya están listas y en pantalla."
+      : "[Aviso del sistema] La reunión terminó CON PROBLEMAS y NO debes decir que salió bien. "
+        + `Lo que falló: ${integridad.fallosCriticos.join("; ")}. Dilo con esas palabras y di que se puede reintentar el procesamiento desde la pantalla.`,
     registro.drive?.length ? "Quedaron guardadas en Google Drive." : "No se guardaron en Drive.",
     "",
     "A partir de ahora estás en conversación normal y esta reunión es tu contexto. Puedes responder",
@@ -1033,8 +1509,8 @@ function enlaceDeDescarga(archivo) {
   return enlace;
 }
 
-function pintarCierre(datos) {
-  mostrarCierre("Reunión cerrada", "");
+function pintarCierre(datos, integridad = { ok: true, comprobaciones: [], fallosCriticos: [] }) {
+  mostrarCierre(integridad.ok ? "Reunión cerrada" : "Reunión cerrada con problemas", "");
   const cuerpo = ui.cierreCuerpo;
 
   const bloque = (titulo, ...hijos) => {
@@ -1057,13 +1533,46 @@ function pintarCierre(datos) {
     return p;
   };
 
-  // 1. Los documentos.
+  // 1. La verificación. Va primero a propósito: si falta la transcripción, eso
+  // es lo que hay que leer antes que ninguna otra cosa, no un enlace de descarga
+  // a un documento incompleto.
+  if (integridad.comprobaciones?.length) {
+    const lista = document.createElement("ul");
+    lista.className = "verificacion";
+    for (const c of integridad.comprobaciones) {
+      const li = document.createElement("li");
+      li.dataset.estado = c.ok ? "bien" : (c.critico ? "mal" : "aviso");
+      li.innerHTML = `<span class="verificacion-marca">${c.ok ? "✓" : (c.critico ? "✕" : "!")}</span>`
+        + `<span>${escaparHtml(c.nombre)}</span><em>${escaparHtml(c.detalle || "")}</em>`;
+      lista.append(li);
+    }
+    const seccion = bloque("Verificación", lista);
+
+    if (!integridad.ok) {
+      seccion.prepend(parrafo("Falta algo esencial, así que esta reunión NO está completa. "
+        + "Lo capturado sigue guardado: puedes reintentar el procesamiento sin perderlo.", "cierre-aviso"));
+      const reintentar = document.createElement("button");
+      reintentar.className = "cierre-enviar";
+      reintentar.textContent = "Reintentar el procesamiento";
+      reintentar.addEventListener("click", async () => {
+        reintentar.disabled = true;
+        reintentar.textContent = "Reintentando…";
+        // La reunión se reabre para volver a cerrarla: los turnos, las notas y
+        // los documentos siguen en memoria y en el borrador.
+        memoria.abierta = true;
+        await cerrarLaReunion();
+      });
+      seccion.append(reintentar);
+    }
+  }
+
+  // 2. Los documentos.
   const archivos = document.createElement("div");
   archivos.className = "cierre-archivos";
   archivos.append(enlaceDeDescarga(datos.archivos.transcripcion), enlaceDeDescarga(datos.archivos.minuta));
   bloque("Documentos", archivos);
 
-  // 2. Dónde quedaron guardados. Se dice siempre, también cuando no se guardó:
+  // 3. Dónde quedaron guardados. Se dice siempre, también cuando no se guardó:
   // dar por hecho que está en Drive cuando no lo está es el fallo caro.
   if (datos.drive?.ok) {
     const guardado = bloque("Guardado en Drive", parrafo("Los dos archivos quedaron en la carpeta configurada.", "cierre-ok"));
@@ -1084,16 +1593,16 @@ function pintarCierre(datos) {
     bloque("Guardado en Drive", parrafo(datos.drive?.error || "No se pudieron guardar en Drive.", "cierre-aviso"));
   }
 
-  // 3. El historial. Se dice que quedó guardada porque es lo que permite volver
+  // 4. El historial. Se dice que quedó guardada porque es lo que permite volver
   // a preguntar por ella mañana, no sólo hoy.
   const avisoHistorial = parrafo("Guardando en el historial…");
   avisoHistorial.id = "cierreHistorial";
   bloque("Historial", avisoHistorial);
 
-  // 4. Lo que no salió como debía.
+  // 5. Lo que no salió como debía.
   for (const aviso of datos.avisos ?? []) bloque("", parrafo(aviso, "cierre-aviso"));
 
-  // 5. El correo. Se propone entero y no se manda: guardar en la carpeta de
+  // 6. El correo. Se propone entero y no se manda: guardar en la carpeta de
   // siempre es reversible, mandarle la reunión a un tercero no lo es.
   const correo = document.createElement("form");
   correo.className = "cierre-correo";
@@ -1180,6 +1689,7 @@ function anotarEnLaReunion({ texto } = {}) {
   // la única prueba de que la anotó.
   if (ui.reunionNotas && !ui.reunionCuaderno.hidden) ui.reunionNotas.value = memoria.cuaderno;
   eco(`Anotado: «${nota}»`);
+  apuntarBorrador();
   refrescarCuenta();
   return { ok: true, anotado: nota, total: memoria.lineasDeCuaderno() };
 }
@@ -1190,6 +1700,7 @@ function registrarHablante({ nombre } = {}) {
   if (!puesto) return { ok: false, error: "No entendí el nombre." };
   if (ui.reunionQuien) ui.reunionQuien.value = puesto;
   eco(`Ahora atribuyo lo que se diga a ${puesto}.`);
+  apuntarBorrador();
   return { ok: true, hablante: puesto, participantes: memoria.participantes() };
 }
 
@@ -2633,10 +3144,7 @@ function seguirFinDeTurno(lectura, now) {
     // el fin de la generación—, así que vuelve a escuchar la reunión y se
     // vuelve a callar. El margen extra deja pasar la cola de su voz en la sala.
     if (enModoMeet && estadoReunion !== ESTADOS.CERRANDO && estadoReunion !== ESTADOS.POSTERIOR) {
-      setTimeout(() => {
-        escucha.ensordecer(false);
-        fijarEstado(ESTADOS.ESCUCHANDO, "Sigo escuchando. Pulsa «Participar» cuando me necesites.");
-      }, 700);
+      setTimeout(() => volverAEscuchar("Sigo escuchando."), 700);
     }
   }
 }
