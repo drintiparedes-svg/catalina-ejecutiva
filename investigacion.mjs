@@ -17,6 +17,7 @@
 //     «entrégame tus credenciales». Se bloquean, y también las redirecciones
 //     hacia ellas.
 
+import { modeloEnUso } from "./redaccion.mjs";
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 
@@ -27,8 +28,14 @@ const RECORTE_PAGINA = 6_000;       // lo que se le entrega al modelo
 const RECORTE_RESUMEN = 1_500;
 
 // Modelo con el que se hace la búsqueda. No es el de la conversación: aquél
-// habla, éste consulta. Los nombres de Gemini cambian cada pocos meses.
-const MODELO_POR_DEFECTO = "gemini-3.1-flash";
+// habla, éste consulta.
+//
+// Se prefiere el que la redacción de minutas ya comprobó que contesta. Los
+// nombres de Gemini cambian cada pocos meses y el que estaba fijado aquí
+// devolvía 404 en cuentas donde no existe: la búsqueda fallaba entera y el
+// motivo no se veía por ningún lado.
+const MODELO_POR_DEFECTO = "gemini-2.5-flash";
+const modeloPreferido = () => process.env.GEMINI_MODELO?.trim() || modeloEnUso() || MODELO_POR_DEFECTO;
 
 export const hayWeb = () => Boolean(process.env.GEMINI_API_KEY?.trim());
 
@@ -38,7 +45,7 @@ export async function buscarEnLaWeb(consulta, opciones = {}) {
   const clave = process.env.GEMINI_API_KEY?.trim();
   if (!clave) return { ok: false, error: "Falta GEMINI_API_KEY: la búsqueda en la web usa Gemini." };
 
-  const modelo = (opciones.modelo || MODELO_POR_DEFECTO).replace(/^models\//, "");
+  const modelo = (opciones.modelo || modeloPreferido()).replace(/^models\//, "");
   const cuerpo = {
     contents: [{ role: "user", parts: [{ text: consulta }] }],
     // Temperatura baja: se le pide que recoja lo que encuentre, no que redacte.

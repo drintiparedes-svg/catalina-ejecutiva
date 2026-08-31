@@ -509,6 +509,16 @@ si el aviso de que terminó no llega, a los 45 segundos se quita sola— y un
 **latido** cada diez segundos comprueba que el reconocimiento sigue en pie y lo
 levanta si se cayó, avisando cuando se corta demasiado.
 
+El vigía va más allá: cada veinte segundos comprueba que se esté capturando algo,
+y si la reunión lleva tres minutos sin una sola frase lo dice **en pantalla y en
+ese momento**, con el motivo del navegador —permiso denegado, micrófono tomado
+por Meet, sin conexión con los servidores de voz de Google—. Enterarse al final
+de que no se transcribió nada es enterarse cuando ya no tiene arreglo.
+
+En `/reunion.html` hay una **prueba del micrófono** aislada: arranca sólo el
+reconocimiento y dice exactamente qué pasa. Es lo que distingue «el navegador no
+puede», «no diste permiso» y «Chrome no llega a los servidores de voz».
+
 ### Verificación antes de dar la reunión por buena
 
 Al cerrar se comprueba, y se enseña: audio procesado, transcripción capturada,
@@ -539,6 +549,12 @@ pulsaciones: guardar en la carpeta de siempre es reversible, mandarle la reunió
 a un tercero no lo es. Sin `GEMINI_API_KEY` la reunión se cierra igual, pero la
 transcripción va sin corregir y la minuta sale con el material ordenado y sin
 resumen; se dice en pantalla en vez de disimularlo.
+
+Los nombres de los modelos de Gemini cambian cada pocos meses y no todos existen
+en todas las cuentas, así que se prueban varios en orden y se recuerda el que
+contesta. Con un nombre fijo, una cuenta sin ese modelo recibía un 404 y la
+minuta salía sin redactar sin que el motivo apareciera por ningún lado.
+`/reunion.html` dice qué modelo está usando, y `GEMINI_MODELO` fuerza uno.
 
 ### Cerrar no es terminar
 

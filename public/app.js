@@ -554,6 +554,26 @@ function fijarEstado(estado, textoEco = "", fase = "") {
   if (textoEco) eco(textoEco);
 }
 
+// Cada veinte segundos, además de la cuenta: ¿se está capturando algo?
+//
+// Descubrir al FINAL que no se transcribió nada es descubrirlo cuando ya no
+// tiene arreglo. Una reunión que lleva tres minutos sin una sola frase está
+// rota, y hay que decirlo mientras todavía se puede hacer algo.
+const SILENCIO_SOSPECHOSO = 3 * 60_000;
+
+function vigilarLaReunion() {
+  refrescarCuenta();
+  if (estadoReunion === ESTADOS.CERRANDO || estadoReunion === ESTADOS.POSTERIOR) return;
+  if (!memoria.abierta || memoria.minutosTranscurridos() < 3) return;
+
+  const captura = escucha.diagnostico();
+  if (captura.frases > 0) return;
+  fijarEstado(estadoReunion, captura.ultimoFallo
+    ? `No he capturado nada en ${memoria.minutosTranscurridos()} minutos: ${captura.ultimoFallo}`
+    : `Llevo ${memoria.minutosTranscurridos()} minutos sin capturar ni una frase. Comprueba el micrófono en /reunion.html; las notas y los documentos sí se están guardando.`,
+    "problema");
+}
+
 function refrescarCuenta() {
   if (!ui.reunionCuenta) return;
   const piezas = [`${memoria.minutosTranscurridos()} min`];
@@ -686,7 +706,7 @@ function empezarLaReunion({ retomada = false } = {}) {
   if (ui.reunionNotas) ui.reunionNotas.value = memoria.cuaderno;
   ajustarBotonesDeReunion();
   clearInterval(relojReunion);
-  relojReunion = setInterval(refrescarCuenta, 20_000);
+  relojReunion = setInterval(vigilarLaReunion, 20_000);
   refrescarCuenta();
   apuntarBorrador();
 
@@ -718,7 +738,9 @@ function arrancarLaEscucha() {
     ui.mute.textContent = "Activar micrófono";
   }
   escucha.ensordecer(false);
-  if (!escucha.empezar()) return { ok: false, motivo: "El navegador no dejó arrancar el reconocimiento de voz." };
+  if (!escucha.empezar()) {
+    return { ok: false, motivo: escucha.ultimoFallo || "El navegador no dejó arrancar el reconocimiento de voz." };
+  }
   return { ok: true };
 }
 
@@ -1326,7 +1348,7 @@ function empezarOtraReunion() {
     ui.mute.textContent = "Activar micrófono";
   }
   clearInterval(relojReunion);
-  relojReunion = setInterval(refrescarCuenta, 20_000);
+  relojReunion = setInterval(vigilarLaReunion, 20_000);
   if (escuchaDisponible() && connected && escucha.empezar()) {
     fijarEstado(ESTADOS.ESCUCHANDO, anterior
       ? `Reunión nueva. La anterior («${anterior.titulo}») quedó en el historial.`
@@ -1386,8 +1408,10 @@ async function cerrarLaReunion() {
         critico: true,
         ok: captura.arrancoAlgunaVez && captura.frases > 0,
         detalle: !captura.arrancoAlgunaVez
-          ? "El reconocimiento de voz nunca llegó a arrancar"
-          : `${captura.frases} frases oídas${captura.rearranques ? `, ${captura.rearranques} cortes` : ""}`
+          ? (captura.ultimoFallo || "El reconocimiento de voz nunca llegó a arrancar")
+          : (captura.frases
+            ? `${captura.frases} frases oídas${captura.rearranques ? `, ${captura.rearranques} cortes` : ""}`
+            : `Arrancó pero no oyó nada${captura.ultimoFallo ? `: ${captura.ultimoFallo}` : ""}`)
       },
       {
         nombre: "Transcripción persistida",
@@ -3212,6 +3236,10 @@ window.catalina = {
   voice,
   sesiones,
   manejadores,
+  // La reunión, para poder mirarla desde la consola cuando algo no cuadra:
+  // `catalina.memoria.turnos.length`, `catalina.escucha.diagnostico()`.
+  memoria,
+  escucha,
   get session() { return sesion; },
   get disponible() { return disponible; },
   get proveedor() { return proveedor; },

@@ -28,7 +28,22 @@
 
 import { tipoDeReunion } from "./public/tipos-de-reunion.js";
 
-const MODELO = "gemini-3.1-flash";
+// Modelos a probar, en orden. Los nombres de Gemini cambian cada pocos meses y
+// no todos existen en todas las cuentas: el que estaba fijado devolvía 404 y la
+// minuta salía sin redactar sin que nadie supiera por qué. Se prueba el primero
+// que conteste y se recuerda, así que el coste de la cascada es una vez.
+const MODELOS = [
+  process.env.GEMINI_MODELO?.trim(),
+  "gemini-2.5-flash",
+  "gemini-2.0-flash",
+  "gemini-flash-latest",
+  "gemini-1.5-flash",
+  "gemini-3.1-flash"
+].filter(Boolean);
+
+let modeloQueFunciona = "";
+export const modeloEnUso = () => modeloQueFunciona;
+
 const TIEMPO = 60_000;
 const TOPE_MATERIAL = 120_000;   // caracteres que se le entregan al modelo
 
@@ -53,36 +68,83 @@ async function pedir(prompt, { esquema = null, temperatura = 0.2 } = {}) {
     generationConfig.responseMimeType = "application/json";
     generationConfig.responseSchema = esquema;
   }
+  const cuerpo = JSON.stringify({ contents: [{ role: "user", parts: [{ text: prompt }] }], generationConfig });
 
+  // El que ya funcionó va primero; los demás quedan de respaldo por si deja de
+  // existir o la cuenta pierde el acceso.
+  const candidatos = modeloQueFunciona
+    ? [modeloQueFunciona, ...MODELOS.filter(m => m !== modeloQueFunciona)]
+    : MODELOS;
+
+  let ultimo = { ok: false, code: "SIN_MODELO", error: "No hay ningún modelo disponible." };
+  for (const modelo of candidatos) {
+    const intento = await pedirA(modelo, clave, cuerpo);
+    if (intento.ok) {
+      if (modeloQueFunciona !== modelo) {
+        console.info(`Redacción: usando el modelo ${modelo}.`);
+        modeloQueFunciona = modelo;
+      }
+      return intento;
+    }
+    ultimo = intento;
+    // Sólo se pasa al siguiente si el problema es el modelo. Un fallo de red o
+    // una clave rechazada no se arregla probando otro nombre, y probarlos todos
+    // multiplicaría la espera antes de dar la mala noticia.
+    if (!intento.otroModelo) break;
+  }
+  return ultimo;
+}
+
+async function pedirA(modelo, clave, cuerpo) {
   let datos;
   try {
     const upstream = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${MODELO}:generateContent`,
+      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelo)}:generateContent`,
       {
         method: "POST",
         headers: { "x-goog-api-key": clave, "Content-Type": "application/json" },
-        body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: prompt }] }], generationConfig }),
+        body: cuerpo,
         signal: AbortSignal.timeout(TIEMPO)
       }
     );
     const texto = await upstream.text();
     if (!upstream.ok) {
-      console.error("Gemini redacción:", upstream.status, texto.slice(0, 300));
-      return { ok: false, code: "RECHAZADO", error: `El modelo respondió ${upstream.status}.` };
+      console.error("Gemini redacción:", modelo, upstream.status, texto.slice(0, 200));
+      return {
+        ok: false,
+        code: "RECHAZADO",
+        // 404: ese modelo no existe para esta cuenta. 400: no admite lo que se le
+        // pide (por ejemplo un esquema de respuesta). Los dos se arreglan con otro.
+        otroModelo: [400, 404].includes(upstream.status),
+        error: upstream.status === 404
+          ? `El modelo ${modelo} no existe para esta clave.`
+          : `El modelo respondió ${upstream.status}.`
+      };
     }
     datos = JSON.parse(texto);
   } catch (error) {
     return {
       ok: false,
       code: error.name === "TimeoutError" ? "TIEMPO" : "SIN_RED",
+      otroModelo: false,
       error: error.name === "TimeoutError" ? "La redacción tardó demasiado." : "No se pudo consultar al modelo."
     };
   }
 
   const partes = datos?.candidates?.[0]?.content?.parts;
   const salida = Array.isArray(partes) ? partes.map(p => p?.text).filter(Boolean).join("") : "";
-  if (!salida.trim()) return { ok: false, code: "VACIO", error: "El modelo no devolvió nada." };
-  return { ok: true, texto: salida };
+  if (!salida.trim()) return { ok: false, code: "VACIO", otroModelo: false, error: "El modelo no devolvió nada." };
+  return { ok: true, texto: salida, modelo };
+}
+
+// Comprueba qué modelo contesta, sin gastar una redacción entera. Es lo que
+// distingue «falta la clave» de «la clave está pero el modelo ya no existe».
+export async function probarRedaccion() {
+  if (!hayRedaccion()) return { ok: false, code: "SIN_CLAVE", error: "Falta GEMINI_API_KEY." };
+  const salida = await pedir("Responde únicamente con la palabra: listo", { temperatura: 0 });
+  return salida.ok
+    ? { ok: true, modelo: salida.modelo, probados: MODELOS.length }
+    : { ok: false, code: salida.code, error: salida.error, probados: MODELOS };
 }
 
 // ── Material de la reunión ───────────────────────────────────────────────────

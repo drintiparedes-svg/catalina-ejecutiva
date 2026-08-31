@@ -51,6 +51,9 @@ export class EscuchaDeReunion {
     this.arrancoAlgunaVez = false;
     this.ultimoResultado = 0;
     this.rearranques = 0;
+    // El motivo exacto por el que no arrancó, con las palabras del navegador.
+    // «No se pudo iniciar la escucha» no le sirve a nadie para arreglarlo.
+    this.ultimoFallo = "";
   }
 
   empezar() {
@@ -100,17 +103,31 @@ export class EscuchaDeReunion {
       if (["no-speech", "aborted"].includes(evento.error)) return;
       console.warn("Escucha de reunión:", evento.error);
       const motivos = {
-        "not-allowed": "El navegador no dio permiso para escuchar",
+        "not-allowed": "El navegador no dio permiso para el micrófono. Dáselo en el candado de la barra de direcciones",
         "service-not-allowed": "El navegador bloqueó el reconocimiento de voz",
-        "audio-capture": "No se pudo acceder al micrófono",
-        network: "El reconocimiento de voz se quedó sin red"
+        "audio-capture": "No se pudo acceder al micrófono: puede tenerlo tomado Meet o Zoom",
+        network: "El reconocimiento no llegó a los servidores de Google: sin esa conexión Chrome no transcribe"
       };
-      this.alFallar?.(motivos[evento.error] || `Fallo de escucha: ${evento.error}`);
+      this.ultimoFallo = motivos[evento.error] || `Fallo de escucha: ${evento.error}`;
+      this.alFallar?.(this.ultimoFallo);
     };
 
     this.reconocimiento = r;
     this.activa = true;
-    try { r.start(); } catch { this.activa = false; return false; }
+    try {
+      r.start();
+    } catch (error) {
+      // `InvalidStateError` significa que ya estaba arrancado: no es un fallo,
+      // es una carrera. Se da por bueno en vez de dejar la escucha por muerta.
+      if (error?.name === "InvalidStateError") {
+        this.arrancoAlgunaVez = true;
+        this.#latir();
+        return true;
+      }
+      this.activa = false;
+      this.ultimoFallo = `${error?.name || "Error"}: ${error?.message || "el navegador no dejó arrancar el reconocimiento"}`;
+      return false;
+    }
     this.arrancoAlgunaVez = true;
     this.#latir();
     return true;
@@ -144,6 +161,7 @@ export class EscuchaDeReunion {
       sorda: this.sorda,
       frases: this.transcripcion.length,
       rearranques: this.rearranques,
+      ultimoFallo: this.ultimoFallo,
       segundosSinOir: this.ultimoResultado ? Math.round((Date.now() - this.ultimoResultado) / 1000) : null
     };
   }

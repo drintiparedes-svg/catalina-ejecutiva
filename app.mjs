@@ -17,13 +17,13 @@ import {
   terminarLlamadaElevenLabs, diagnosticoElevenLabs
 } from "./llamadas.mjs";
 import { cerrarReunion } from "./reunion.mjs";
-import { hayRedaccion } from "./redaccion.mjs";
+import { hayRedaccion, probarRedaccion } from "./redaccion.mjs";
 import { estadoDrive, urlDeConsentimiento, canjearCodigo } from "./drive.mjs";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // Se sube a mano con cada arreglo que el usuario tiene que descargar.
-export const VERSION = "2026-08-31.3";
+export const VERSION = "2026-08-31.4";
 
 const root = fileURLToPath(new URL("./public", import.meta.url));
 // El .env se lee de forma síncrona a propósito. Con `await` aquí arriba, en el
@@ -304,10 +304,15 @@ export async function atender(req, res) {
     }
 
     if (req.method === "GET" && req.url === "/reunion/diagnostico") {
+      // La redacción se COMPRUEBA contra el modelo, no se da por buena porque
+      // haya clave: el fallo real fue una clave válida con un modelo que ya no
+      // existía, y eso sólo se ve preguntándole.
+      const [modelo, drive] = await Promise.all([probarRedaccion(), estadoDrive()]);
       return json(res, 200, {
         redaccion: hayRedaccion(),
+        modelo,
         correo: Boolean(process.env.RESEND_API_KEY?.trim()),
-        drive: await estadoDrive()
+        drive
       });
     }
 
