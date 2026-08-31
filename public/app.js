@@ -733,11 +733,21 @@ function arrancarLaEscucha() {
 
   // Se deja de enviar audio al modelo sin apagar la pista: quien escucha ahora
   // es el navegador, y con la pista apagada no oiría nada.
-  if (sesion && !sesion.muted) {
-    sesion.pausarEnvio(true);
-    micCortadoPorMeet = true;
-    ui.mute.textContent = "Activar micrófono";
+  //
+  // Va dentro de un try y DESPUÉS de nada crítico a propósito: si un proveedor
+  // no tuviera este método, la excepción se llevaba por delante el arranque de
+  // la escucha y la reunión entera se quedaba muda. Callar al modelo es
+  // deseable; que impida escuchar la sala, jamás.
+  try {
+    if (sesion && !sesion.muted && typeof sesion.pausarEnvio === "function") {
+      sesion.pausarEnvio(true);
+      micCortadoPorMeet = true;
+      ui.mute.textContent = "Activar micrófono";
+    }
+  } catch (error) {
+    console.warn("No se pudo callar el micrófono del modelo:", error);
   }
+
   escucha.ensordecer(false);
   if (!escucha.empezar()) {
     return { ok: false, motivo: escucha.ultimoFallo || "El navegador no dejó arrancar el reconocimiento de voz." };
@@ -806,9 +816,13 @@ function salirDeModoMeet() {
   cerrarCampo();
   if (ui.reunion) ui.reunion.hidden = true;
   // Sólo se devuelve el micrófono si fue este modo quien lo quitó.
-  if (micCortadoPorMeet && sesion?.muted) {
-    sesion.pausarEnvio(false);
-    ui.mute.textContent = "Silenciar micrófono";
+  try {
+    if (micCortadoPorMeet && sesion?.muted && typeof sesion.pausarEnvio === "function") {
+      sesion.pausarEnvio(false);
+      ui.mute.textContent = "Silenciar micrófono";
+    }
+  } catch (error) {
+    console.warn("No se pudo devolver el micrófono:", error);
   }
   micCortadoPorMeet = false;
   // La reunión cerrada sigue cargada aunque se salga del modo: se puede seguir
@@ -1369,10 +1383,14 @@ function empezarOtraReunion() {
   ui.cierre.dataset.estado = "oculto";
   refrescarCuenta();
 
-  if (sesion && !sesion.muted) {
-    sesion.pausarEnvio(true);
-    micCortadoPorMeet = true;
-    ui.mute.textContent = "Activar micrófono";
+  try {
+    if (sesion && !sesion.muted && typeof sesion.pausarEnvio === "function") {
+      sesion.pausarEnvio(true);
+      micCortadoPorMeet = true;
+      ui.mute.textContent = "Activar micrófono";
+    }
+  } catch (error) {
+    console.warn("No se pudo callar el micrófono del modelo:", error);
   }
   clearInterval(relojReunion);
   relojReunion = setInterval(vigilarLaReunion, 20_000);
@@ -1560,9 +1578,13 @@ function entrarEnPosterior(registro, integridad = { ok: true, fallosCriticos: []
   ajustarBotonesDeReunion();
 
   // El micrófono vuelve al modelo: a partir de aquí es una conversación normal.
-  if (micCortadoPorMeet && sesion?.muted) {
-    sesion.pausarEnvio(false);
-    ui.mute.textContent = "Silenciar micrófono";
+  try {
+    if (micCortadoPorMeet && sesion?.muted && typeof sesion.pausarEnvio === "function") {
+      sesion.pausarEnvio(false);
+      ui.mute.textContent = "Silenciar micrófono";
+    }
+  } catch (error) {
+    console.warn("No se pudo devolver el micrófono:", error);
   }
   micCortadoPorMeet = false;
 

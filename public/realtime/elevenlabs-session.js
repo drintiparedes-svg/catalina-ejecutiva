@@ -394,6 +394,24 @@ export class ElevenLabsSession {
     this.#emit("onMute", this.muted);
     return this.muted;
   }
+
+  // Dejar de enviar audio sin apagar la pista del micrófono.
+  //
+  // Es lo que usa el modo reunión: allí quien escucha la sala es el
+  // reconocimiento del navegador, y con la pista apagada no oiría nada. Aquí
+  // basta con `muted`, porque el audio se manda a mano en #prepararEntrada y
+  // esa bandera ya corta el envío; con WebRTC (los otros proveedores) hay que
+  // apagar la pista porque el audio no pasa por nuestro código.
+  //
+  // Faltaba, y era el fallo de fondo del modo reunión: app.js la llamaba en
+  // cuanto se entraba, con ElevenLabs reventaba por no existir, y la excepción
+  // se llevaba por delante el arranque de la escucha. La reunión parecía
+  // empezar y no se transcribía ni una frase.
+  pausarEnvio(pausado) {
+    this.muted = Boolean(pausado);
+    this.#emit("onMute", this.muted);
+    return this.muted;
+  }
 }
 
 // `pcm_24000` → 24000. Si llega algo que no se reconoce se usa lo esperado, que
