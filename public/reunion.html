@@ -437,24 +437,45 @@ try {
       "Falta <code>GEMINI_API_KEY</code>. Sin ella la reunión igual se cierra y se generan los dos archivos, "
       + "pero la transcripción va sin corregir y la minuta sale sin resumen: sólo el material ordenado.");
   } else if (m.ok) {
-    marcar("#pRedaccion", "bien", `Lista. Redactando con <code>${esc(m.modelo)}</code>.`);
+    marcar("#pRedaccion", "bien", `Lista. Redactando con <code>${esc(m.modelo)}</code>.`,
+      (m.catalogo?.modelos || []).length
+        ? `Tu clave puede usar ${m.catalogo.modelos.length} modelos.` : "");
   } else {
-    // Se enseña lo que pasó con CADA modelo, y se separa el «está saturado» del
-    // «no existe»: el primero se arregla esperando, el segundo cambiando el
-    // nombre. Confundirlos manda a buscar el fallo donde no está.
+    // Se separan tres cosas que se parecen y se arreglan de forma distinta:
+    // saturación (esperar), la clave o la API (arreglar en Google Cloud) y
+    // ningún modelo servible (elegir otro). Confundirlas manda a buscar el
+    // fallo donde no está, que es lo que pasó con el 404.
     const saturado = /50\d|saturado|cuota|429/.test(m.error || "");
-    marcar("#pRedaccion", saturado ? "espera" : "mal",
-      saturado
-        ? `Gemini está saturado ahora mismo: <code>${esc(m.error)}</code>`
-        : `La clave está, pero ningún modelo contestó: <code>${esc(m.error || "sin detalle")}</code>`,
-      (m.intentos || []).length
-        ? "Se probó de verdad:<br>" + m.intentos.map(i =>
-          `· <code>${esc(i.modelo)}</code>${i.veces > 1 ? ` (${i.veces} intentos)` : ""} → ${esc(i.error)}`).join("<br>")
-        : "",
-      saturado
-        ? "No hay nada que arreglar: es de Google y se pasa solo. Vuelve a probar en unos minutos. "
-          + "Mientras tanto la reunión se cierra igual, pero la minuta sale sin redactar."
-        : "Si tu cuenta usa otro nombre de modelo, ponlo en Vercel como <code>GEMINI_MODELO</code> y haz Redeploy.");
+    const cat = m.catalogo ?? {};
+    const detalles = [];
+
+    if (saturado) {
+      detalles.push(`Gemini está saturado ahora mismo: <code>${esc(m.error)}</code>`,
+        "No hay nada que arreglar: es de Google y se pasa solo. Vuelve a probar en unos minutos. "
+        + "Mientras tanto la reunión se cierra igual, pero la minuta sale sin redactar.");
+    } else if (!cat.ok) {
+      // Si Google ni siquiera deja LISTAR los modelos, el problema no es qué
+      // modelo se pide: es la clave o la API sin activar.
+      detalles.push(`Google no deja ni consultar qué modelos tiene esta clave: <code>${esc(cat.error || "sin detalle")}</code>`,
+        cat.estado === 403 || /disabled|has not been used/i.test(cat.error || "")
+          ? "Eso significa que la <b>Generative Language API</b> no está activada en el proyecto de la clave. "
+            + "Actívala en <a href=\"https://console.cloud.google.com/apis/library/generativelanguage.googleapis.com\" target=\"_blank\" rel=\"noopener\">este enlace</a> y espera un par de minutos."
+          : "Comprueba que <code>GEMINI_API_KEY</code> sea una clave de <a href=\"https://aistudio.google.com/apikey\" target=\"_blank\" rel=\"noopener\">Google AI Studio</a> "
+            + "y que no tenga restricciones de sitio o de API.");
+    } else if (!(cat.modelos || []).length) {
+      detalles.push("Google contesta, pero dice que esta clave <b>no tiene ningún modelo</b> capaz de redactar.",
+        "Suele arreglarse creando una clave nueva en <a href=\"https://aistudio.google.com/apikey\" target=\"_blank\" rel=\"noopener\">Google AI Studio</a>.");
+    } else {
+      detalles.push(`La clave tiene modelos, pero ninguno contestó: <code>${esc(m.error || "sin detalle")}</code>`,
+        `Google dice que esta clave puede usar: <code>${esc(cat.modelos.slice(0, 12).join(", "))}</code>`,
+        "Prueba a fijar uno en Vercel como <code>GEMINI_MODELO</code> y haz Redeploy.");
+    }
+
+    if ((m.intentos || []).length) {
+      detalles.push("Se probó de verdad:<br>" + m.intentos.map(i =>
+        `· <code>${esc(i.modelo)}</code>${i.veces > 1 ? ` (${i.veces} intentos)` : ""} → ${esc(i.error)}`).join("<br>"));
+    }
+    marcar("#pRedaccion", saturado ? "espera" : "mal", ...detalles);
   }
 
   marcar("#pCorreo", d.correo ? "bien" : "mal",

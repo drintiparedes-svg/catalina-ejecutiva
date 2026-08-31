@@ -564,9 +564,19 @@ de descartarlo. Tratarlos igual hacía que una saturación pasajera —el fallo 
 común de todos— se reportara como si el modelo no existiera, y mandaba a cambiar
 un nombre que estaba bien.
 
-El diagnóstico enseña lo que se probó **de verdad**, con lo que dijo cada modelo
-y cuántas veces se intentó. Listaba los cinco candidatos aunque se hubiera
-parado en el primero, que es mandar a buscar el fallo donde no está.
+Y antes de adivinar, se **pregunta**: Google tiene un listado de los modelos que
+cada clave puede usar, y de ahí salen los candidatos. La lista escrita a mano
+quedó de respaldo por si el listado falla. Adivinar nombres fue el error de
+fondo: cuando los cinco candidatos daban 404, la pantalla mandaba a cambiar el
+nombre del modelo sin saber cuál poner.
+
+Ese listado además separa tres fallos que se parecen y se arreglan distinto:
+Google no deja ni listar (la **Generative Language API** no está activada en el
+proyecto de la clave, o la clave tiene restricciones), lista pero está vacío (la
+clave no sirve), o lista modelos que existen pero ninguno contesta. El
+diagnóstico enseña lo que se probó **de verdad**, con lo que dijo cada modelo y
+cuántas veces se intentó. Listaba los cinco candidatos aunque se hubiera parado
+en el primero, que es mandar a buscar el fallo donde no está.
 
 ### Cerrar no es terminar
 

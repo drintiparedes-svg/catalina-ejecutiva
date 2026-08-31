@@ -44,6 +44,74 @@ const MODELOS = [
 let modeloQueFunciona = "";
 export const modeloEnUso = () => modeloQueFunciona;
 
+// Los modelos que la clave tiene de verdad, preguntándoselo a Google.
+//
+// Adivinar nombres fue un error: cuando los cinco candidatos daban 404, la
+// pantalla mandaba a cambiar el nombre del modelo sin saber cuál poner. Google
+// tiene un listado de lo que cada clave puede usar; preguntarlo cuesta una
+// petición y quita toda la adivinanza.
+let descubiertos = null;
+
+// Fuera lo que no sirve para redactar —imágenes, voz, incrustaciones— y los
+// «flash» primero: para corregir y resumir una reunión son de sobra y cuestan
+// una fracción de lo que cuesta un «pro».
+function ordenarModelos(nombres) {
+  return nombres
+    .filter(m => !/embedding|aqa|image|vision|tts|audio|live|native-audio/i.test(m))
+    .sort((a, b) => (b.includes("flash") - a.includes("flash")) || b.localeCompare(a));
+}
+
+async function descubrirModelos(clave) {
+  if (descubiertos) return descubiertos;
+  try {
+    const r = await fetch("https://generativelanguage.googleapis.com/v1beta/models?pageSize=200", {
+      headers: { "x-goog-api-key": clave },
+      signal: AbortSignal.timeout(15_000)
+    });
+    if (!r.ok) {
+      console.error("Gemini: no se pudo listar los modelos:", r.status, (await r.text()).slice(0, 200));
+      return null;
+    }
+    const lista = (await r.json())?.models ?? [];
+    descubiertos = ordenarModelos(lista
+      .filter(m => (m.supportedGenerationMethods ?? []).includes("generateContent"))
+      .map(m => String(m.name).replace(/^models\//, "")));
+    return descubiertos;
+  } catch (error) {
+    console.error("Gemini: fallo al listar los modelos:", error?.message);
+    return null;
+  }
+}
+
+// Para la pantalla de diagnóstico: qué modelos ve la clave, sin filtrar.
+export async function modelosDeLaClave() {
+  const clave = process.env.GEMINI_API_KEY?.trim();
+  if (!clave) return { ok: false, error: "Falta GEMINI_API_KEY." };
+  try {
+    const r = await fetch("https://generativelanguage.googleapis.com/v1beta/models?pageSize=200", {
+      headers: { "x-goog-api-key": clave },
+      signal: AbortSignal.timeout(15_000)
+    });
+    const texto = await r.text();
+    if (!r.ok) {
+      let detalle = "";
+      try { detalle = JSON.parse(texto)?.error?.message || ""; } catch {}
+      return { ok: false, estado: r.status, error: detalle || `Google respondió ${r.status} al listar los modelos.` };
+    }
+    const crudos = JSON.parse(texto)?.models ?? [];
+    const lista = crudos
+      .filter(m => (m.supportedGenerationMethods ?? []).includes("generateContent"))
+      .map(m => String(m.name).replace(/^models\//, ""));
+    // El catálogo se guarda aquí también: la pantalla lo pide para enseñarlo y
+    // la redacción lo pide para elegir modelo. Sin esto eran dos viajes a
+    // Google para traer exactamente lo mismo.
+    descubiertos = ordenarModelos(lista);
+    return { ok: true, modelos: lista };
+  } catch (error) {
+    return { ok: false, error: "No se pudo preguntar a Google qué modelos hay." };
+  }
+}
+
 const TIEMPO = 60_000;
 const TOPE_MATERIAL = 120_000;   // caracteres que se le entregan al modelo
 
@@ -67,7 +135,7 @@ const REPOSO = 1500;
 
 const esperar = ms => new Promise(r => setTimeout(r, ms));
 
-async function pedir(prompt, { esquema = null, temperatura = 0.2 } = {}) {
+async function pedir(prompt, { esquema = null, temperatura = 0.2, tiempo = TIEMPO } = {}) {
   const clave = process.env.GEMINI_API_KEY?.trim();
   if (!clave) return { ok: false, code: "SIN_CLAVE", error: "Falta GEMINI_API_KEY para redactar la minuta." };
 
@@ -78,11 +146,17 @@ async function pedir(prompt, { esquema = null, temperatura = 0.2 } = {}) {
   }
   const cuerpo = JSON.stringify({ contents: [{ role: "user", parts: [{ text: prompt }] }], generationConfig });
 
-  // El que ya funcionó va primero; los demás quedan de respaldo por si deja de
-  // existir o la cuenta pierde el acceso.
-  const candidatos = modeloQueFunciona
-    ? [modeloQueFunciona, ...MODELOS.filter(m => m !== modeloQueFunciona)]
-    : MODELOS;
+  // El orden: el que ya funcionó, luego el forzado a mano, luego los que Google
+  // dice que tiene esta clave, y por último la lista escrita a mano. Preguntar
+  // va antes que adivinar; adivinar sólo queda de respaldo por si el listado
+  // falla.
+  const deLaClave = await descubrirModelos(clave);
+  const candidatos = [...new Set([
+    modeloQueFunciona,
+    process.env.GEMINI_MODELO?.trim(),
+    ...(deLaClave ?? []),
+    ...MODELOS
+  ].filter(Boolean))];
 
   // Lo que pasó con cada uno. Sin esto el diagnóstico decía «se probaron estos
   // cinco» cuando en realidad se había parado en el primero: enseñar como
@@ -97,7 +171,7 @@ async function pedir(prompt, { esquema = null, temperatura = 0.2 } = {}) {
     for (let vuelta = 0; vuelta < 2 && gastados < INTENTOS_MAXIMOS; vuelta += 1) {
       if (vuelta) await esperar(REPOSO);
       gastados += 1;
-      const intento = await pedirA(modelo, clave, cuerpo);
+      const intento = await pedirA(modelo, clave, cuerpo, tiempo);
 
       if (intento.ok) {
         if (modeloQueFunciona !== modelo) {
@@ -122,7 +196,7 @@ async function pedir(prompt, { esquema = null, temperatura = 0.2 } = {}) {
   return { ...ultimo, intentos };
 }
 
-async function pedirA(modelo, clave, cuerpo) {
+async function pedirA(modelo, clave, cuerpo, tiempo = TIEMPO) {
   let datos;
   try {
     const upstream = await fetch(
@@ -131,7 +205,7 @@ async function pedirA(modelo, clave, cuerpo) {
         method: "POST",
         headers: { "x-goog-api-key": clave, "Content-Type": "application/json" },
         body: cuerpo,
-        signal: AbortSignal.timeout(TIEMPO)
+        signal: AbortSignal.timeout(tiempo)
       }
     );
     const texto = await upstream.text();
@@ -183,14 +257,15 @@ async function pedirA(modelo, clave, cuerpo) {
 // distingue «falta la clave» de «la clave está pero el modelo ya no existe».
 export async function probarRedaccion() {
   if (!hayRedaccion()) return { ok: false, code: "SIN_CLAVE", error: "Falta GEMINI_API_KEY." };
-  const salida = await pedir("Responde únicamente con la palabra: listo", { temperatura: 0 });
+  const catalogo = await modelosDeLaClave();
+  const salida = await pedir("Responde únicamente con la palabra: listo", { temperatura: 0, tiempo: 12_000 });
   return salida.ok
-    ? { ok: true, modelo: salida.modelo, disponibles: MODELOS }
+    ? { ok: true, modelo: salida.modelo, catalogo }
     // `intentos` es lo que se probó DE VERDAD, con lo que dijo cada uno. Se
     // agrupa por modelo: leer el mismo nombre dos veces seguidas no informa de
     // nada y hace pensar que se probaron más modelos de los que se probaron.
     : {
-      ok: false, code: salida.code, error: salida.error, disponibles: MODELOS,
+      ok: false, code: salida.code, error: salida.error, catalogo,
       intentos: [...(salida.intentos ?? []).reduce((mapa, i) => {
         const previo = mapa.get(i.modelo);
         mapa.set(i.modelo, { modelo: i.modelo, error: i.error, veces: (previo?.veces ?? 0) + 1 });
