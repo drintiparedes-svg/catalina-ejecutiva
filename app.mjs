@@ -18,7 +18,7 @@ import {
 } from "./llamadas.mjs";
 import { cerrarReunion } from "./reunion.mjs";
 import { hayRedaccion } from "./redaccion.mjs";
-import { estadoDrive, urlDeConsentimiento, canjearCodigo, driveConfigurado } from "./drive.mjs";
+import { estadoDrive, urlDeConsentimiento, canjearCodigo } from "./drive.mjs";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 
