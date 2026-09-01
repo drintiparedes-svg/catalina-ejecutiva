@@ -36,3 +36,16 @@ Con navegador y servidor, todo junto:
 | `qa4` | Nombrarla, la reunión posterior, empezar otra, y la página fuera del modo reunión. |
 | `qa5` | La página de diagnóstico y el aguante de la interfaz en pantalla de móvil. |
 | `qa6` | Una reunión de 400 intervenciones: que no se pierda ninguna y que el cierre siga cabiendo. |
+| `qa7` | Las herramientas por voz (`tomar_nota`, `quien_habla`, `estado_de_la_reunion`, `consultar_reunion`, `finalizar_reunion`) y el ciclo de sordera mientras Catalina habla. |
+| `qa8` | La carpeta local: que se recuerde, que reciba los tres archivos, que pida permiso cuando caduca y que un fallo suyo no se lleve la reunión. |
+| `qa-correo` | Que el SERVIDOR se niegue a mandar la reunión a un tercero sin confirmación explícita. El navegador no es una garantía: es de quien lo abre. |
+| `qa-drive` | Google Drive entero contra un doble de Google: consentimiento, canje, carpetas, subida a la carpeta elegida, y Drive caído sin llevarse el cierre. |
+
+`qa-correo` y `qa-drive` necesitan servidores propios —uno con clave de correo,
+otro con el doble de Google— y los levanta `correr.sh` solo.
+
+## Un detalle que ya costó una vez
+
+Las rutas `/drive/*` leen el permiso del campo `permiso`; `/reunion/cerrar` lo
+lee de `driveRefresco`. Es el mismo valor con dos nombres, y equivocarse
+devuelve «no hay ninguna cuenta conectada» como si de verdad no la hubiera.

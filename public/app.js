@@ -171,6 +171,7 @@ const manejadores = {
     if (enModoMeet && phase === "speaking" && estadoReunion !== ESTADOS.POSTERIOR) {
       escucha.ensordecer(true);
       fijarEstado(ESTADOS.HABLANDO);
+      vigilarVozMuda();
     }
     if (phase !== "speaking") faseDeSesion = phase;
     director.setState(phase);
@@ -983,6 +984,30 @@ function volverALaReunion() {
   }
 }
 
+// La sordera se quita cuando su voz calla, y eso lo decide el silencio real de
+// la pista. Pero si la voz NUNCA llega a sonar —el navegador bloqueó la
+// reproducción, la respuesta se cortó antes del primer audio, el proveedor
+// falló— ese silencio no llega nunca, porque nunca hubo sonido: la reunión se
+// queda sorda hasta que salta el seguro de los 45 segundos, y son 45 segundos
+// de reunión sin transcribir.
+//
+// Esto mira si de verdad está sonando algo. Si a los doce segundos la pista
+// sigue parada, es que no va a sonar, y se vuelve a escuchar la sala.
+const ESPERA_DE_VOZ = 12_000;
+let plazoDeVozMuda = null;
+
+function vigilarVozMuda() {
+  clearTimeout(plazoDeVozMuda);
+  plazoDeVozMuda = setTimeout(() => {
+    if (!enModoMeet || estadoReunion !== ESTADOS.HABLANDO) return;
+    const sonando = ui.audio && !ui.audio.paused && !ui.audio.ended;
+    // Si está sonando, el detector de silencio hará su trabajo; no se le pisa.
+    if (sonando) return;
+    console.warn("La voz de Catalina no llegó a sonar; se vuelve a escuchar la sala.");
+    volverAEscuchar("No me llegó a salir la voz.");
+  }, ESPERA_DE_VOZ);
+}
+
 function salirDeModoMeet() {
   ui.stage.classList.remove("meet");
   if (!enModoMeet) return;
@@ -991,6 +1016,7 @@ function salirDeModoMeet() {
   escucha.parar();
   escucha.ensordecer(false);
   clearTimeout(esperaParticipacion);
+  clearTimeout(plazoDeVozMuda);
   clearInterval(relojReunion);
   cerrarCampo();
   if (ui.reunion) ui.reunion.hidden = true;
@@ -1055,6 +1081,7 @@ function participar() {
 // basta con quitar la sordera: si el reconocimiento murió mientras ella hablaba,
 // dejarlo así significaba perder el resto de la reunión sin avisar.
 function volverAEscuchar(mensaje) {
+  clearTimeout(plazoDeVozMuda);
   escucha.ensordecer(false);
   const estado = escucha.diagnostico();
   if (!estado.activa) {

@@ -1,16 +1,30 @@
 #!/bin/sh
 # Banco de pruebas del modo reunión.
 #
-#   1. Arranca el servidor:   PORT=8123 node server.mjs
-#   2. Arranca un Chromium con depuración remota en el puerto 9334:
+# Antes de correrlo hacen falta dos cosas:
+#   1. El servidor principal:  PORT=8123 node server.mjs
+#   2. Un Chromium con depuración remota en el 9334:
 #      chromium --headless=new --remote-debugging-port=9334 --user-data-dir=/tmp/qa
-#   3. sh pruebas/correr.sh
 #
-# Las que no necesitan navegador (qa-dom, qa-rutas, qa-prompts, qa-escucha,
-# qa-bilingue) corren solas con `node pruebas/<nombre>.mjs`.
+# Los otros dos servidores —uno con clave de correo, otro con un doble de
+# Google— los levanta este guion solo, porque existen sólo para las pruebas.
 cd "$(dirname "$0")" || exit 1
+raiz=$(cd .. && pwd)
+
+arrancar() {  # puerto, orden
+  if curl -s --noproxy '*' -o /dev/null "http://127.0.0.1:$1/health" 2>/dev/null; then return 0; fi
+  ( cd "$raiz" && eval "$2" >/dev/null 2>&1 & )
+  i=0; while [ $i -lt 20 ]; do
+    curl -s --noproxy '*' -o /dev/null "http://127.0.0.1:$1/health" 2>/dev/null && return 0
+    i=$((i+1)); sleep 1
+  done
+  echo "aviso: no arrancó el servidor del puerto $1"
+}
+arrancar 8124 'PORT=8124 RESEND_API_KEY=clave-de-prueba node server.mjs'
+arrancar 4181 'node pruebas/google-falso.mjs'
+
 total=0; malos=0
-for t in qa-dom qa-rutas qa-prompts qa-escucha qa-bilingue qa-docs qa1 qa2 qa3 qa4 qa5 qa6; do
+for t in qa-dom qa-rutas qa-prompts qa-escucha qa-bilingue qa-correo qa-drive qa-docs qa1 qa2 qa3 qa4 qa5 qa6 qa7 qa8; do
   salida=$(timeout 300 node "$t".mjs 2>&1)
   n=$(printf '%s\n' "$salida" | grep -cE "^(ok +|  ok +)")
   f=$(printf '%s\n' "$salida" | grep -cE "^(FALLA|  FALLA|  ROTO)")

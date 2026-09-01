@@ -560,11 +560,15 @@ la pestaña se oculta, que es lo normal en mitad de una reunión—. Si el naveg
 falla el cierre, lo capturado sigue ahí y al volver a entrar se ofrece retomar la
 reunión. Antes vivía sólo en memoria, y bastaba un cierre a medias para perderla.
 
-Dos seguros más, porque la captura falla en silencio y eso es lo peor que puede
+Tres seguros más, porque la captura falla en silencio y eso es lo peor que puede
 hacer: **la sordera lleva plazo** —mientras Catalina habla no se apunta nada, y
-si el aviso de que terminó no llega, a los 45 segundos se quita sola— y un
+si el aviso de que terminó no llega, a los 45 segundos se quita sola—; un
 **latido** cada ocho segundos comprueba que el reconocimiento sigue en pie y lo
-levanta si se cayó, avisando cuando se corta demasiado.
+levanta si se cayó, avisando cuando se corta demasiado; y un **vigía de la voz
+muda**, porque la sordera se levanta al detectar silencio en la pista y una voz
+que nunca llegó a sonar —reproducción bloqueada, respuesta cortada, proveedor
+caído— no produce ningún silencio que detectar: a los doce segundos se mira si
+la pista está de verdad parada y, si lo está, se vuelve a escuchar la sala.
 
 El vigía va más allá: cada veinte segundos comprueba que se esté capturando algo,
 y si la reunión lleva tres minutos sin una sola frase lo dice **en pantalla y en
@@ -578,14 +582,21 @@ puede», «no diste permiso» y «Chrome no llega a los servidores de voz».
 
 ### El banco de pruebas
 
-En `pruebas/` hay 205 comprobaciones automáticas que recorren el modo entero:
-el flujo completo en un Chromium de verdad, las rutas de fallo (servidor caído,
-navegador sin reconocimiento, motor de escucha que se muere), el `.docx` y el
-`.pdf` abiertos y leídos byte a byte, una reunión de cuatrocientas
-intervenciones, y comprobaciones estáticas de que ningún `querySelector` apunta
-a la nada y ninguna ruta se quede fuera de `vercel.json`. `pruebas/LEEME.md`
-dice cómo correrlo. Existe porque cada ronda de pruebas a mano costaba una tarde
-y encontraba fallos que ya se habían arreglado antes.
+En `pruebas/` hay 269 comprobaciones automáticas que recorren el modo entero:
+el flujo completo en un Chromium de verdad, las herramientas por voz, el ciclo
+de sordera mientras ella habla, la carpeta local con sus fallos, Google Drive
+contra un doble de Google, las rutas de fallo (servidor caído, navegador sin
+reconocimiento, motor de escucha que se muere), el `.docx` y el `.pdf` abiertos
+y leídos byte a byte, una reunión de cuatrocientas intervenciones, y
+comprobaciones estáticas de que ningún `querySelector` apunta a la nada y
+ninguna ruta se quede fuera de `vercel.json`. `pruebas/LEEME.md` dice cómo
+correrlo. Existe porque cada ronda de pruebas a mano costaba una tarde y
+encontraba fallos que ya se habían arreglado antes.
+
+Una de ellas no comprueba el navegador sino al servidor: que se **niegue** a
+mandar la reunión a un tercero sin confirmación explícita, aunque se lo pidan
+directamente a la ruta. Que el navegador pida confirmación dos veces está bien,
+pero el navegador es de quien lo abre y no es una garantía de nada.
 
 ### Verificación antes de dar la reunión por buena
 
