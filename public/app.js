@@ -140,6 +140,11 @@ const manejadores = {
     ui.connect.textContent = "Finalizar";
     ui.connect.disabled = false;
     ui.mute.disabled = false;
+    // Qué voz suena, escrito. Adivinarlo costó una ronda entera de pruebas.
+    ui.signal.title = `Voz: ${NOMBRE_DE_VOZ[proveedor] || proveedor}`;
+    if (proveedor !== "elevenlabs") {
+      mostrarAviso(`Estás oyendo la voz de ${NOMBRE_DE_VOZ[proveedor] || proveedor}, no la de ElevenLabs.`);
+    }
   },
   onDisconnected: () => {
     connected = false;
@@ -215,20 +220,18 @@ const sesiones = {
   gemini: new GeminiSession(manejadores)
 };
 
-// ElevenLabs va primero: es el agente de esta versión —oído, cerebro y voz
-// suyos— y el único que además manda la alineación con la que se mueve la boca.
-// Los otros dos quedan de respaldo para no quedarse sin conversación si su
-// servicio falla, aunque entonces los labios vuelven a deducirse del espectro.
-const ORDEN = ["elevenlabs", "gemini", "openai"];
-
-// Motivos por los que ese proveedor no va a funcionar por mucho que se
-// reintente: sin crédito o sin clave válida. Un fallo de red no entra aquí,
-// porque cambiar de proveedor no lo arreglaría y ocultaría el problema real.
-const MOTIVOS_DE_RELEVO = new Set([
-  "API_RATE_LIMIT", "API_KEY_MISSING", "API_KEY_INVALID",
-  "GEMINI_KEY_MISSING", "GEMINI_KEY_INVALID", "GEMINI_SESSION_ERROR",
-  "ELEVENLABS_KEY_MISSING", "ELEVENLABS_AGENT_MISSING", "ELEVENLABS_SESSION_ERROR"
-]);
+// La voz es la de ElevenLabs, y sólo la de ElevenLabs.
+//
+// Antes había un relevo automático a Gemini o a OpenAI si ElevenLabs fallaba,
+// con la idea de no quedarse sin conversación. En la práctica hacía algo peor
+// que quedarse sin conversación: cambiaba la voz sin que se notara. Quien
+// hablaba con ella oía otra persona —otro timbre, otra cadencia, y los labios
+// deducidos del espectro en vez de la alineación real— y no tenía forma de
+// saber por qué. Preguntarlo fue lo que lo destapó.
+//
+// Ahora, si ElevenLabs no puede, se dice y se para. Una voz que no es la suya
+// no es un respaldo: es otra asistente.
+const ORDEN = ["elevenlabs"];
 
 const disponible = { elevenlabs: false, openai: false, gemini: false };
 let proveedor = null;
@@ -239,11 +242,17 @@ function proveedoresUtiles() {
   return ORDEN.filter(nombre => disponible[nombre]);
 }
 
+// Qué voz está sonando, en palabras. Se enseña al conectar para que nunca haya
+// que adivinarlo: es exactamente la pregunta que costó esta ronda.
+const NOMBRE_DE_VOZ = { elevenlabs: "ElevenLabs", gemini: "Gemini", openai: "OpenAI" };
+
 async function conectar() {
   const cadena = proveedoresUtiles();
   if (!cadena.length) {
-    setStatus("No hay ninguna voz configurada");
-    mostrarAviso("Falta la clave de ElevenLabs, de OpenAI o de Gemini para poder conversar.");
+    setStatus("La voz de ElevenLabs no está configurada");
+    mostrarAviso("Falta ELEVENLABS_API_KEY o el agente de ElevenLabs. La voz de Catalina es la de "
+      + "ElevenLabs y no se sustituye por otra: sin esa clave no hay conversación hablada. "
+      + "Lo demás —transcribir la reunión, las notas, los documentos— sigue funcionando.");
     ui.connect.disabled = false;
     return;
   }
@@ -294,29 +303,18 @@ function pararRelojes() {
   relojInactividad = relojAviso = null;
 }
 
+// Si la voz falla, se dice. No se cambia por otra: ya no hay a quién cambiar, y
+// que la hubiera era el problema.
 async function atenderFallo(error) {
-  const cadena = proveedoresUtiles();
-  const siguiente = cadena[cadena.indexOf(proveedor) + 1];
-
-  if (!siguiente || !MOTIVOS_DE_RELEVO.has(error.code)) {
-    ultimoFallo = { mensaje: error.mensaje || "No se pudo conectar" };
-    setStatus(ultimoFallo.mensaje);
-    mostrarAviso(error.ayuda || "");
-    // El botón vuelve a estar listo para reintentar aunque la sesión no llegue
-    // a llamar a onDisconnected (p. ej. si falló antes de conectar del todo).
-    connected = false;
-    ui.connect.textContent = "Iniciar conversación";
-    ui.connect.disabled = false;
-    ui.mute.disabled = true;
-    return;
-  }
-
-  proveedor = siguiente;
-  sesion = sesiones[siguiente];
-  setStatus(`Paso a ${siguiente === "openai" ? "OpenAI" : "Gemini"}…`);
-  mostrarAviso("");
-  ui.connect.disabled = true;
-  await sesion.connect();
+  ultimoFallo = { mensaje: error.mensaje || "No se pudo conectar con la voz de ElevenLabs" };
+  setStatus(ultimoFallo.mensaje);
+  mostrarAviso(error.ayuda || "");
+  // El botón vuelve a estar listo para reintentar aunque la sesión no llegue
+  // a llamar a onDisconnected (p. ej. si falló antes de conectar del todo).
+  connected = false;
+  ui.connect.textContent = "Iniciar conversación";
+  ui.connect.disabled = false;
+  ui.mute.disabled = true;
 }
 
 image.src = "assets/catalina.png";
@@ -1008,6 +1006,52 @@ function vigilarVozMuda() {
   }, ESPERA_DE_VOZ);
 }
 
+// Espera a que deje de hablar para devolverle el micrófono. Se comprueba tanto
+// el estado como la pista de audio: si la voz nunca llegó a salir, el estado
+// podría quedarse colgado y el micrófono no volvería jamás.
+const ESPERA_MAXIMA_DEL_MICROFONO = 90_000;
+let vigiaDelMicrofono = null;
+
+function devolverElMicrofonoCuandoTermine() {
+  clearInterval(vigiaDelMicrofono);
+  const desde = Date.now();
+  const devolver = () => {
+    clearInterval(vigiaDelMicrofono);
+    vigiaDelMicrofono = null;
+    try {
+      if (micCortadoPorMeet && sesion?.muted && typeof sesion.pausarEnvio === "function") {
+        sesion.pausarEnvio(false);
+        ui.mute.textContent = "Silenciar micrófono";
+      }
+    } catch (error) {
+      console.warn("No se pudo devolver el micrófono:", error);
+    }
+    micCortadoPorMeet = false;
+  };
+
+  // Dos fases, porque cuando se llama a esto todavía no ha empezado a hablar:
+  // primero se espera a que empiece y sólo entonces se espera a que termine.
+  // Sin la primera fase el micrófono volvía medio segundo después, justo antes
+  // de la primera frase, que es exactamente lo que se quería evitar.
+  //
+  // «Ocupada» incluye pensar, no sólo hablar: acabamos de mandarle la reunión
+  // entera y tarda en arrancar. Un simple margen de reloj no bastaba —si tardaba
+  // más de la cuenta, el micrófono volvía justo antes de que empezara a hablar,
+  // que es el peor momento posible—.
+  const GRACIA_PARA_EMPEZAR = 25_000;
+  let empezo = false;
+
+  vigiaDelMicrofono = setInterval(() => {
+    const sonando = ui.audio && !ui.audio.paused && !ui.audio.ended;
+    const ocupada = director.state === "speaking" || director.state === "thinking" || sonando;
+    if (ocupada) { empezo = true; }
+    // El tope existe porque «terminar de hablar» puede no llegar nunca: dejar
+    // el micrófono cortado para siempre sería peor que devolverlo pronto.
+    else if (empezo || Date.now() - desde > GRACIA_PARA_EMPEZAR) return devolver();
+    if (Date.now() - desde > ESPERA_MAXIMA_DEL_MICROFONO) devolver();
+  }, 500);
+}
+
 function salirDeModoMeet() {
   ui.stage.classList.remove("meet");
   if (!enModoMeet) return;
@@ -1018,6 +1062,7 @@ function salirDeModoMeet() {
   clearTimeout(esperaParticipacion);
   clearTimeout(plazoDeVozMuda);
   clearInterval(relojReunion);
+  clearInterval(vigiaDelMicrofono);
   cerrarCampo();
   if (ui.reunion) ui.reunion.hidden = true;
   // Sólo se devuelve el micrófono si fue este modo quien lo quitó.
@@ -1806,16 +1851,15 @@ function entrarEnPosterior(registro, integridad = { ok: true, fallosCriticos: []
   setStatus("Reunión cerrada");
   ajustarBotonesDeReunion();
 
-  // El micrófono vuelve al modelo: a partir de aquí es una conversación normal.
-  try {
-    if (micCortadoPorMeet && sesion?.muted && typeof sesion.pausarEnvio === "function") {
-      sesion.pausarEnvio(false);
-      ui.mute.textContent = "Silenciar micrófono";
-    }
-  } catch (error) {
-    console.warn("No se pudo devolver el micrófono:", error);
-  }
-  micCortadoPorMeet = false;
+  // El micrófono vuelve al modelo, pero NO todavía.
+  //
+  // Lo primero que hace al cerrar es contar la minuta en voz alta, y eso son
+  // varias frases seguidas en una sala con gente. Con el micrófono abierto, esa
+  // sala entra en la sesión: el agente oye voces mientras habla, lo interpreta
+  // como que le interrumpen y se corta a sí mismo una y otra vez. Se oye
+  // entrecortada —justo al contar la minuta, y no en una conversación normal,
+  // donde quien escucha se calla—. Se le devuelve cuando termine de hablar.
+  devolverElMicrofonoCuandoTermine();
 
   // Y se le entrega la reunión entera, para que conteste sobre ella sin tener
   // que ir a buscarla. Lo que no cabe aquí lo puede pedir con consultar_reunion.

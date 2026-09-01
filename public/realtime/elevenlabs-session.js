@@ -169,7 +169,7 @@ export class ElevenLabsSession {
   async #prepararSalida() {
     this.salida = new AudioContext({ sampleRate: SALIDA_HZ });
     await this.salida.resume().catch(() => {});
-    await this.salida.audioWorklet.addModule("./audio/reproductor-pcm.js");
+    await this.salida.audioWorklet.addModule(`./audio/reproductor-pcm.js${versionDelSitio()}`);
 
     this.reproductor = new AudioWorkletNode(this.salida, "reproductor-pcm", {
       numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [1]
@@ -530,4 +530,18 @@ function ayudaDeError(error) {
     return "Permite el micrófono en el candado de la barra de direcciones y vuelve a intentarlo.";
   }
   return "";
+}
+
+// La versión con la que se pidió app.js, para pedir el reproductor con la misma.
+//
+// El worklet se cargaba sin versión, así que un navegador con el viejo en caché
+// seguía usándolo por mucho que se desplegara uno nuevo: un arreglo del sonido
+// podía no llegarle nunca a quien más lo necesitaba. Se saca de la etiqueta de
+// app.js para que baste con subirla ahí, en un solo sitio.
+function versionDelSitio() {
+  try {
+    const src = document.querySelector('script[src*="app.js"]')?.getAttribute("src") || "";
+    const v = src.split("?")[1];
+    return v ? `?${v}` : "";
+  } catch { return ""; }
 }

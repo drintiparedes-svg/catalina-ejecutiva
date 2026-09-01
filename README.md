@@ -8,8 +8,8 @@ La cara no cambió ni una línea: el avatar analiza el audio que suene, venga de
 proveedor que venga. Lo que sí cambió es la boca — con ElevenLabs ya no se
 adivina del espectro, porque el agente manda qué carácter suena y cuándo.
 
-Quedan tres voces en cadena: ElevenLabs primero, OpenAI y Gemini de respaldo.
-Ninguna clave llega al navegador; el servidor firma cada sesión.
+La voz es la de ElevenLabs, y sólo la de ElevenLabs. Ninguna clave llega al
+navegador; el servidor firma cada sesión.
 
 ## Iniciar en macOS
 
@@ -253,21 +253,56 @@ se lee.
 Sólo se transcribe la voz de Catalina. Transcribir además la de la persona
 requiere activar `input_audio_transcription` en la sesión, con su costo aparte.
 
-## Respaldo con Gemini
+## Por qué se oía entrecortada
 
-Si OpenAI se queda sin crédito, la sesión pasa sola a Gemini Live y Catalina
-sigue hablando con la misma persona y las mismas herramientas. El relevo se
-dispara con `API_RATE_LIMIT`, `API_KEY_MISSING` o `API_KEY_INVALID`; un fallo de
-red no lo activa, porque cambiar de proveedor no lo arreglaría y taparía el
-problema real. Cada intento nuevo vuelve a empezar por OpenAI, así que al
-reponer el crédito Catalina regresa sola a la voz principal.
+El audio de la voz se reproduce en el hilo de audio, así que un atasco del hilo
+principal no abre huecos —se midió: la peor frase bloquea 18 ms y escribir la
+reunión entera al almacén, 21 ms; ninguna de las dos cosas alcanza a vaciar el
+colchón—. Los cortes venían de otro sitio: **el audio llegando más lento de lo
+que se reproduce**. Una respuesta larga que el modelo genera despacio —el
+resumen de una minuta, por ejemplo— vacía el búfer una y otra vez, y el
+reproductor rellenaba con silencio muestra a muestra y seguía. Eso son
+doscientos treinta microcortes de tres a veinte milisegundos repartidos por toda
+la respuesta: una voz rota.
 
-Los dos transportes no se parecen: OpenAI negocia **WebRTC** y el audio viaja por
-una pista de medios; Gemini es un **WebSocket con PCM crudo**, así que
-`gemini-session.js` hace a mano lo que WebRTC hacía solo —capturar el micrófono,
-remuestrear a 16 kHz, trocear, y recomponer en orden el audio de 24 kHz que
-llega—. Ese audio se vuelca en un `MediaStream` propio para que el analizador de
-labios funcione igual con los dos.
+Ahora el colchón se ajusta solo. Cada vez que el búfer se seca, se para y espera
+a juntar más que la vez anterior (×1,6, hasta segundo y medio); cuando lleva
+tres segundos hablando sin apuros, lo recorta. Acaba en el tamaño que ese ritmo
+de llegada necesita. Medido con el mismo audio lento:
+
+| Ritmo de llegada | Antes | Ahora |
+| --- | --- | --- |
+| 60 % | 233 cortes de 21 ms | 5 pausas de 994 ms |
+| 70 % | 230 cortes de 16 ms | 5 pausas de 864 ms |
+| 85 % | 227 cortes de 8 ms | 5 pausas de 445 ms |
+| 95 % | 200 cortes de 3 ms | 3 pausas de 234 ms |
+| 120 % | sin cortes | sin cortes |
+
+El silencio total es el mismo —si llega el 70 % del audio, el 30 % del tiempo no
+hay nada que reproducir y no hay truco que lo arregle—. Lo que cambia es su
+forma: unas pocas pausas en vez de doscientos cortes. La primera se oye como
+alguien que se detiene a pensar; la segunda, como una avería.
+
+## Por qué ya no hay voz de respaldo
+
+Hubo un relevo automático: si ElevenLabs fallaba, la sesión pasaba sola a Gemini
+o a OpenAI y Catalina «seguía hablando». La idea era no quedarse sin
+conversación. Lo que hacía en realidad era peor que quedarse sin conversación:
+**cambiaba la voz sin que se notara**. Otro timbre, otra cadencia, y los labios
+deducidos del espectro en vez de la alineación real que manda ElevenLabs. Quien
+hablaba con ella oía a otra persona y no tenía forma de saber por qué; se
+descubrió preguntando «¿esto está usando ElevenLabs?».
+
+Ahora, si ElevenLabs no puede, se dice y se para. Una voz que no es la suya no es
+un respaldo: es otra asistente. Lo demás —transcribir la reunión, las notas, los
+documentos— no depende de la voz y sigue funcionando sin ella.
+
+Gemini sigue trabajando, pero en otra cosa: redactar la minuta y corregir la
+transcripción al cerrar. Eso es texto, no voz, y ahí sí tiene sentido.
+
+Las clases `gemini-session.js` y `session.js` (OpenAI) se conservan —el
+transporte de cada una es distinto y volver a escribirlo costaría— pero no las
+usa nadie para hablar.
 
 En **Modo Meet** los subtítulos siguen visibles si están encendidos —son parte
 de lo que se quiere capturar— y el historial se oculta con el resto del mando.
@@ -361,9 +396,11 @@ el proyecto no usa `npm install`.
 Las **claves no viajan** en el repositorio —`.env` está en `.gitignore`—, así que
 hay que volver a pegarlas en el equipo nuevo. Se sacan de
 [OpenAI](https://platform.openai.com/api-keys) y de
-[Google AI Studio](https://aistudio.google.com/apikey). Sólo la de OpenAI es
-imprescindible para hablar; sin la de Gemini se pierde el respaldo, y las láminas
-y referencias funcionan igual porque no dependen de ninguna clave.
+[Google AI Studio](https://aistudio.google.com/apikey). La de ElevenLabs es la
+imprescindible para hablar y no se sustituye por ninguna otra; sin la de Gemini
+la minuta sale sin redactar y la transcripción sin corregir, pero la reunión se
+captura, se guarda y se documenta igual. Las láminas y las referencias funcionan
+sin ninguna clave.
 
 `.claude/launch.json` tampoco viaja: apunta al Node del equipo donde se escribió.
 Si usas el editor con vista previa, créalo con la ruta que dé `which node`.
@@ -569,6 +606,13 @@ muda**, porque la sordera se levanta al detectar silencio en la pista y una voz
 que nunca llegó a sonar —reproducción bloqueada, respuesta cortada, proveedor
 caído— no produce ningún silencio que detectar: a los doce segundos se mira si
 la pista está de verdad parada y, si lo está, se vuelve a escuchar la sala.
+
+Y el micrófono **no vuelve al agente mientras ella esté hablando**. Lo primero
+que hace al cerrar es contar la minuta en voz alta, y eso son varias frases
+seguidas en una sala con gente: con el micrófono abierto, el agente oye esas
+voces, lo interpreta como que le interrumpen y se corta a sí mismo una y otra
+vez. Se oía entrecortada justo ahí y no en una conversación normal, donde quien
+escucha se calla.
 
 El vigía va más allá: cada veinte segundos comprueba que se esté capturando algo,
 y si la reunión lleva tres minutos sin una sola frase lo dice **en pantalla y en
