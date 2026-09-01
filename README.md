@@ -503,16 +503,34 @@ dos copias un día dejarían de coincidir sin que nadie lo notara.
 El reconocimiento del navegador no detecta el idioma: se le fija uno y todo lo
 que oye lo escribe en ese idioma. Un seminario en inglés escuchado en español no
 sale mal transcrito, sale como ruido. Por eso se abren **dos reconocedores en
-paralelo**, uno por lengua, y de cada frase se queda el que la entendió: se
-puntúa cuánto se parece cada versión a su propio idioma —contando palabras de
-armazón, quitadas las que comparten las dos lenguas, que no distinguen nada— y
-se suma la confianza que declare el navegador. Cuesta unos 900 ms de espera por
-frase, el tiempo de que conteste el segundo motor.
+paralelo**, uno por lengua, sobre el mismo micrófono.
+
+Lo que no hacen es competir por el hueco. **El idioma principal manda**: lo que
+oye sale a la transcripción en el acto, sin esperar a nadie, y nada puede
+descartarlo. El segundo idioma **corrige**: cuando una intervención se dijo en la
+otra lengua, el principal la escribe como ruido y el segundo la escribe bien,
+y entonces se sustituye esa línea en su sitio. Así el peor caso posible es «una
+frase en inglés salió mal transcrita», nunca «una frase desapareció» ni «la
+frase salió dos veces». Se llegó aquí por descarte: la primera versión elegía
+entre las dos con una ventana de tiempo, y en una reunión fluida —que es toda
+reunión de verdad— las frases llegan más juntas que la ventana, se fundían unas
+con otras y **cuatrocientas intervenciones se quedaron en una**.
+
+Emparejar la versión de un motor con la del otro se hace **por orden, no por
+reloj**: los dos oyen el mismo audio, así que la frase número N de uno es la
+número N del otro; por tiempo, dos intervenciones seguidas se confunden entre sí.
+Antes de sustituir se comprueba además que puedan ser la misma frase —dos
+transcripciones del mismo audio salen de longitud parecida aunque estén en
+lenguas distintas— y que la versión nueva encaje claramente mejor con su lengua
+que la vieja con la suya. Si las cuentas de los dos motores se separan —uno partió
+una intervención donde el otro no— se **deja de emparejar** y se sigue sólo con el
+principal: perder una corrección es barato, poner en boca de alguien algo dicho en
+otro momento no lo es.
 
 Cada intervención queda **en la lengua en que se dijo**, marcada `ES` o `EN`, y
 la corrección de estilo tiene prohibido traducir: una intervención traducida deja
 de ser una cita. Se pueden marcar los dos idiomas o sólo uno; con uno solo no hay
-espera ni segundo motor.
+segundo motor ni corrección.
 
 ### Verlo mientras ocurre
 
@@ -537,7 +555,8 @@ Catalina conteste, y si no está abierta, «Participar» la abre.
 ### La transcripción es un registro, no un recuerdo
 
 Cada frase capturada se escribe en IndexedDB en cuanto se oye, agrupando las
-escrituras en dos segundos. Si el navegador se recarga, se cierra la pestaña o
+escrituras en dos segundos —y esos dos segundos se vuelcan sin esperar en cuanto
+la pestaña se oculta, que es lo normal en mitad de una reunión—. Si el navegador se recarga, se cierra la pestaña o
 falla el cierre, lo capturado sigue ahí y al volver a entrar se ofrece retomar la
 reunión. Antes vivía sólo en memoria, y bastaba un cierre a medias para perderla.
 
@@ -556,6 +575,17 @@ de que no se transcribió nada es enterarse cuando ya no tiene arreglo.
 En `/reunion.html` hay una **prueba del micrófono** aislada: arranca sólo el
 reconocimiento y dice exactamente qué pasa. Es lo que distingue «el navegador no
 puede», «no diste permiso» y «Chrome no llega a los servidores de voz».
+
+### El banco de pruebas
+
+En `pruebas/` hay 205 comprobaciones automáticas que recorren el modo entero:
+el flujo completo en un Chromium de verdad, las rutas de fallo (servidor caído,
+navegador sin reconocimiento, motor de escucha que se muere), el `.docx` y el
+`.pdf` abiertos y leídos byte a byte, una reunión de cuatrocientas
+intervenciones, y comprobaciones estáticas de que ningún `querySelector` apunta
+a la nada y ninguna ruta se quede fuera de `vercel.json`. `pruebas/LEEME.md`
+dice cómo correrlo. Existe porque cada ronda de pruebas a mano costaba una tarde
+y encontraba fallos que ya se habían arreglado antes.
 
 ### Verificación antes de dar la reunión por buena
 

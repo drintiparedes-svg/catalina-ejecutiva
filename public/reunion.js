@@ -145,12 +145,24 @@ export class MemoriaDeReunion {
 
   // El idioma se guarda con la frase, no se traduce nada: una reunión bilingüe
   // se transcribe en las dos lenguas y cada intervención queda en la suya.
-  anotarTurno(texto, idioma = "") {
+  anotarTurno(texto, idioma = "", id = "") {
     const limpio = String(texto ?? "").trim();
     if (!limpio) return null;
     const turno = { t: Date.now(), hablante: this.hablante || SIN_NOMBRE, texto: limpio, origen: "CONVERSACION" };
     if (idioma) turno.idioma = idioma;
+    if (id) turno.id = id;
     this.turnos.push(turno);
+    return turno;
+  }
+
+  // El segundo idioma reescribe una intervención que el principal transcribió
+  // mal porque se dijo en la otra lengua. No es un turno nuevo: es el mismo,
+  // mejor entendido, así que se corrige en su sitio y no se duplica.
+  corregirTurno(id, texto, idioma) {
+    const turno = this.turnos.find(t => t.id === id);
+    if (!turno) return null;
+    turno.texto = String(texto ?? "").trim() || turno.texto;
+    if (idioma) turno.idioma = idioma;
     return turno;
   }
 

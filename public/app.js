@@ -468,10 +468,15 @@ const memoria = new MemoriaDeReunion();
 const escucha = new EscuchaDeReunion({
   alTranscribir: (texto, frase) => {
     hayActividad();                       // la reunión cuenta como vida
-    const turno = memoria.anotarTurno(texto, frase?.idioma);
+    const turno = memoria.anotarTurno(texto, frase?.idioma, frase?.id);
     // A la pantalla en cuanto se capta. Que la transcripción no se viera hasta
     // el final era, en la práctica, no poder saber si se estaba transcribiendo.
     pintarLinea(turno);
+    // Una frase capturada es la prueba de que el problema que se avisó ya pasó.
+    // Sin esto la tira se quedaba en «Atención» el resto de la reunión —un
+    // cierre fallido, un corte de escucha— aunque estuviera transcribiendo
+    // perfectamente: la alerta dejaba de significar nada.
+    despejarAlerta();
     // Cada frase capturada se persiste. Esto es lo que convierte la
     // transcripción en un registro: deja de depender de que el navegador siga
     // vivo al final de la reunión.
@@ -480,6 +485,14 @@ const escucha = new EscuchaDeReunion({
     // Con la participación habilitada, lo primero que se diga es la pregunta.
     // Queda igualmente anotado como parte de la reunión: se dijo en la sala.
     if (estadoReunion === ESTADOS.HABILITADA) invocar(texto);
+  },
+  // El otro idioma entendió mejor esa misma intervención: se reescribe la línea
+  // que ya estaba, en su sitio. Duplicarla dejaría la frase dos veces, una en
+  // ruido, y reordenaría la reunión.
+  alCorregir: frase => {
+    memoria.corregirTurno(frase.id, frase.texto, frase.idioma);
+    repintarLinea(frase);
+    apuntarBorrador();
   },
   // Lo que el navegador está entendiendo ahora mismo, todavía sin cerrar. No
   // entra en el registro: sólo se enseña, para que se vea que hay captura.
@@ -531,6 +544,10 @@ let ultimoBorrador = { ok: false, momento: 0, frases: 0 };
 // animada llegan varias frases seguidas y no hace falta una escritura por cada
 // una; lo que sí hace falta es que nunca pasen más de dos segundos entre lo que
 // se oyó y lo que está guardado.
+//
+// Y esos dos segundos se cobran si la pestaña se va justo entonces, así que al
+// ocultarse se vuelca sin esperar: cambiar de aplicación en mitad de una reunión
+// es lo más normal del mundo y no puede costar lo último que se dijo.
 function apuntarBorrador() {
   if (!memoria.abierta) return;
   clearTimeout(plazoDeBorrador);
@@ -564,8 +581,31 @@ async function volcarBorrador() {
 
 // ── Señales en pantalla ──────────────────────────────────────────────────────
 
+// El navegador avisa de que se va —cambio de pestaña, de aplicación, cierre— y
+// ése es el único momento seguro para escribir. `pagehide` es el que más se
+// respeta al cerrar; `visibilitychange` es el que llega al cambiar de app en el
+// móvil. Se escuchan los dos porque ninguno se dispara siempre.
+for (const senal of ["pagehide", "visibilitychange"]) {
+  window.addEventListener(senal, () => {
+    if (senal === "visibilitychange" && document.visibilityState !== "hidden") return;
+    if (!memoria.abierta) return;
+    guardarCuaderno();
+    volcarBorrador().catch(() => { /* si el almacén no acepta, ya se avisó en su momento */ });
+  });
+}
+
 function eco(texto) {
   if (ui.reunionEco) ui.reunionEco.textContent = texto;
+}
+
+// Quita el aviso de problema cuando se demuestra que ya no lo hay. Sólo mientras
+// se escucha: en los demás estados el rótulo lo pone quien corresponda.
+function despejarAlerta() {
+  if (!ui.reunionEstado) return;
+  if (ui.reunionEstado.dataset.fase !== "problema") return;
+  if (estadoReunion !== ESTADOS.ESCUCHANDO) return;
+  ui.reunionEstado.dataset.fase = ESTADOS.ESCUCHANDO;
+  ui.reunionEstadoTexto.textContent = ROTULOS[ESTADOS.ESCUCHANDO];
 }
 
 function fijarEstado(estado, textoEco = "", fase = "") {
@@ -610,6 +650,7 @@ function horaCorta(t) {
 
 function pintarLinea(turno) {
   if (!ui.reunionActaLineas || !turno) return;
+  if (turno.id) { /* para poder reescribirla si el otro idioma la entiende mejor */ }
   if (ui.reunionActaVacia) ui.reunionActaVacia.hidden = true;
   const linea = document.createElement("p");
   linea.className = "acta-linea";
@@ -629,6 +670,7 @@ function pintarLinea(turno) {
     idioma.textContent = BANDERAS[turno.idioma];
     linea.append(idioma);
   }
+  if (turno.id) linea.dataset.frase = turno.id;
   ui.reunionActaLineas.append(linea);
   pintarParcial("");
   // Sólo se sigue al final si ya se estaba: quien ha subido a releer algo no
@@ -636,6 +678,20 @@ function pintarLinea(turno) {
   const caja = ui.reunionActa;
   const alFinal = caja.scrollHeight - caja.scrollTop - caja.clientHeight < 80;
   if (alFinal) caja.scrollTop = caja.scrollHeight;
+}
+
+// Reescribe una línea ya pintada, sin moverla de sitio.
+function repintarLinea(frase) {
+  const linea = ui.reunionActaLineas?.querySelector(`[data-frase="${CSS.escape(frase.id)}"]`);
+  if (!linea) return;
+  linea.querySelector(".acta-texto").textContent = frase.texto;
+  let marca = linea.querySelector(".acta-idioma");
+  if (!marca) {
+    marca = document.createElement("i");
+    marca.className = "acta-idioma";
+    linea.append(marca);
+  }
+  marca.textContent = BANDERAS[frase.idioma] || "";
 }
 
 function pintarParcial(texto) {

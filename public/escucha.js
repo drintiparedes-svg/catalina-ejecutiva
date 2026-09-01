@@ -74,10 +74,33 @@ function puntuar(candidato) {
     + Math.min(candidato.texto.length, 120) / 4000;
 }
 
-// Cuánto se espera a que conteste el otro idioma antes de dar la frase por
-// buena. Es el retardo que se paga por transcribir bilingüe; por debajo de esto
-// el segundo reconocedor todavía no ha llegado y se elegiría a ciegas.
-const VENTANA_IDIOMAS = 900;
+// Cuánto se le espera al segundo idioma su versión de una frase que el
+// principal ya escribió. Pasado esto se da por perdida y se deja lo que hay.
+const ESPERA_SEGUNDO = 3000;
+
+// Cuánto pueden desfasarse los dos motores antes de dar el emparejamiento por
+// imposible. Si uno parte una intervención en dos y el otro no, las cuentas
+// dejan de coincidir y corregir por posición emparejaría frases distintas: es
+// preferible quedarse con el idioma principal, entero, que mezclar.
+const DESFASE_MAXIMO = 3;
+
+// Dos transcripciones del MISMO audio salen de longitud parecida, aunque estén
+// en lenguas distintas. Una que mide la mitad o el doble no es otra versión de
+// esa frase: es otra frase, y sustituir con ella pondría en boca de alguien
+// algo dicho en otro momento. Perder una corrección es barato; inventar una
+// intervención, no.
+const PROPORCION = [0.6, 1.7];
+
+// Cuántos emparejamientos absurdos se toleran antes de dejar de emparejar. Si
+// pasa tres veces, los motores no van a la par y lo mejor es no tocar nada.
+const DESAJUSTES_MAXIMOS = 3;
+
+// Por debajo de este encaje, un texto no parece escrito en la lengua que dice:
+// es lo que devuelve un motor al que le hablan en el otro idioma.
+const UMBRAL_IDIOMA = 0.13;
+// Y cuánto mejor tiene que encajar el segundo idioma para corregir una línea ya
+// escrita. Sin margen, el ruido se impondría por diferencias de un pelo.
+const MARGEN_IDIOMA = 0.06;
 
 // Cuánto puede estar sorda como mucho. Es un seguro, no una temporización: la
 // sordera se quita cuando ella termina de hablar, pero eso lo decide el análisis
@@ -111,7 +134,13 @@ class Motor {
     this.r = null;
     this.activo = false;
     this.viva = false;
-    this.frases = 0;
+    // `activo` dice si se le pidió escuchar; `sano`, si el navegador se lo está
+    // permitiendo. Son cosas distintas: un motor al que le denegaron el
+    // micrófono sigue «activo» y no oye nada. Confundirlas hacía que, en
+    // bilingüe, la caída de LOS DOS motores no se avisara nunca —siempre había
+    // otro «activo» al que agarrarse— y la reunión se quedaba muda en silencio.
+    this.sano = false;
+    this.frases = 0;          // también hace de número de orden de sus frases
     this.rearranques = 0;
     this.fallo = "";
   }
@@ -124,11 +153,11 @@ class Motor {
     r.interimResults = true;   // sólo para el renglón en vivo; al registro va lo cerrado
     r.maxAlternatives = 1;
 
-    r.onstart = () => { this.viva = true; };
-    r.onaudiostart = () => { this.viva = true; };
+    r.onstart = () => { this.viva = true; this.sano = true; };
+    r.onaudiostart = () => { this.viva = true; this.sano = true; };
 
     r.onresult = evento => {
-      this.viva = true;
+      this.viva = true; this.sano = true;
       for (let i = evento.resultIndex; i < evento.results.length; i += 1) {
         const resultado = evento.results[i];
         const alt = resultado[0];
@@ -136,7 +165,11 @@ class Motor {
         if (!texto) continue;
         if (!resultado.isFinal) { this.alParcial?.(texto, this.idioma); continue; }
         this.frases += 1;
-        this.alFinal?.({ texto, idioma: this.idioma, confianza: alt.confidence ?? 0, momento: Date.now() });
+        // El orden importa: los dos motores oyen el mismo audio, así que la
+        // frase número N de uno es la frase número N del otro. Emparejar por
+        // ahí es lo único fiable; por tiempo, dos intervenciones seguidas se
+        // confunden entre sí y una de las dos se pierde.
+        this.alFinal?.({ texto, idioma: this.idioma, confianza: alt.confidence ?? 0, momento: Date.now(), orden: this.frases });
       }
     };
 
@@ -155,6 +188,7 @@ class Motor {
       // modo reunión no reaccionaba.
       if (["no-speech", "aborted"].includes(evento.error)) return;
       console.warn(`Escucha (${this.codigo}):`, evento.error);
+      this.sano = false;
       this.fallo = MOTIVOS[evento.error] || `Fallo de escucha: ${evento.error}`;
       this.alFallar?.(this.fallo, this);
     };
@@ -166,8 +200,9 @@ class Motor {
     } catch (error) {
       // `InvalidStateError` significa que ya estaba arrancado: no es un fallo,
       // es una carrera. Se da por bueno en vez de dejar la escucha por muerta.
-      if (error?.name === "InvalidStateError") return true;
+      if (error?.name === "InvalidStateError") { this.sano = true; return true; }
       this.activo = false;
+      this.sano = false;
       this.fallo = `${error?.name || "Error"}: ${error?.message || "el navegador no dejó arrancar el reconocimiento"}`;
       return false;
     }
@@ -181,7 +216,13 @@ class Motor {
       this.r?.start();
       this.rearranques += 1;
       return true;
-    } catch { this.viva = true; return false; }
+    } catch (error) {
+      // `InvalidStateError` es que seguía en pie: sano. Cualquier otra cosa es
+      // que este motor no se puede levantar.
+      if (error?.name === "InvalidStateError") { this.viva = true; this.sano = true; }
+      else this.sano = false;
+      return false;
+    }
   }
 
   parar() {
@@ -193,9 +234,10 @@ class Motor {
 }
 
 export class EscuchaDeReunion {
-  constructor({ alLlamarla, alTranscribir, alParcial, alFallar, alRecuperarse } = {}) {
+  constructor({ alLlamarla, alTranscribir, alCorregir, alParcial, alFallar, alRecuperarse } = {}) {
     this.alLlamarla = alLlamarla;
     this.alTranscribir = alTranscribir;
+    this.alCorregir = alCorregir;
     this.alParcial = alParcial;
     this.alFallar = alFallar;
     this.alRecuperarse = alRecuperarse;
@@ -204,8 +246,12 @@ export class EscuchaDeReunion {
     this.activa = false;
     this.sorda = false;        // mientras Catalina habla, no se apunta nada
     this.transcripcion = [];
-    this.pendientes = [];      // frases esperando a que conteste el otro idioma
-    this.plazoDeEleccion = null;
+    // El idioma que manda. Lo que oiga su motor sale sin esperar a nadie.
+    this.principal = "es";
+    this.porOrden = new Map();     // frase número N del principal, ya escrita
+    this.enEspera = new Map();     // versión del segundo idioma aún sin pareja
+    this.emparejando = true;       // ¿siguen cuadrando las cuentas de los dos?
+    this.desajustes = 0;           // parejas que no podían ser la misma frase
     this.plazoDeSordera = null;
     this.latido = null;
     this.arrancoAlgunaVez = false;
@@ -225,6 +271,9 @@ export class EscuchaDeReunion {
     }
     const pedidos = (Array.isArray(idiomas) ? idiomas : [idiomas]).filter(i => IDIOMAS[i]);
     this.idiomas = pedidos.length ? pedidos : ["es"];
+    this.principal = this.idiomas[0];
+    this.emparejando = true;
+    this.desajustes = 0;
 
     // Ya escuchando lo mismo: no se toca. Rearrancar aquí era lo que cortaba la
     // transcripción cada vez que se pulsaba «Participar».
@@ -239,9 +288,11 @@ export class EscuchaDeReunion {
       alParcial: (t, idioma) => { if (!this.sorda) this.alParcial?.(t, idioma); },
       alFallar: (motivo, motor) => {
         // Con dos motores, que uno se caiga no deja la reunión muda: el otro
-        // sigue. Sólo se avisa cuando no queda ninguno en pie.
+        // sigue. Sólo se avisa cuando no queda ninguno en pie —y «en pie» es
+        // que el navegador lo esté dejando escuchar, no que se lo hayamos
+        // pedido—.
         this.ultimoFallo = motivo;
-        if (this.motores.some(m => m !== motor && m.activo)) return;
+        if (this.motores.some(m => m !== motor && m.activo && m.sano)) return;
         this.alFallar?.(motivo);
       }
     };
@@ -258,49 +309,107 @@ export class EscuchaDeReunion {
     // transcrita es infinitamente mejor que ninguna.
     this.motores = arrancados;
     this.activa = true;
+    // `start()` no lanza cuando va bien, pero `onstart` todavía no ha llegado.
+    // Se dan por sanos hasta que un error diga lo contrario.
+    for (const m of this.motores) m.sano = true;
     this.arrancoAlgunaVez = true;
     this.#latir();
     return true;
   }
 
-  // Una frase cerrada, de uno de los motores. Con un solo idioma sale al
-  // instante; con dos se espera un momento al otro y se elige la mejor.
+  // Una frase cerrada, de uno de los motores.
+  //
+  // El idioma PRINCIPAL manda: lo que oye sale a la transcripción en el acto,
+  // sin esperar a nadie y sin que nada pueda descartarlo. Ésa es la garantía de
+  // que la transcripción no se retrasa ni pierde una línea, pase lo que pase
+  // con el segundo motor.
+  //
+  // El segundo idioma no compite por el hueco: corrige. Cuando una intervención
+  // se dijo en la otra lengua, el principal la escribe como ruido y el segundo
+  // la escribe bien; entonces se sustituye ESA línea, en su sitio. El peor caso
+  // posible es «una frase en inglés salió mal transcrita», nunca «una frase
+  // desapareció» ni «la frase salió dos veces».
   #recibir(candidato) {
     if (this.sorda) { this.descartadasPorSordera += 1; return; }
-    if (this.motores.length < 2) return this.#aceptar(candidato);
-
-    this.pendientes.push(candidato);
-    clearTimeout(this.plazoDeEleccion);
-    this.plazoDeEleccion = setTimeout(() => this.#elegir(), VENTANA_IDIOMAS);
-  }
-
-  // De lo que llegó en la ventana, una frase por idioma como mucho: la mejor de
-  // cada motor. Luego, entre esas, la que mejor encaja con su propio idioma.
-  #elegir() {
-    const lote = this.pendientes;
-    this.pendientes = [];
-    if (!lote.length) return;
-
-    const mejorPorIdioma = new Map();
-    for (const c of lote) {
-      const previo = mejorPorIdioma.get(c.idioma);
-      // Del mismo motor, en la misma ventana, se concatena: son trozos de la
-      // misma intervención, no dos versiones de ella.
-      if (previo) previo.texto = `${previo.texto} ${c.texto}`.trim();
-      else mejorPorIdioma.set(c.idioma, { ...c });
-    }
-    const candidatos = [...mejorPorIdioma.values()];
-    candidatos.sort((a, b) => puntuar(b) - puntuar(a));
-    this.#aceptar(candidatos[0]);
+    if (this.motores.length < 2 || candidato.idioma === this.principal) return this.#aceptar(candidato);
+    this.#segundoIdioma(candidato);
   }
 
   #aceptar(candidato) {
     const texto = candidato.texto.trim();
     if (!texto) return;
     this.ultimoResultado = Date.now();
-    const frase = { momento: candidato.momento || Date.now(), texto, idioma: candidato.idioma };
+    const frase = {
+      id: `f${candidato.orden ?? this.transcripcion.length}-${this.transcripcion.length}`,
+      momento: candidato.momento || Date.now(),
+      texto, idioma: candidato.idioma,
+      encaje: encajeDeIdioma(texto, candidato.idioma)
+    };
     this.transcripcion.push(frase);
+
+    if (candidato.idioma === this.principal && candidato.orden) {
+      this.porOrden.set(candidato.orden, frase);
+      // Puede que el segundo idioma ya hubiera contestado antes que el
+      // principal: entonces su versión estaba esperando a esta línea.
+      const esperando = this.enEspera.get(candidato.orden);
+      if (esperando) { this.enEspera.delete(candidato.orden); this.alTranscribir?.(texto, frase); return this.#quizaCorregir(frase, esperando); }
+    }
+
     this.alTranscribir?.(texto, frase);
+    const plano = normalizar(texto);
+    if (NOMBRE.test(plano)) this.#atender(texto, plano);
+  }
+
+  // La versión del segundo idioma de la frase número N. Se busca la línea N del
+  // principal; si todavía no ha llegado, se guarda un momento por si llega.
+  #segundoIdioma(candidato) {
+    const texto = candidato.texto.trim();
+    if (!texto) return;
+
+    const principal = this.motores.find(m => m.idioma === this.principal);
+    // Si las cuentas de los dos motores se separan demasiado, uno partió una
+    // intervención donde el otro no y emparejar por orden pasa a ser mentira.
+    if (this.emparejando && principal && Math.abs(principal.frases - candidato.orden) > DESFASE_MAXIMO) {
+      this.emparejando = false;
+      console.warn("Escucha: los dos idiomas se desincronizaron; se sigue sólo con", this.principal);
+    }
+    if (!this.emparejando) return;
+
+    const linea = this.porOrden.get(candidato.orden);
+    if (linea) return this.#quizaCorregir(linea, candidato);
+
+    // Llegó antes que el principal. Se le guarda un rato su sitio; si el
+    // principal nunca escribe esa frase, se descarta: la línea que vale es la
+    // suya, y añadir ésta la duplicaría en cuanto llegara.
+    this.enEspera.set(candidato.orden, candidato);
+    setTimeout(() => this.enEspera.delete(candidato.orden), ESPERA_SEGUNDO);
+  }
+
+  // Se corrige sólo si la versión del segundo idioma encaja claramente mejor con
+  // su lengua que la escrita con la del principal. Ante la duda, se deja lo que
+  // ya estaba: una corrección equivocada estropea una línea que estaba bien.
+  #quizaCorregir(linea, candidato) {
+    const texto = candidato.texto.trim();
+
+    // Antes que nada: ¿pueden ser lo mismo? Si las longitudes no se parecen, el
+    // emparejamiento por orden ya no está diciendo la verdad.
+    const proporcion = texto.length / Math.max(1, linea.texto.length);
+    if (proporcion < PROPORCION[0] || proporcion > PROPORCION[1]) {
+      this.desajustes += 1;
+      if (this.desajustes >= DESAJUSTES_MAXIMOS && this.emparejando) {
+        this.emparejando = false;
+        console.warn("Escucha: los dos idiomas no van a la par; se sigue sólo con", this.principal);
+      }
+      return;
+    }
+
+    const encaje = encajeDeIdioma(texto, candidato.idioma);
+    if (encaje < UMBRAL_IDIOMA || encaje < (linea.encaje ?? 0) + MARGEN_IDIOMA) return;
+    linea.texto = texto;
+    linea.idioma = candidato.idioma;
+    linea.encaje = encaje;
+    this.ultimoResultado = Date.now();
+    this.alCorregir?.(linea);
 
     const plano = normalizar(texto);
     if (NOMBRE.test(plano)) this.#atender(texto, plano);
@@ -331,11 +440,13 @@ export class EscuchaDeReunion {
     return {
       arrancoAlgunaVez: this.arrancoAlgunaVez,
       activa: this.activa && this.motores.some(m => m.activo),
+      sanos: this.motores.filter(m => m.sano).map(m => m.codigo),
       sorda: this.sorda,
       idiomas: this.motores.map(m => m.codigo),
       frases: this.transcripcion.length,
       porIdioma: Object.fromEntries(this.motores.map(m => [m.codigo, m.frases])),
       rearranques: this.rearranques,
+      emparejandoIdiomas: this.emparejando,
       descartadasPorSordera: this.descartadasPorSordera,
       ultimoFallo: this.ultimoFallo,
       segundosSinOir: this.ultimoResultado ? Math.round((Date.now() - this.ultimoResultado) / 1000) : null
@@ -394,17 +505,16 @@ export class EscuchaDeReunion {
   parar() {
     clearInterval(this.latido);
     clearTimeout(this.plazoDeSordera);
-    clearTimeout(this.plazoDeEleccion);
-    // Lo que quedaba en la ventana de elección se guarda: es la última frase de
-    // la reunión, justo la que se perdía al pulsar «Finalizar».
-    this.#elegir();
     this.sorda = false;
     this.pararMotores();
   }
 
   olvidar() {
     this.transcripcion = [];
-    this.pendientes = [];
+    this.porOrden.clear();
+    this.enEspera.clear();
+    this.emparejando = true;
+    this.desajustes = 0;
     this.rearranques = 0;
     this.descartadasPorSordera = 0;
     this.ultimoResultado = 0;
