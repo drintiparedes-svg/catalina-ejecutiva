@@ -122,17 +122,14 @@ code { padding: 1px 5px; border-radius: 5px; background: rgba(255,255,255,.08); 
 
   <section id="modelos" hidden>
     <h2>Modelos</h2>
-    <p class="ayuda"><strong>La voz de Catalina es la de ElevenLabs, y sólo la de ElevenLabs.</strong>
-      Se configura en el agente de ElevenLabs, no aquí. Si su servicio falla, Catalina lo dice y se
-      queda callada: antes había un relevo automático que cambiaba la voz sin avisar, y eso era peor que
-      quedarse sin conversación —quien hablaba con ella oía a otra persona y no sabía por qué—.</p>
-    <p class="aviso">Los campos de abajo son de OpenAI y Gemini como voz, y <em>ya no se usan</em>: quedan
-      para no perder lo configurado. Gemini sí sigue trabajando, pero en otra cosa —redactar la minuta y
-      corregir la transcripción al cerrar una reunión—, y eso se configura con <code>GEMINI_API_KEY</code>.
-      Las claves siguen yendo en variables de entorno, nunca en este panel.</p>
+    <p class="ayuda">Qué modelo y qué voz usa cada proveedor. OpenAI es la voz principal; Gemini entra
+      solo cuando OpenAI se queda sin crédito o su clave falla.</p>
+    <p class="aviso">Sólo funcionan modelos <em>de voz en tiempo real</em>. Un modelo de texto no sirve
+      aquí: la conversación viaja como audio en ambos sentidos. Las claves siguen yendo en variables de
+      entorno, nunca en este panel.</p>
 
     <div class="tarjeta">
-      <strong>OpenAI <em>(sin uso)</em></strong>
+      <strong>OpenAI</strong>
       <div class="fila">
         <div><label for="modeloOpenai">Modelo</label><input id="modeloOpenai" type="text"></div>
         <div><label for="vozOpenai">Voz</label><input id="vozOpenai" type="text"></div>
@@ -140,7 +137,7 @@ code { padding: 1px 5px; border-radius: 5px; background: rgba(255,255,255,.08); 
     </div>
 
     <div class="tarjeta">
-      <strong>Gemini como voz <em>(sin uso)</em></strong>
+      <strong>Gemini (respaldo)</strong>
       <div class="fila">
         <div><label for="modeloGemini">Modelo</label><input id="modeloGemini" type="text"></div>
         <div><label for="vozGemini">Voz</label><input id="vozGemini" type="text"></div>

@@ -23,9 +23,7 @@ import { VisemasAlineados } from "../audio/visemas-alineados.js";
 
 const SALIDA_HZ = 24000;    // frecuencia del reproductor; lo que llegue se ajusta
 const ENTRADA_HZ = 16000;   // lo que el agente espera recibir del micrófono
-// Cien milisegundos por envío, a la frecuencia del agente. Diez mensajes por
-// segundo es poco tráfico y un retraso que no se nota al hablar.
-const MUESTRAS_POR_ENVIO = ENTRADA_HZ / 10;
+const MUESTRAS_POR_ENVIO = 2048;
 
 export class ElevenLabsSession {
   constructor(handlers = {}) {
@@ -70,29 +68,23 @@ export class ElevenLabsSession {
     try {
       assertVoiceEnvironment();
 
-      // Tres cosas que no dependen entre sí y antes iban en fila: pedir al
-      // servidor que firme la sesión —dos viajes a ElevenLabs—, pedir el
-      // micrófono, y cargar el reproductor. Juntas tardan lo que la más lenta,
-      // no la suma: «Iniciar conversación» responde medio segundo antes.
-      //
       // La clave nunca llega al navegador: el servidor firma la sesión y
       // devuelve la dirección ya autorizada.
-      const firmando = fetch("/elevenlabs/sesion", { method: "POST" }).then(async respuesta => {
-        if (!respuesta.ok) {
-          const detalle = await respuesta.json().catch(() => ({}));
-          const error = new Error(detalle.error || `ElevenLabs no está disponible (${respuesta.status})`);
-          error.code = detalle.code || "ELEVENLABS_SESSION_ERROR";
-          throw error;
-        }
-        return respuesta.json();
-      });
-      const pidiendoMicrofono = navigator.mediaDevices.getUserMedia({
+      const respuesta = await fetch("/elevenlabs/sesion", { method: "POST" });
+      if (!respuesta.ok) {
+        const detalle = await respuesta.json().catch(() => ({}));
+        const error = new Error(detalle.error || `ElevenLabs no está disponible (${respuesta.status})`);
+        error.code = detalle.code || "ELEVENLABS_SESSION_ERROR";
+        throw error;
+      }
+      const { url, inicio } = await respuesta.json();
+
+      this.micStream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
       });
-      const [{ url, inicio }, micStream] = await Promise.all([firmando, pidiendoMicrofono, this.#prepararSalida()]);
-      this.micStream = micStream;
 
       this.url = url;
+      await this.#prepararSalida();
       await this.#abrirSocket(url, inicio);
       await this.#prepararEntrada();
     } catch (error) {
@@ -177,7 +169,7 @@ export class ElevenLabsSession {
   async #prepararSalida() {
     this.salida = new AudioContext({ sampleRate: SALIDA_HZ });
     await this.salida.resume().catch(() => {});
-    await this.salida.audioWorklet.addModule(`./audio/reproductor-pcm.js${versionDelSitio()}`);
+    await this.salida.audioWorklet.addModule("./audio/reproductor-pcm.js");
 
     this.reproductor = new AudioWorkletNode(this.salida, "reproductor-pcm", {
       numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [1]
@@ -235,51 +227,18 @@ export class ElevenLabsSession {
   }
 
   async #prepararEntrada() {
-    // El contexto de captura va a la frecuencia que espera el agente. Así el
-    // navegador remuestrea el micrófono en código nativo, con filtro; antes se
-    // hacía a mano con interpolación lineal, que mete aliasing en la voz que
-    // el agente tiene que entender, y encima en el hilo principal.
-    try {
-      this.entrada = new AudioContext({ sampleRate: this.entradaHz });
-    } catch {
-      this.entrada = new AudioContext();   // algún navegador no deja elegirla
-    }
+    this.entrada = new AudioContext();
     await this.entrada.resume().catch(() => {});
     const origen = this.entrada.createMediaStreamSource(this.micStream);
-    const remuestreo = this.entrada.sampleRate !== this.entradaHz;
+    const nodo = this.entrada.createScriptProcessor(MUESTRAS_POR_ENVIO, 1, 1);
 
-    const mandar = pcm => {
+    nodo.onaudioprocess = evento => {
       if (this.muted || this.socket?.readyState !== WebSocket.OPEN) return;
+      const original = evento.inputBuffer.getChannelData(0);
+      const pcm = aPcm16(remuestrear(original, this.entrada.sampleRate, this.entradaHz));
       this.socket.send(JSON.stringify({ user_audio_chunk: codificar(pcm) }));
     };
 
-    // Lo normal: un worklet en el hilo de audio, que entrega el PCM ya hecho.
-    try {
-      await this.entrada.audioWorklet.addModule(`./audio/captura-pcm.js${versionDelSitio()}`);
-      const nodo = new AudioWorkletNode(this.entrada, "captura-pcm", {
-        numberOfInputs: 1, numberOfOutputs: 0, channelCount: 1,
-        processorOptions: { muestrasPorEnvio: Math.round(MUESTRAS_POR_ENVIO * this.entrada.sampleRate / this.entradaHz) }
-      });
-      nodo.port.onmessage = ({ data }) => {
-        if (data?.tipo !== "pcm") return;
-        let pcm = new Int16Array(data.muestras);
-        // Sólo si el navegador no dejó fijar la frecuencia; casi nunca.
-        if (remuestreo) pcm = aPcm16(remuestrear(Float32Array.from(pcm, v => v / 32768), this.entrada.sampleRate, this.entradaHz));
-        mandar(pcm);
-      };
-      origen.connect(nodo);
-      this.nodoEntrada = nodo;
-      return;
-    } catch (error) {
-      console.warn("Sin worklet de captura; se usa el procesador antiguo:", error?.message || error);
-    }
-
-    // De reserva: el nodo antiguo, en el hilo principal. Sigue funcionando.
-    const nodo = this.entrada.createScriptProcessor(2048, 1, 1);
-    nodo.onaudioprocess = evento => {
-      const original = evento.inputBuffer.getChannelData(0);
-      mandar(aPcm16(remuestreo ? remuestrear(original, this.entrada.sampleRate, this.entradaHz) : original));
-    };
     origen.connect(nodo);
     const mudo = this.entrada.createGain();
     mudo.gain.value = 0;
@@ -416,7 +375,6 @@ export class ElevenLabsSession {
     this.connected = false;
     this.#callar();
     try { this.socket?.close(); } catch {}
-    try { this.nodoEntrada?.port?.postMessage({ tipo: "parar" }); } catch {}
     this.nodoEntrada?.disconnect();
     this.micStream?.getTracks().forEach(pista => pista.stop());
     this.entrada?.close().catch(() => {});
@@ -488,18 +446,11 @@ function aPcm16(muestras) {
   return salida;
 }
 
-// Base64 por trozos. Concatenar un carácter por byte hacía miles de cadenas
-// intermedias diez veces por segundo; `fromCharCode` sobre un trozo entero es
-// una sola llamada. Los trozos existen porque `apply` con cientos de miles de
-// argumentos desborda la pila.
-const TROZO = 0x8000;
 function codificar(enteros) {
   const bytes = new Uint8Array(enteros.buffer, enteros.byteOffset, enteros.byteLength);
-  const partes = [];
-  for (let i = 0; i < bytes.length; i += TROZO) {
-    partes.push(String.fromCharCode.apply(null, bytes.subarray(i, i + TROZO)));
-  }
-  return btoa(partes.join(""));
+  let binario = "";
+  for (let i = 0; i < bytes.length; i += 1) binario += String.fromCharCode(bytes[i]);
+  return btoa(binario);
 }
 
 function decodificar(base64) {
@@ -579,18 +530,4 @@ function ayudaDeError(error) {
     return "Permite el micrófono en el candado de la barra de direcciones y vuelve a intentarlo.";
   }
   return "";
-}
-
-// La versión con la que se pidió app.js, para pedir el reproductor con la misma.
-//
-// El worklet se cargaba sin versión, así que un navegador con el viejo en caché
-// seguía usándolo por mucho que se desplegara uno nuevo: un arreglo del sonido
-// podía no llegarle nunca a quien más lo necesitaba. Se saca de la etiqueta de
-// app.js para que baste con subirla ahí, en un solo sitio.
-function versionDelSitio() {
-  try {
-    const src = document.querySelector('script[src*="app.js"]')?.getAttribute("src") || "";
-    const v = src.split("?")[1];
-    return v ? `?${v}` : "";
-  } catch { return ""; }
 }
