@@ -81,9 +81,19 @@ try {
         : `<b class="espera">El número no tiene agente asignado.</b> Asígnale tu agente en el panel de ElevenLabs.`,
       d.listaBlanca.length ? `Lista blanca activa: sólo se puede llamar a <code>${esc(d.listaBlanca.join(", "))}</code>.`
         : `<b class="espera">Sin lista blanca</b> (TELEFONO_PERMITIDOS vacío): puede marcar a cualquier número. Pon tu móvil para las pruebas.`,
+      // Esta línea decía que compartir agente era «Correcto» y que separarlo era
+      // «opcional». Era falso, y es justo lo que dejó pasar el fallo: en una
+      // llamada no hay navegador que conteste una herramienta de cliente, así
+      // que cada una que la agente invoque son hasta veinte segundos de
+      // silencio. Ahora se dice, y se cuenta cuántas lleva encima.
       d.agenteDedicado
-        ? `Agente de llamadas: <b class="bien">dedicado</b> (<code>${esc(d.agenteLlamadas)}</code>).`
-        : `Agente de llamadas: <b class="bien">el mismo del navegador</b> (<code>${esc(d.agenteLlamadas)}</code>), con el guion de llamada aplicado por override en cada llamada. Correcto. (Un agente aparte en <code>ELEVENLABS_CALL_AGENT_ID</code> es opcional, sólo si más adelante quieres afinar la voz por separado.)`
+        ? `Agente de llamadas: <b class="bien">dedicado</b> (<code>${esc(d.agenteLlamadas)}</code>), aparte del que usa el navegador. Es lo correcto: las herramientas del navegador no le llegan.`
+        : `<b class="mal">Las llamadas usan el mismo agente que el navegador</b> (<code>${esc(d.agenteLlamadas)}</code>), y ese agente lleva las herramientas del navegador. En una llamada no hay navegador que las conteste: cada vez que la invoque una, dirá «déjeme ver un segundo» y se quedará hasta veinte segundos en silencio. <b>Se oye como que la voz se corta.</b> Se arregla creando un agente aparte para llamar y poniendo su id en <code>ELEVENLABS_CALL_AGENT_ID</code>.`,
+      d.herramientasDeCliente === null
+        ? `No se pudo leer qué herramientas lleva el agente de llamadas.`
+        : d.herramientasDeCliente.length
+          ? `Ese agente lleva <b class="${d.agenteDedicado ? "espera" : "mal"}">${d.herramientasDeCliente.length} herramientas de cliente</b>: <code>${esc(d.herramientasDeCliente.join(", "))}</code>. Cada una es un silencio posible en mitad de una llamada.`
+          : `El agente de llamadas no lleva ninguna herramienta de cliente: <b class="bien">nada que se pueda quedar colgado</b> en una llamada.`
     ];
     marcar(d.agenteCoincide === true ? "bien" : "espera", ...lineas);
   }

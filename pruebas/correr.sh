@@ -24,7 +24,7 @@ arrancar 8124 'PORT=8124 RESEND_API_KEY=clave-de-prueba node server.mjs'
 arrancar 4181 'node pruebas/google-falso.mjs'
 
 total=0; malos=0
-for t in qa-dom qa-rutas qa-prompts qa-escucha qa-bilingue qa-correo qa-drive qa-docs qa1 qa2 qa3 qa4 qa5 qa6 qa7 qa8; do
+for t in qa-dom qa-rutas qa-prompts qa-escucha qa-bilingue qa-telefonia qa-correo qa-drive qa-docs qa1 qa2 qa3 qa4 qa5 qa6 qa7 qa8; do
   salida=$(timeout 300 node "$t".mjs 2>&1)
   n=$(printf '%s\n' "$salida" | grep -cE "^(ok +|  ok +)")
   f=$(printf '%s\n' "$salida" | grep -cE "^(FALLA|  FALLA|  ROTO)")

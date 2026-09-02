@@ -582,7 +582,7 @@ puede», «no diste permiso» y «Chrome no llega a los servidores de voz».
 
 ### El banco de pruebas
 
-En `pruebas/` hay 269 comprobaciones automáticas que recorren el modo entero:
+En `pruebas/` hay 280 comprobaciones automáticas que recorren el modo entero:
 el flujo completo en un Chromium de verdad, las herramientas por voz, el ciclo
 de sordera mientras ella habla, la carpeta local con sus fallos, Google Drive
 contra un doble de Google, las rutas de fallo (servidor caído, navegador sin
@@ -598,7 +598,35 @@ mandar la reunión a un tercero sin confirmación explícita, aunque se lo pidan
 directamente a la ruta. Que el navegador pida confirmación dos veces está bien,
 pero el navegador es de quien lo abre y no es una garantía de nada.
 
-### Verificación antes de dar la reunión por buena
+### Un agente para hablar, otro para llamar
+
+Las llamadas usan `ELEVENLABS_CALL_AGENT_ID` si existe, y si no, el mismo agente
+del navegador. Compartirlo parecía inofensivo y no lo es.
+
+Todas las herramientas se registran en el agente como **herramientas de
+cliente**, con `pre_tool_speech: "force"` y `response_timeout_secs: 20`: la
+agente dice una muletilla —«déjeme ver un segundo»— y espera a que el navegador
+le conteste. En una llamada **no hay navegador**. Así que cada herramienta que
+invoque son hasta veinte segundos de silencio esperando algo que no va a llegar,
+y quien está al teléfono lo oye como que la voz se corta.
+
+No se notó hasta que el modo reunión añadió cinco herramientas más
+(`tomar_nota`, `quien_habla`, `estado_de_la_reunion`, `consultar_reunion`,
+`finalizar_reunion`) y `asegurarHerramientas` empezó a reescribirlas en el agente
+cada vez que se abre el navegador. Antes de eso el agente iba casi vacío y el
+problema estaba latente.
+
+El arreglo es un **segundo agente en el panel de ElevenLabs, sin herramientas de
+cliente**, con su id en `ELEVENLABS_CALL_AGENT_ID`. Todo lo que escribe
+herramientas en el código usa sólo `ELEVENLABS_AGENT_ID`, así que ese agente se
+queda limpio para siempre sin tener que acordarse de nada.
+
+`/telefonia.html` ahora lo dice y lo **cuenta**: enseña cuántas herramientas de
+cliente lleva el agente que habla por teléfono, con sus nombres. Antes decía que
+compartir agente era «correcto» y que separarlo era «opcional» —era falso, y es
+lo que dejó pasar el fallo—.
+
+## Verificación antes de dar la reunión por buena
 
 Al cerrar se comprueba, y se enseña: audio procesado, transcripción capturada,
 transcripción persistida, transcripción dentro del documento, notas preservadas,

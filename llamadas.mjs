@@ -202,6 +202,28 @@ export async function diagnosticoElevenLabs() {
     agente: agenteDe(n)
   }));
 
+  // Cuántas herramientas de CLIENTE lleva encima el agente que habla por
+  // teléfono. Es la medida del problema, no una opinión: en una llamada no hay
+  // navegador que las conteste, así que cada una que invoque es una muletilla
+  // («déjeme ver un segundo») seguida de hasta veinte segundos de silencio
+  // esperando una respuesta que no va a llegar. Quien escucha lo oye como que
+  // la voz se corta.
+  let herramientasDeCliente = null;
+  try {
+    const ag = await fetch(`${BASE}/agents/${encodeURIComponent(agente())}`, {
+      headers: { "xi-api-key": clave() },
+      signal: AbortSignal.timeout(TIEMPO)
+    });
+    if (ag.ok) {
+      const cuerpo = JSON.parse(await ag.text());
+      const tools = cuerpo?.conversation_config?.agent?.prompt?.tools ?? [];
+      herramientasDeCliente = (Array.isArray(tools) ? tools : [])
+        .filter(t => t?.type === "client")
+        .map(t => t?.name)
+        .filter(Boolean);
+    }
+  } catch { /* si no se puede leer, se informa como desconocido */ }
+
   const id = numeroId();
   const hallado = lista.find(n => idDe(n) === id);
   const asignado = hallado ? agenteDe(hallado) : null;
@@ -225,6 +247,10 @@ export async function diagnosticoElevenLabs() {
     agenteLlamadas: agente(),
     agenteDedicado: Boolean(process.env.ELEVENLABS_CALL_AGENT_ID?.trim()
       && process.env.ELEVENLABS_CALL_AGENT_ID.trim() !== process.env.ELEVENLABS_AGENT_ID?.trim()),
+    // null = no se pudo leer el agente. [] = limpio. Con nombres dentro, cada
+    // uno es un silencio potencial de veinte segundos en mitad de una llamada.
+    herramientasDeCliente,
+    agenteDelNavegador: process.env.ELEVENLABS_AGENT_ID?.trim() || null,
     listaBlanca: (process.env.TELEFONO_PERMITIDOS || "").split(",").map(s => s.trim()).filter(Boolean)
   };
 }
