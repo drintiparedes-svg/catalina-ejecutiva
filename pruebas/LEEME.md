@@ -17,7 +17,8 @@ Sin navegador —comprueban código, rutas, redacción y el motor de escucha—:
 Con navegador y servidor, todo junto:
 
     PORT=8123 node server.mjs &
-    chromium --headless=new --remote-debugging-port=9334 --user-data-dir=/tmp/qa &
+    chromium --headless=new --remote-debugging-port=9334 --user-data-dir=/tmp/qa \
+      --use-fake-device-for-media-stream --use-fake-ui-for-media-stream &
     sh pruebas/correr.sh
 
 ## Qué cubre cada uno
@@ -30,6 +31,7 @@ Con navegador y servidor, todo junto:
 | `qa-escucha` | El motor de escucha aislado: sordera, caída de uno y de los dos motores, latido, arranque denegado, cierre. |
 | `qa-bilingue` | Los dos idiomas sobre el mismo audio: que no se pierda ni se duplique nada, que cada frase salga en su lengua, y que un desfase entre motores se detecte en vez de mezclar frases. |
 | `qa-audio` | El reproductor de voz aislado: que cuando el audio llega más lento de lo que se reproduce dé unas pocas pausas largas en vez de doscientos microcortes, que no descarte audio y que interrumpirla lo vacíe todo. |
+| `qa-captura` | El micrófono aislado: que el worklet entregue exactamente lo que se dijo, en lotes de 100 ms transferidos y en orden, y que el base64 rápido sea idéntico al que sustituye. |
 | `qa-docs` | El `.docx` y el `.pdf` de verdad: que sean archivos válidos y que no hayan perdido ni traducido nada. |
 | `qa1` | Preparación: tipos, idiomas, cuaderno acumulativo, atribución, documentos. |
 | `qa2` | Rutas de fallo: servidor caído al cerrar, navegador sin reconocimiento, y el correo a terceros que no sale sin confirmar. |
@@ -40,6 +42,7 @@ Con navegador y servidor, todo junto:
 | `qa7` | Las herramientas por voz (`tomar_nota`, `quien_habla`, `estado_de_la_reunion`, `consultar_reunion`, `finalizar_reunion`) y el ciclo de sordera mientras Catalina habla. |
 | `qa8` | La carpeta local: que se recuerde, que reciba los tres archivos, que pida permiso cuando caduca y que un fallo suyo no se lleve la reunión. |
 | `qa9` | Que la voz sea la de ElevenLabs y no se cambie por otra, y que el micrófono no vuelva al agente mientras ella está contando la minuta. |
+| `qa-voz` | La sesión de ElevenLabs de verdad con un WebSocket doble: el micrófono (un tono de 440 Hz) recorre worklet → PCM → base64 → socket y llega a 16 kHz con la frecuencia intacta; el audio del agente entra al reproductor; pausar corta el envío; una interrupción vacía la cola. |
 | `qa-correo` | Que el SERVIDOR se niegue a mandar la reunión a un tercero sin confirmación explícita. El navegador no es una garantía: es de quien lo abre. |
 | `qa-drive` | Google Drive entero contra un doble de Google: consentimiento, canje, carpetas, subida a la carpeta elegida, y Drive caído sin llevarse el cierre. |
 

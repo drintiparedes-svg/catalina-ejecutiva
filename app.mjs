@@ -23,7 +23,7 @@ import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // Se sube a mano con cada arreglo que el usuario tiene que descargar.
-export const VERSION = "2026-09-01.3";
+export const VERSION = "2026-09-01.4";
 
 const root = fileURLToPath(new URL("./public", import.meta.url));
 // El .env se lee de forma síncrona a propósito. Con `await` aquí arriba, en el
@@ -918,6 +918,7 @@ async function createRealtimeSession(req, res) {
 
   const upstream = await fetch("https://api.openai.com/v1/realtime/calls", {
     method: "POST",
+    signal: AbortSignal.timeout(10000),
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "OpenAI-Safety-Identifier": "catalina-local-owner"
@@ -970,6 +971,7 @@ async function createGeminiToken(res) {
   const ahora = Date.now();
   const upstream = await fetch("https://generativelanguage.googleapis.com/v1beta/auth_tokens", {
     method: "POST",
+    signal: AbortSignal.timeout(10000),
     headers: {
       "x-goog-api-key": process.env.GEMINI_API_KEY.trim(),
       "Content-Type": "application/json"
@@ -1096,7 +1098,7 @@ async function createElevenLabsSession(res) {
   try {
     upstream = await fetch(
       `${ELEVENLABS_API}/v1/convai/conversation/get-signed-url?agent_id=${encodeURIComponent(agente)}`,
-      { headers: { "xi-api-key": clave } }
+      { headers: { "xi-api-key": clave }, signal: AbortSignal.timeout(8000) }
     );
     cuerpo = await upstream.text();
   } catch (error) {
@@ -1163,7 +1165,7 @@ async function registrarHerramientas(res) {
 
   let agenteActual;
   try {
-    const leer = await fetch(`${ELEVENLABS_API}/v1/convai/agents/${encodeURIComponent(agente)}`, { headers: cabeceras });
+    const leer = await fetch(`${ELEVENLABS_API}/v1/convai/agents/${encodeURIComponent(agente)}`, { headers: cabeceras, signal: AbortSignal.timeout(8000) });
     const cuerpo = await leer.text();
     if (!leer.ok) {
       console.error("ElevenLabs leer agente:", leer.status, cuerpo);
@@ -1187,6 +1189,7 @@ async function registrarHerramientas(res) {
     const guardar = await fetch(`${ELEVENLABS_API}/v1/convai/agents/${encodeURIComponent(agente)}`, {
       method: "PATCH",
       headers: cabeceras,
+      signal: AbortSignal.timeout(10000),
       body: JSON.stringify({ conversation_config: { agent: { prompt: { tools } } } })
     });
     const cuerpo = await guardar.text();
@@ -2169,7 +2172,7 @@ async function herramientasDelAgente(res) {
   let datos;
   try {
     const r = await fetch(`${ELEVENLABS_API}/v1/convai/agents/${encodeURIComponent(agente)}`,
-      { headers: { "xi-api-key": clave } });
+      { headers: { "xi-api-key": clave }, signal: AbortSignal.timeout(8000) });
     const crudo = await r.text();
     if (!r.ok) return json(res, 502, { ok: false, error: `ElevenLabs no dejó leer el agente (${r.status}).` });
     datos = JSON.parse(crudo);
@@ -2200,7 +2203,7 @@ async function asegurarHerramientas(agente, clave) {
   if (herramientasAlDia) return;
   try {
     const cabeceras = { "xi-api-key": clave, "Content-Type": "application/json" };
-    const leer = await fetch(`${ELEVENLABS_API}/v1/convai/agents/${encodeURIComponent(agente)}`, { headers: cabeceras });
+    const leer = await fetch(`${ELEVENLABS_API}/v1/convai/agents/${encodeURIComponent(agente)}`, { headers: cabeceras, signal: AbortSignal.timeout(8000) });
     if (!leer.ok) return;
     const actual = JSON.parse(await leer.text());
 
@@ -2215,6 +2218,7 @@ async function asegurarHerramientas(agente, clave) {
     const guardar = await fetch(`${ELEVENLABS_API}/v1/convai/agents/${encodeURIComponent(agente)}`, {
       method: "PATCH",
       headers: cabeceras,
+      signal: AbortSignal.timeout(10000),
       body: JSON.stringify({ conversation_config: { agent: { prompt: { tools: [...ajenas, ...nuestras] } } } })
     });
     if (guardar.ok) herramientasAlDia = true;

@@ -3,8 +3,9 @@
 #
 # Antes de correrlo hacen falta dos cosas:
 #   1. El servidor principal:  PORT=8123 node server.mjs
-#   2. Un Chromium con depuración remota en el 9334:
-#      chromium --headless=new --remote-debugging-port=9334 --user-data-dir=/tmp/qa
+#   2. Un Chromium con depuración remota en el 9334 y micrófono falso:
+#      chromium --headless=new --remote-debugging-port=9334 --user-data-dir=/tmp/qa \
+#        --use-fake-device-for-media-stream --use-fake-ui-for-media-stream
 #
 # Los otros dos servidores —uno con clave de correo, otro con un doble de
 # Google— los levanta este guion solo, porque existen sólo para las pruebas.
@@ -24,7 +25,7 @@ arrancar 8124 'PORT=8124 RESEND_API_KEY=clave-de-prueba node server.mjs'
 arrancar 4181 'node pruebas/google-falso.mjs'
 
 total=0; malos=0
-for t in qa-dom qa-rutas qa-prompts qa-escucha qa-bilingue qa-audio qa-correo qa-drive qa-docs qa1 qa2 qa3 qa4 qa5 qa6 qa7 qa8 qa9; do
+for t in qa-dom qa-rutas qa-prompts qa-escucha qa-bilingue qa-audio qa-captura qa-correo qa-drive qa-docs qa1 qa2 qa3 qa4 qa5 qa6 qa7 qa8 qa9 qa-voz; do
   salida=$(timeout 300 node "$t".mjs 2>&1)
   n=$(printf '%s\n' "$salida" | grep -cE "^(ok +|  ok +)")
   f=$(printf '%s\n' "$salida" | grep -cE "^(FALLA|  FALLA|  ROTO)")

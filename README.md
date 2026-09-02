@@ -253,6 +253,28 @@ se lee.
 Sólo se transcribe la voz de Catalina. Transcribir además la de la persona
 requiere activar `input_audio_transcription` en la sesión, con su costo aparte.
 
+## El micrófono, en el hilo de audio
+
+La captura del micrófono iba por un `ScriptProcessorNode` en el hilo principal:
+cada 43 ms remuestreaba de 48 a 16 kHz con interpolación lineal, convertía a
+enteros y codificaba en base64 concatenando un carácter por byte, compitiendo
+con el dibujo de la cara. Es un nodo que el navegador tiene marcado para
+desaparecer, y la interpolación lineal sin filtro mete aliasing en justo la voz
+que el agente tiene que entender.
+
+Ahora el contexto de captura se abre **a 16 kHz** —el navegador remuestrea en
+código nativo, con filtro— y un worklet (`audio/captura-pcm.js`) junta 100 ms,
+convierte a PCM de 16 bits en el hilo de audio y entrega el búfer transferido;
+el hilo principal sólo codifica y manda. Diez mensajes por segundo. Si el
+worklet no carga, queda el nodo antiguo de reserva.
+
+La conexión también se solapó: firmar la sesión en el servidor (dos viajes a
+ElevenLabs), pedir el micrófono y cargar el reproductor no dependen entre sí y
+antes iban en fila. Ahora tardan lo que la más lenta, no la suma.
+
+Se comprueba de extremo a extremo (`pruebas/qa-voz.mjs`): un tono de 440 Hz
+como micrófono, y se cuenta que sigan siendo 440 Hz al otro lado del socket.
+
 ## Por qué se oía entrecortada
 
 El audio de la voz se reproduce en el hilo de audio, así que un atasco del hilo
@@ -626,7 +648,7 @@ puede», «no diste permiso» y «Chrome no llega a los servidores de voz».
 
 ### El banco de pruebas
 
-En `pruebas/` hay 269 comprobaciones automáticas que recorren el modo entero:
+En `pruebas/` hay 313 comprobaciones automáticas que recorren el modo entero:
 el flujo completo en un Chromium de verdad, las herramientas por voz, el ciclo
 de sordera mientras ella habla, la carpeta local con sus fallos, Google Drive
 contra un doble de Google, las rutas de fallo (servidor caído, navegador sin
