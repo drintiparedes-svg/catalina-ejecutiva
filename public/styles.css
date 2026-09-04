@@ -604,3 +604,38 @@ button.primary { border-color: rgba(109,228,255,.45); background: linear-gradien
 .marcador-texto::placeholder { color:rgba(180,225,245,.32); }
 .marcador-texto:focus { outline:none; border-color:rgba(109,228,255,.5); box-shadow:0 0 0 3px rgba(109,228,255,.14); }
 .marcador { max-height:88dvh; overflow-y:auto; }
+
+
+/* ─── Documentos de la conversación ───────────────────────────────────────
+   Se sube una presentación o un Excel y se comenta con ella. La ficha dice de
+   dónde salió el texto: de un archivo leído aquí, o de una imagen que tuvo que
+   mirar el modelo. La diferencia importa y por eso se ve. */
+.panel-subir {
+  margin-left: auto; margin-right: 6px; min-height: 24px; padding: 0 10px;
+  border-radius: 8px; border: 1px solid rgba(180,225,245,.22);
+  background: rgba(255,255,255,.05); color: #a9d8ec;
+  font: inherit; font-size: 11px; font-weight: 600; letter-spacing: .06em; cursor: pointer;
+}
+.panel-subir:hover { background: rgba(255,255,255,.1); }
+.panel-subir[disabled] { opacity: .5; cursor: default; }
+
+.panel-adjuntos { display: flex; flex-direction: column; gap: 5px; padding: 8px 12px 2px; }
+.panel-adjuntos[hidden] { display: none; }
+.adjunto {
+  display: flex; align-items: baseline; gap: 8px; padding: 7px 10px;
+  border: 1px solid rgba(180,225,245,.14); border-radius: 9px; background: rgba(255,255,255,.04);
+}
+.adjunto b { flex: 1; min-width: 0; font-size: 12px; font-weight: 600; color: #eaf6fc; overflow-wrap: anywhere; }
+.adjunto i { font-style: normal; font-size: 10.5px; color: rgba(209,229,239,.55); white-space: nowrap; }
+.adjunto .adjunto-ojo { color: rgba(169,216,236,.75); }
+.adjunto button {
+  flex: none; min-height: 20px; padding: 0 6px; border: 0; border-radius: 6px;
+  background: transparent; color: rgba(209,229,239,.5); font-size: 15px; line-height: 1; cursor: pointer;
+}
+.adjunto button:hover { color: #eaf6fc; background: rgba(255,255,255,.08); }
+.adjunto[data-estado="leyendo"] { border-style: dashed; }
+.adjunto[data-estado="problema"] { border-color: rgba(255,159,10,.45); background: rgba(255,159,10,.08); }
+.adjunto[data-estado="problema"] i { color: #FF9F0A; white-space: normal; }
+
+/* Soltar un archivo encima del panel. */
+.panel[data-soltando="true"] { outline: 2px dashed rgba(109,228,255,.6); outline-offset: -6px; }

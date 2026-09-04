@@ -40,6 +40,7 @@ Con navegador y servidor, todo junto:
 | `qa7` | Las herramientas por voz (`tomar_nota`, `quien_habla`, `estado_de_la_reunion`, `consultar_reunion`, `finalizar_reunion`) y el ciclo de sordera mientras Catalina habla. |
 | `qa8` | La carpeta local: que se recuerde, que reciba los tres archivos, que pida permiso cuando caduca y que un fallo suyo no se lleve la reunión. |
 | `qa-telefonia` | Que el diagnóstico avise cuando las llamadas comparten agente con el navegador y cuente las herramientas de cliente que ese agente lleva encima. En una llamada nadie las contesta, y cada una es un silencio de hasta veinte segundos. |
+| `qa-adjuntos` | Subir una presentación, un Excel o una imagen a la conversación: que se lea en el navegador, que a Catalina le llegue el principio como contexto y no el documento entero, que pueda pedir más con `consultar_documento`, y que lo que no se pueda leer se diga. |
 | `qa-correo` | Que el SERVIDOR se niegue a mandar la reunión a un tercero sin confirmación explícita. El navegador no es una garantía: es de quien lo abre. |
 | `qa-drive` | Google Drive entero contra un doble de Google: consentimiento, canje, carpetas, subida a la carpeta elegida, y Drive caído sin llevarse el cierre. |
 

@@ -17,13 +17,13 @@ import {
   terminarLlamadaElevenLabs, diagnosticoElevenLabs
 } from "./llamadas.mjs";
 import { cerrarReunion } from "./reunion.mjs";
-import { hayRedaccion, probarRedaccion } from "./redaccion.mjs";
+import { hayRedaccion, probarRedaccion, describirImagen } from "./redaccion.mjs";
 import { estadoDrive, urlDeConsentimiento, canjearCodigo, carpetasPropias, crearCarpeta } from "./drive.mjs";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // Se sube a mano con cada arreglo que el usuario tiene que descargar.
-export const VERSION = "2026-09-01.7";
+export const VERSION = "2026-09-01.8";
 
 const root = fileURLToPath(new URL("./public", import.meta.url));
 // El .env se lee de forma síncrona a propósito. Con `await` aquí arriba, en el
@@ -303,6 +303,27 @@ export async function atender(req, res) {
       return await enviarReunionPorCorreo(req, res);
     }
 
+    // Qué se ve en una imagen que se subió a la conversación. Es lo único del
+    // lector de documentos que no puede resolverse en el navegador: de un PDF o
+    // un Excel se saca el texto ahí mismo, pero de una imagen no sale nada sin
+    // preguntarle al modelo.
+    if (req.method === "POST" && req.url === "/documento/imagen") {
+      let cuerpo = {};
+      try { cuerpo = JSON.parse(await readBody(req) || "{}"); } catch {}
+      const base64 = String(cuerpo.base64 || "");
+      // Tope de tamaño: una imagen de móvil ronda los 4 MB y en base64 crece un
+      // tercio. Por encima de esto no es una lámina, es un archivo equivocado.
+      if (base64.length > 12_000_000) {
+        return json(res, 413, { ok: false, error: "La imagen es demasiado grande. Redúcela y vuelve a subirla." });
+      }
+      return json(res, 200, await describirImagen({
+        base64,
+        tipo: String(cuerpo.tipo || "image/png"),
+        nombre: String(cuerpo.nombre || "").slice(0, 120),
+        nota: String(cuerpo.nota || "").slice(0, 400)
+      }));
+    }
+
     if (req.method === "GET" && req.url === "/reunion/diagnostico") {
       // La redacción se COMPRUEBA contra el modelo, no se da por buena porque
       // haya clave: el fallo real fue una clave válida con un modelo que ya no
@@ -473,10 +494,20 @@ const USO_DE_LA_REUNION = [
   "Nunca conviertas una nota del usuario en algo que alguien dijo, ni atribuyas a una persona lo que venía en un documento."
 ].join(" ");
 
+// Documentos subidos a la conversación.
+const USO_DE_LOS_DOCUMENTOS = [
+  "A esta conversación se le pueden subir documentos: presentaciones, Excel, PDF, Word, imágenes.",
+  "Cuando suban uno te llega su principio como contexto, con el nombre del archivo. Coméntalo breve y en voz alta: qué es y lo que más importa.",
+  "Si para responder necesitas leer más de ese documento, usa consultar_documento en vez de decir que no lo tienes; te devuelve el trozo siguiente.",
+  "Habla de lo que está escrito en el documento. Si algo no aparece ahí, dilo en vez de completarlo con lo que recuerdes.",
+  "De una imagen te llega una descripción de lo que se ve, no la imagen: si la descripción no alcanza para responder, dilo."
+].join(" ");
+
 async function instruccionesDeSesion(config) {
   const puedeLlamar = (telefoniaElevenLabsLista() || telefoniaLista()) && config.telefono?.activo !== false;
   return [
     componerInstrucciones(config),
+    USO_DE_LOS_DOCUMENTOS,
     USO_DE_HERRAMIENTAS,
     USO_DE_LA_REUNION,
     puedeLlamar ? USO_DEL_TELEFONO : ""
@@ -770,6 +801,26 @@ const HERRAMIENTAS = [
 // de la reunión, y por eso responden «no hay ninguna reunión en curso» fuera del
 // modo Meet en vez de no existir: el modelo tiene que poder decir por qué no
 // pudo, y una herramienta que aparece y desaparece según el modo lo confundía.
+// Leer un documento que subieron a la conversación. Al subirlo se le manda ya
+// el principio; esto es para cuando necesita más. Vive en el navegador: el
+// archivo nunca sale de ahí, así que la herramienta es de cliente.
+const HERRAMIENTAS_DOCUMENTO = [
+  {
+    nombre: "consultar_documento",
+    descripcion: "Lee un documento que la persona subió a esta conversación —una presentación, un Excel, un PDF, "
+      + "un informe—. Al subirlo ya te llegó el principio; usa esto cuando necesites leer más para responder: "
+      + "«¿qué dice la diapositiva de presupuesto?», «búscame la cifra de marzo». Sin nombre, lee el último "
+      + "documento que subieron. Devuelve un trozo y te dice desde dónde seguir si quieres continuar.",
+    parametros: {
+      type: "object",
+      properties: {
+        nombre: { type: "string", description: "Parte del nombre del archivo. Vacío para el último que subieron." },
+        desde: { type: "number", description: "Carácter por el que empezar a leer. 0 o vacío para el principio." }
+      }
+    }
+  }
+];
+
 const HERRAMIENTAS_REUNION = [
   {
     nombre: "tomar_nota",
@@ -844,6 +895,7 @@ const HERRAMIENTAS_TELEFONO = [
 function todasLasHerramientas(config) {
   return [
     ...HERRAMIENTAS,
+    ...HERRAMIENTAS_DOCUMENTO,
     ...HERRAMIENTAS_REUNION,
     ...((telefoniaElevenLabsLista() || telefoniaLista()) && config.telefono?.activo !== false ? HERRAMIENTAS_TELEFONO : []),
     ...herramientasDeConectores(config)

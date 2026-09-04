@@ -19,7 +19,7 @@
       "continue": true
     },
     {
-      "src": "/(health|session|gemini/token|elevenlabs/sesion|elevenlabs/herramientas|elevenlabs/registrar-herramientas|imagen-medica|referencias|literatura/consensus|web/buscar|web/leer|imagen/generar|videos/buscar|imagenes/buscar|imagenes/web|fuentes-clinicas|img|salud|ruta|correo|conector|llamada|llamada/.*|reunion/.*|drive/.*|admin/.*|telefonia/.*)",
+      "src": "/(health|session|gemini/token|elevenlabs/sesion|elevenlabs/herramientas|elevenlabs/registrar-herramientas|imagen-medica|referencias|literatura/consensus|web/buscar|web/leer|imagen/generar|videos/buscar|imagenes/buscar|imagenes/web|fuentes-clinicas|img|salud|ruta|correo|conector|llamada|llamada/.*|reunion/.*|documento/.*|drive/.*|admin/.*|telefonia/.*)",
       "dest": "/api/index.mjs"
     },
     {

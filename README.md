@@ -582,7 +582,7 @@ puede», «no diste permiso» y «Chrome no llega a los servidores de voz».
 
 ### El banco de pruebas
 
-En `pruebas/` hay 290 comprobaciones automáticas que recorren el modo entero:
+En `pruebas/` hay 320 comprobaciones automáticas que recorren el modo entero:
 el flujo completo en un Chromium de verdad, las herramientas por voz, el ciclo
 de sordera mientras ella habla, la carpeta local con sus fallos, Google Drive
 contra un doble de Google, las rutas de fallo (servidor caído, navegador sin
@@ -598,7 +598,38 @@ mandar la reunión a un tercero sin confirmación explícita, aunque se lo pidan
 directamente a la ruta. Que el navegador pida confirmación dos veces está bien,
 pero el navegador es de quien lo abre y no es una garantía de nada.
 
-### Un agente para hablar, otro para llamar
+### Darle un documento para conversar sobre él
+
+En el panel de conversación hay un botón **Subir**, y también se puede soltar un
+archivo encima del panel. Sirve para lo que uno haría con una persona: enseñarle
+una presentación, un Excel o un informe y comentarlo.
+
+El texto se saca **en el propio navegador**, con el mismo lector que usa el modo
+reunión —PDF, Word, Excel, PowerPoint y texto plano, con `DecompressionStream`—,
+así que el archivo no se sube a ningún sitio. La única excepción son las
+imágenes: de una imagen no se puede sacar texto aquí, así que se manda al
+servidor para que el modelo describa lo que se ve. Eso conviene saberlo, y la
+ficha del documento lo dice: «imagen descrita» frente al recuento de caracteres
+de un archivo leído.
+
+A Catalina **no se le manda el documento entero**. Se le manda una ficha con el
+nombre y los primeros seis mil caracteres, y se le dice cómo pedir el resto: un
+Excel de cuarenta mil caracteres metido de golpe en una conversación hablada no
+la ayuda a responder, la ahoga. Cuando necesita más, usa `consultar_documento`,
+que le devuelve un trozo y le dice desde qué carácter seguir —sin eso vuelve a
+pedir el mismo—. Es el mismo patrón que `consultar_reunion`.
+
+De la descripción de una imagen se le pide lo que se ve y el texto transcrito
+literalmente, y se le prohíbe interpretar: lo ilegible se marca como
+`[ilegible]` en vez de completarlo, y una imagen clínica se describe sin
+diagnosticar. Un diagnóstico no sale de una descripción.
+
+**Ojo con el teléfono:** `consultar_documento` es una herramienta de cliente
+más, y hasta que las llamadas tengan su propio agente (ver abajo) cada
+herramienta de cliente es un silencio posible en una llamada. Con
+`ELEVENLABS_CALL_AGENT_ID` puesto, esto no las afecta.
+
+## Un agente para hablar, otro para llamar
 
 Las llamadas usan `ELEVENLABS_CALL_AGENT_ID` si existe, y si no, el mismo agente
 del navegador. Compartirlo parecía inofensivo y no lo es.

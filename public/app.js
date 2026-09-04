@@ -13,6 +13,10 @@ import { ElevenLabsSession } from "./realtime/elevenlabs-session.js";
 import { dibujarRuta } from "./mapa.js";
 import { EscuchaDeReunion, escuchaDisponible, IDIOMAS } from "./escucha.js";
 import { MemoriaDeReunion, leerDocumento, ESTADOS, ROTULOS } from "./reunion.js";
+import {
+  anadirDocumento, listarDocumentos, olvidarDocumento, olvidarDocumentos,
+  fichaParaCatalina, leerTrozo, legible
+} from "./adjuntos.js";
 import { TIPOS, TIPO_POR_DEFECTO, tipoDeReunion } from "./tipos-de-reunion.js";
 import { carpetaGuardada, permisoDeCarpeta, escribirEnCarpeta, carpetaDisponible } from "./carpeta.js";
 import {
@@ -83,6 +87,9 @@ const ui = {
   referenciasAmpliar: document.querySelector("#referenciasAmpliar"),
   panel: document.querySelector("#panel"),
   panelBody: document.querySelector("#panelBody"),
+  panelSubir: document.querySelector("#panelSubir"),
+  panelAdjuntos: document.querySelector("#panelAdjuntos"),
+  panelArchivo: document.querySelector("#panelArchivo"),
   panelClose: document.querySelector("#panelClose"),
   togglePanel: document.querySelector("#togglePanel"),
   controls: document.querySelector(".controls"),
@@ -2238,6 +2245,7 @@ async function despacharHerramienta(nombre, argumentos) {
   if (nombre === "buscar_imagenes_web") return await buscarImagenesWeb(argumentos);
   if (nombre === "fuentes_clinicas") return await pedirFuentesClinicas(argumentos);
   if (nombre === "buscar_videos") return await buscarVideos(argumentos);
+  if (nombre === "consultar_documento") return leerTrozo(argumentos || {});
   if (nombre === "tomar_nota") return anotarEnLaReunion(argumentos);
   if (nombre === "quien_habla") return registrarHablante(argumentos);
   if (nombre === "estado_de_la_reunion") return contarEstadoDeLaReunion();
@@ -3384,6 +3392,144 @@ function fijarSubtitulos(activo) {
   if (!activo && !avisoActivo) ui.caption.dataset.visible = "false";
   else if (activo && ui.caption.textContent.trim()) ui.caption.dataset.visible = "true";
   guardarPreferencias();
+}
+
+// ── Documentos de la conversación ────────────────────────────────────────────
+//
+// Subir una presentación, un Excel o una imagen para comentarla con ella. El
+// texto se saca aquí mismo y se le manda como contexto; el archivo no viaja a
+// ningún sitio, salvo las imágenes, que necesitan al modelo para describirse.
+
+let subiendo = false;
+
+ui.panelSubir?.addEventListener("click", () => ui.panelArchivo?.click());
+ui.panelArchivo?.addEventListener("change", async evento => {
+  const archivos = [...evento.target.files];
+  evento.target.value = "";
+  await subirDocumentos(archivos);
+});
+
+// Soltar encima del panel hace lo mismo, que es como la gente espera darle algo.
+for (const evento of ["dragenter", "dragover"]) {
+  ui.panel?.addEventListener(evento, e => {
+    if (!e.dataTransfer?.types?.includes("Files")) return;
+    e.preventDefault();
+    ui.panel.dataset.soltando = "true";
+  });
+}
+for (const evento of ["dragleave", "drop"]) {
+  ui.panel?.addEventListener(evento, e => {
+    if (evento === "dragleave" && ui.panel.contains(e.relatedTarget)) return;
+    ui.panel.dataset.soltando = "false";
+  });
+}
+ui.panel?.addEventListener("drop", async e => {
+  const archivos = [...(e.dataTransfer?.files || [])];
+  if (!archivos.length) return;
+  e.preventDefault();
+  await subirDocumentos(archivos);
+});
+
+async function subirDocumentos(archivos) {
+  if (!archivos.length || subiendo) return;
+  subiendo = true;
+  if (ui.panelSubir) ui.panelSubir.disabled = true;
+  fijarPanel(true);
+
+  try {
+    for (const archivo of archivos) {
+      // Una ficha en estado «leyendo» mientras tanto: leer un PowerPoint o
+      // mirar una imagen tarda, y sin esto la pantalla se queda muda.
+      const fila = pintarAdjuntoProvisional(archivo.name);
+      const r = await anadirDocumento(archivo, {
+        alAvisar: texto => { fila.querySelector("i").textContent = texto; }
+      });
+      fila.remove();
+      pintarAdjuntos();
+
+      if (!r.ok) { pintarAdjuntoFallido(r.nombre, r.error); continue; }
+
+      anotarNota(`Documento añadido: ${r.documento.nombre}`);
+      // Y se le pasa a Catalina para que lo comente. Si la conversación no está
+      // abierta, el documento queda cargado igual y lo verá al conectarse.
+      if (connected && sesion) {
+        if (sesion.enviarTexto(fichaParaCatalina(r.documento)) !== true) {
+          mostrarAviso("El documento quedó cargado, pero no pude pasárselo: la conversación se cortó.");
+        }
+      } else {
+        mostrarAviso(`«${r.documento.nombre}» quedó cargado. Pulsa «Iniciar conversación» y podrás comentarlo con ella.`);
+      }
+    }
+  } finally {
+    subiendo = false;
+    if (ui.panelSubir) ui.panelSubir.disabled = false;
+  }
+}
+
+function pintarAdjuntoProvisional(nombre) {
+  const fila = document.createElement("div");
+  fila.className = "adjunto";
+  fila.dataset.estado = "leyendo";
+  const b = document.createElement("b");
+  b.textContent = nombre;
+  const i = document.createElement("i");
+  i.textContent = "Leyendo…";
+  fila.append(b, i);
+  ui.panelAdjuntos.hidden = false;
+  ui.panelAdjuntos.append(fila);
+  return fila;
+}
+
+function pintarAdjuntoFallido(nombre, motivo) {
+  const fila = document.createElement("div");
+  fila.className = "adjunto";
+  fila.dataset.estado = "problema";
+  const b = document.createElement("b");
+  b.textContent = nombre;
+  const i = document.createElement("i");
+  i.textContent = motivo;
+  const quitar = document.createElement("button");
+  quitar.textContent = "×";
+  quitar.setAttribute("aria-label", `Quitar ${nombre}`);
+  quitar.addEventListener("click", () => {
+    fila.remove();
+    if (!ui.panelAdjuntos.children.length) ui.panelAdjuntos.hidden = true;
+  });
+  fila.append(b, i, quitar);
+  ui.panelAdjuntos.hidden = false;
+  ui.panelAdjuntos.append(fila);
+}
+
+function pintarAdjuntos() {
+  if (!ui.panelAdjuntos) return;
+  // Se conservan las filas de los que fallaron: son un aviso, no un documento.
+  for (const fila of [...ui.panelAdjuntos.children]) {
+    if (fila.dataset.estado !== "problema") fila.remove();
+  }
+  for (const d of listarDocumentos()) {
+    const fila = document.createElement("div");
+    fila.className = "adjunto";
+    const b = document.createElement("b");
+    b.textContent = d.nombre;
+    const i = document.createElement("i");
+    // De dónde salió el texto: leído aquí, o mirado por el modelo. La
+    // diferencia importa y por eso se ve.
+    i.className = d.imagen ? "adjunto-ojo" : "";
+    i.textContent = d.imagen
+      ? `imagen descrita · ${legible(d.tamano)}`
+      : `${d.caracteres.toLocaleString("es-CL")} car. · ${legible(d.tamano)}`;
+    const quitar = document.createElement("button");
+    quitar.textContent = "×";
+    quitar.setAttribute("aria-label", `Quitar ${d.nombre}`);
+    quitar.addEventListener("click", () => {
+      olvidarDocumento(d.id);
+      pintarAdjuntos();
+      anotarNota(`Documento quitado: ${d.nombre}`);
+    });
+    fila.append(b, i, quitar);
+    ui.panelAdjuntos.append(fila);
+  }
+  ui.panelAdjuntos.hidden = ui.panelAdjuntos.children.length === 0;
 }
 
 function fijarPanel(activo) {

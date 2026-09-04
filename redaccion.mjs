@@ -135,7 +135,7 @@ const REPOSO = 1500;
 
 const esperar = ms => new Promise(r => setTimeout(r, ms));
 
-async function pedir(prompt, { esquema = null, temperatura = 0.2, tiempo = TIEMPO } = {}) {
+async function pedir(prompt, { esquema = null, temperatura = 0.2, tiempo = TIEMPO, partes = [] } = {}) {
   const clave = process.env.GEMINI_API_KEY?.trim();
   if (!clave) return { ok: false, code: "SIN_CLAVE", error: "Falta GEMINI_API_KEY para redactar la minuta." };
 
@@ -144,7 +144,13 @@ async function pedir(prompt, { esquema = null, temperatura = 0.2, tiempo = TIEMP
     generationConfig.responseMimeType = "application/json";
     generationConfig.responseSchema = esquema;
   }
-  const cuerpo = JSON.stringify({ contents: [{ role: "user", parts: [{ text: prompt }] }], generationConfig });
+  // `partes` deja añadir una imagen junto al texto. Los modelos de la cascada
+  // son multimodales; los antiguos dedicados a visión están filtrados aparte
+  // porque no sirven para lo demás.
+  const cuerpo = JSON.stringify({
+    contents: [{ role: "user", parts: [{ text: prompt }, ...partes] }],
+    generationConfig
+  });
 
   // El orden: el que ya funcionó, luego el forzado a mano, luego los que Google
   // dice que tiene esta clave, y por último la lista escrita a mano. Preguntar
@@ -643,6 +649,47 @@ function normalizarMinuta(cruda) {
 // Minuta de respaldo, sin modelo. No interpreta nada —no puede— pero deja el
 // material ordenado y rotulado por procedencia, que es infinitamente mejor que
 // devolver un error y perder la reunión.
+// Qué se ve en una imagen.
+//
+// El lector de documentos del navegador saca texto de PDF, Word, Excel y
+// PowerPoint, pero de una imagen no puede sacar nada: es la única pieza que
+// necesita al modelo para existir. Una lámina, la foto de una pizarra o un
+// gráfico pegado en una diapositiva son justo lo que alguien quiere comentar,
+// así que sin esto la mitad de lo que se sube entra mudo.
+//
+// Describe, no interpreta: lo que hay en la imagen, y los números y rótulos tal
+// como están escritos. Si algo no se lee, lo dice en vez de completarlo.
+export async function describirImagen({ base64, tipo, nombre = "", nota = "" }) {
+  if (!base64) return { ok: false, code: "SIN_IMAGEN", error: "No llegó la imagen." };
+  if (!hayRedaccion()) {
+    return { ok: false, code: "SIN_CLAVE", error: "Falta GEMINI_API_KEY: no se pueden leer imágenes." };
+  }
+
+  const prompt = [
+    "Describes una imagen para que alguien que no puede verla pueda conversar sobre ella.",
+    nombre ? `El archivo se llama «${nombre}».` : "",
+    nota ? `Quien la sube dice: «${nota}». Ténlo en cuenta, pero describe lo que de verdad se ve.` : "",
+    "",
+    "Cuenta, en este orden y sin encabezados:",
+    "1. Qué es la imagen en una frase: una diapositiva, un gráfico, una tabla, una fotografía, un esquema, una radiografía…",
+    "2. Todo el texto que aparezca, transcrito literalmente: títulos, rótulos, ejes, leyendas, notas al pie.",
+    "3. Si hay datos —un gráfico o una tabla—, los valores tal como se leen, con sus unidades.",
+    "4. Lo demás que se vea y sea relevante para entenderla.",
+    "",
+    "PROHIBIDO: interpretar lo que significa, sacar conclusiones, o completar un número o una palabra que no se lea con claridad.",
+    "Si algo está borroso, cortado o ilegible, escríbelo como [ilegible] y sigue.",
+    "Si es una imagen clínica, describe lo que se ve sin diagnosticar: el diagnóstico no sale de una descripción.",
+    "Texto plano y seguido, sin viñetas ni numeración."
+  ].filter(Boolean).join("\n");
+
+  const salida = await pedir(prompt, {
+    temperatura: 0.1,
+    partes: [{ inlineData: { mimeType: tipo || "image/png", data: base64 } }]
+  });
+  if (!salida.ok) return salida;
+  return { ok: true, descripcion: salida.texto.trim(), modelo: modeloQueFunciona };
+}
+
 export function minutaSinModelo(reunion) {
   const turnos = reunion.turnos ?? [];
   return {

@@ -68,6 +68,28 @@ const mono = enviados[0] || "";
 anotar("Con reunión en un idioma no se le mete esa regla de más",
   !/NO traduzcas/i.test(mono) && /español de Chile/i.test(mono), mono.split("\n")[0]);
 
+// ── Describir una imagen ────────────────────────────────────────────────────
+const { describirImagen } = await import("../redaccion.mjs");
+enviados.length = 0;
+let cuerpoEnviado = null;
+const fetchTexto = globalThis.fetch;
+globalThis.fetch = async (url, opciones) => {
+  if (opciones?.body && String(url).includes("generateContent")) cuerpoEnviado = JSON.parse(opciones.body);
+  return fetchTexto(url, opciones);
+};
+const r = await describirImagen({ base64: "QUJD", tipo: "image/png", nombre: "diapositiva.png", nota: "es del comité" });
+anotar("Describir una imagen devuelve la descripción", r.ok === true && typeof r.descripcion === "string", JSON.stringify(r).slice(0, 90));
+anotar("La imagen viaja al modelo como dato incrustado, con su tipo",
+  cuerpoEnviado?.contents?.[0]?.parts?.some(p => p.inlineData?.data === "QUJD" && p.inlineData?.mimeType === "image/png"),
+  JSON.stringify(cuerpoEnviado?.contents?.[0]?.parts?.map(p => Object.keys(p))));
+const promptImagen = cuerpoEnviado?.contents?.[0]?.parts?.[0]?.text || "";
+anotar("Se le pide transcribir el texto que aparece, no interpretarlo",
+  /transcrito literalmente/.test(promptImagen) && /PROHIBIDO: interpretar/.test(promptImagen), "");
+anotar("Y que marque lo ilegible en vez de completarlo", /\[ilegible\]/.test(promptImagen), "");
+anotar("Si es clínica, describe sin diagnosticar", /sin diagnosticar/.test(promptImagen), "");
+anotar("Se le pasa el nombre del archivo y lo que dijo quien la sube",
+  /diapositiva\.png/.test(promptImagen) && /es del comité/.test(promptImagen), "");
+
 let mal = 0;
 for (const p of paso) { if (!p.ok) mal += 1; console.log(`${p.ok ? "ok   " : "FALLA"} ${p.n}${p.ok ? "" : "\n        → " + p.d}`); }
 console.log(mal ? `\n✗ ${mal} de ${paso.length}` : `\n✓ las ${paso.length} comprobaciones de redacción pasan`);

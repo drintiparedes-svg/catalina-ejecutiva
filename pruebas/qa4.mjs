@@ -62,10 +62,15 @@ r.push(await escenario("La página normal, fuera del modo reunión", `
   anotar("El modo reunión está oculto de entrada", !visible("#reunion") && !visible("#preparar"), "");
 
   // Pulsar los secundarios no puede reventar nada.
+  // El estado inicial depende de la preferencia guardada —subir un documento
+  // abre el panel y eso se recuerda—, así que se comprueba el cambio, no el valor.
+  const antesDelPanel = $("#panel").dataset.open;
   $("#togglePanel").click(); await dormir(200);
-  anotar("El historial de conversación se abre", $("#panel").dataset.open === "true", $("#panel").dataset.open);
+  anotar("El botón del historial cambia el estado del panel",
+    $("#panel").dataset.open !== antesDelPanel, antesDelPanel + " → " + $("#panel").dataset.open);
   $("#togglePanel").click(); await dormir(200);
-  anotar("Y se cierra", $("#panel").dataset.open === "false", $("#panel").dataset.open);
+  anotar("Y vuelve a dejarlo como estaba",
+    $("#panel").dataset.open === antesDelPanel, $("#panel").dataset.open);
 
   $("#abrirMarcador").click(); await dormir(200);
   anotar("La botonera de teléfono se abre", $("#marcador").dataset.estado === "visible", $("#marcador").dataset.estado);

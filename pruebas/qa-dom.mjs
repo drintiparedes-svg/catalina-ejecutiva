@@ -22,7 +22,13 @@ for (const pagina of paginas) {
   const codigo = propios + "\n" + externos;
 
   // Sólo los selectores literales de id, que son los que se pueden comprobar.
-  const buscados = new Set([...codigo.matchAll(/(?:querySelector|getElementById)\(\s*["'`]#?([A-Za-z][\w-]*)["'`]\s*\)/g)].map(m => m[1]));
+  // Sólo los selectores de id, que son los que se pueden comprobar. Antes el
+  // patrón dejaba la almohadilla como opcional y tomaba `querySelector("i")`
+  // —un selector de etiqueta— como un id llamado «i».
+  const buscados = new Set([
+    ...[...codigo.matchAll(/querySelector\(\s*["'`]#([A-Za-z][\w-]*)["'`]\s*\)/g)].map(m => m[1]),
+    ...[...codigo.matchAll(/getElementById\(\s*["'`]([A-Za-z][\w-]*)["'`]\s*\)/g)].map(m => m[1])
+  ]);
   // Algunos nodos los crea el propio guion (el panel de cierre se compone
   // entero al vuelo). Cuentan como existentes si el código los declara.
   const creados = new Set([

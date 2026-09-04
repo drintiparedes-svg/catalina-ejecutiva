@@ -27,11 +27,18 @@
     <aside class="panel" id="panel" data-open="false" aria-label="Historial de la conversación">
       <header class="panel-head">
         <span class="panel-title">Conversación</span>
+        <button class="panel-subir" id="panelSubir" title="Subir un documento para comentarlo con Catalina">Subir</button>
         <button class="panel-close" id="panelClose" aria-label="Cerrar el historial">&minus;</button>
       </header>
+      <!-- Documentos subidos a esta conversación. Se lee el texto aquí mismo y
+           se le pasa a Catalina como contexto; el archivo no se sube a ningún
+           sitio, salvo las imágenes, que necesitan al modelo para describirse. -->
+      <div class="panel-adjuntos" id="panelAdjuntos" hidden></div>
       <div class="panel-body" id="panelBody">
-        <p class="panel-empty">Lo que diga Catalina irá quedando aquí.</p>
+        <p class="panel-empty">Lo que diga Catalina irá quedando aquí. También puedes soltar aquí una presentación, un Excel o un PDF para comentarlo con ella.</p>
       </div>
+      <input type="file" id="panelArchivo" multiple hidden
+             accept=".pdf,.docx,.xlsx,.pptx,.doc,.xls,.ppt,.txt,.md,.csv,.json,image/*">
     </aside>
 
     <figure class="imagen" id="imagen" data-estado="oculto">
@@ -224,6 +231,6 @@
     <button class="exit-meet" id="exitMeet" aria-label="Salir del modo Meet">Mostrar controles</button>
   </main>
   <audio id="remoteAudio" autoplay></audio>
-  <script type="module" src="app.js?v=40"></script>
+  <script type="module" src="app.js?v=43"></script>
 </body>
 </html>
