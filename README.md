@@ -1,4 +1,4 @@
-# Catalina Ejecutiva — jefa de gabinete con avatar
+# Catalina Ejecutiva — asistente clínica virtual con avatar
 
 Rama aparte de [catalina-avatar](https://github.com/drintiparedes-svg/catalina-avatar):
 la misma cara y el mismo motor de animación, con la voz y el cerebro de un
@@ -582,7 +582,7 @@ puede», «no diste permiso» y «Chrome no llega a los servidores de voz».
 
 ### El banco de pruebas
 
-En `pruebas/` hay 280 comprobaciones automáticas que recorren el modo entero:
+En `pruebas/` hay 290 comprobaciones automáticas que recorren el modo entero:
 el flujo completo en un Chromium de verdad, las herramientas por voz, el ciclo
 de sordera mientras ella habla, la carpeta local con sus fallos, Google Drive
 contra un doble de Google, las rutas de fallo (servidor caído, navegador sin

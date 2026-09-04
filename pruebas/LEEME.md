@@ -24,6 +24,7 @@ Con navegador y servidor, todo junto:
 
 | Archivo | Qué prueba |
 | --- | --- |
+| `qa-identidad` | Que Catalina se declare asistente clínica virtual del equipo del doctor Inti Paredes, en la conversación y en la apertura de la llamada, y que ningún cargo viejo quede escondido. |
 | `qa-dom` | Que ningún guion busque un id que no existe: un `querySelector` nulo mata el módulo entero al cargar y la página se queda muerta sin decir nada. |
 | `qa-rutas` | Que toda ruta del servidor esté enrutada en `vercel.json`. Las que faltan funcionan en local y dan 404 sólo en producción. |
 | `qa-prompts` | Que los cinco tipos de reunión manden instrucciones distintas al modelo, y que una reunión bilingüe le prohíba traducir. |
