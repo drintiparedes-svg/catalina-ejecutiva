@@ -41,6 +41,8 @@ Con navegador y servidor, todo junto:
 | `qa8` | La carpeta local: que se recuerde, que reciba los tres archivos, que pida permiso cuando caduca y que un fallo suyo no se lleve la reunión. |
 | `qa-telefonia` | Que el diagnóstico avise cuando las llamadas comparten agente con el navegador y cuente las herramientas de cliente que ese agente lleva encima. En una llamada nadie las contesta, y cada una es un silencio de hasta veinte segundos. |
 | `qa-adjuntos` | Subir una presentación, un Excel o una imagen a la conversación: que se lea en el navegador, que a Catalina le llegue el principio como contexto y no el documento entero, que pueda pedir más con `consultar_documento`, y que lo que no se pueda leer se diga. |
+| `qa-formatos` | Que se lea cualquier archivo con texto dentro —.sql, .py, .yaml, sin extensión— decidiendo por los bytes y no por el nombre, que un binario disfrazado de .txt no se cuele, y que la extensión y el tamaño se informen bien. |
+| `qa-conversacion` | El ciclo entero: que se registren las dos voces, que al cerrar salga el resumen con minuta, acuerdos y alcance, que quede en el historial, que se pueda retomar como contexto sólo si se elige, y que todo se pueda pedir hablando. |
 | `qa-correo` | Que el SERVIDOR se niegue a mandar la reunión a un tercero sin confirmación explícita. El navegador no es una garantía: es de quien lo abre. |
 | `qa-drive` | Google Drive entero contra un doble de Google: consentimiento, canje, carpetas, subida a la carpeta elegida, y Drive caído sin llevarse el cierre. |
 

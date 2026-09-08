@@ -17,13 +17,13 @@ import {
   terminarLlamadaElevenLabs, diagnosticoElevenLabs
 } from "./llamadas.mjs";
 import { cerrarReunion } from "./reunion.mjs";
-import { hayRedaccion, probarRedaccion, describirImagen } from "./redaccion.mjs";
+import { hayRedaccion, probarRedaccion, describirImagen, redactarConversacion, conversacionSinModelo } from "./redaccion.mjs";
 import { estadoDrive, urlDeConsentimiento, canjearCodigo, carpetasPropias, crearCarpeta } from "./drive.mjs";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // Se sube a mano con cada arreglo que el usuario tiene que descargar.
-export const VERSION = "2026-09-01.8";
+export const VERSION = "2026-09-08.1";
 
 const root = fileURLToPath(new URL("./public", import.meta.url));
 // El .env se lee de forma síncrona a propósito. Con `await` aquí arriba, en el
@@ -324,6 +324,31 @@ export async function atender(req, res) {
       }));
     }
 
+    // Cierra una conversación: la resume en minuta, acuerdos y alcance. El
+    // resumen vuelve al navegador y se guarda ahí; el servidor no almacena nada.
+    if (req.method === "POST" && req.url === "/conversacion/cerrar") {
+      let cuerpo = {};
+      try { cuerpo = JSON.parse(await readBody(req) || "{}"); } catch {}
+
+      const redactado = await redactarConversacion(cuerpo);
+      // Sin clave o con el modelo caído se devuelve el diálogo tal cual: es peor
+      // de leer, pero es exacto, y perder la conversación sería mucho peor.
+      const resumen = redactado.ok ? redactado.resumen : conversacionSinModelo(cuerpo);
+      return json(res, 200, {
+        ok: true,
+        resumen: {
+          ...resumen,
+          inicio: cuerpo.inicio || Date.now(),
+          fin: cuerpo.fin || Date.now(),
+          minutos: cuerpo.minutos || 0,
+          intervenciones: (cuerpo.turnos ?? []).length,
+          documentos: (cuerpo.documentos ?? []).map(d => ({ nombre: d.nombre, imagen: Boolean(d.imagen) }))
+        },
+        redactado: redactado.ok,
+        aviso: redactado.ok ? "" : (redactado.error || "No se pudo redactar el resumen.")
+      });
+    }
+
     if (req.method === "GET" && req.url === "/reunion/diagnostico") {
       // La redacción se COMPRUEBA contra el modelo, no se da por buena porque
       // haya clave: el fallo real fue una clave válida con un modelo que ya no
@@ -500,7 +525,11 @@ const USO_DE_LOS_DOCUMENTOS = [
   "Cuando suban uno te llega su principio como contexto, con el nombre del archivo. Coméntalo breve y en voz alta: qué es y lo que más importa.",
   "Si para responder necesitas leer más de ese documento, usa consultar_documento en vez de decir que no lo tienes; te devuelve el trozo siguiente.",
   "Habla de lo que está escrito en el documento. Si algo no aparece ahí, dilo en vez de completarlo con lo que recuerdes.",
-  "De una imagen te llega una descripción de lo que se ve, no la imagen: si la descripción no alcanza para responder, dilo."
+  "De una imagen te llega una descripción de lo que se ve, no la imagen: si la descripción no alcanza para responder, dilo.",
+  "",
+  "Al terminar una conversación puedes cerrarla con cerrar_conversacion: queda guardada con su minuta, sus acuerdos y su alcance.",
+  "No la cierres por tu cuenta ni lo propongas cada dos por tres: sólo cuando te lo pidan.",
+  "Y con conversaciones_anteriores puedes retomar una conversación ya cerrada, con lo que se acordó en ella."
 ].join(" ");
 
 async function instruccionesDeSesion(config) {
@@ -821,6 +850,33 @@ const HERRAMIENTAS_DOCUMENTO = [
   }
 ];
 
+// Cerrar la conversación y retomar una anterior, de viva voz. Se pidió que no
+// hiciera falta ir a buscar un botón: «Catalina, cierra la conversación» o
+// «retoma la del piloto» tienen que bastar.
+const HERRAMIENTAS_CONVERSACION = [
+  {
+    nombre: "cerrar_conversacion",
+    descripcion: "Cierra la conversación actual y guarda un resumen estructurado: minuta, acuerdos, alcance y "
+      + "pendientes. Úsala cuando te lo pidan de cualquier forma —«cierra la conversación», «guarda esto», "
+      + "«resume lo que hablamos y guárdalo», «hasta aquí»—. Devuelve el título y cuántos acuerdos salieron: "
+      + "dilo en una frase corta. Después de cerrarla empieza una conversación nueva.",
+    parametros: { type: "object", properties: {} }
+  },
+  {
+    nombre: "conversaciones_anteriores",
+    descripcion: "Consulta las conversaciones que ya se cerraron, o retoma una como contexto de ésta. Sin `titulo` "
+      + "te devuelve la lista para que digas qué hay. Con `titulo` carga esa conversación: a partir de ese "
+      + "momento tienes presentes sus acuerdos y lo que quedó pendiente. Úsala con «¿de qué hablamos el "
+      + "martes?», «retoma la conversación del piloto», «sigamos con lo de ayer».",
+    parametros: {
+      type: "object",
+      properties: {
+        titulo: { type: "string", description: "Parte del título o del tema de la conversación a retomar. Vacío para listar." }
+      }
+    }
+  }
+];
+
 const HERRAMIENTAS_REUNION = [
   {
     nombre: "tomar_nota",
@@ -896,6 +952,7 @@ function todasLasHerramientas(config) {
   return [
     ...HERRAMIENTAS,
     ...HERRAMIENTAS_DOCUMENTO,
+    ...HERRAMIENTAS_CONVERSACION,
     ...HERRAMIENTAS_REUNION,
     ...((telefoniaElevenLabsLista() || telefoniaLista()) && config.telefono?.activo !== false ? HERRAMIENTAS_TELEFONO : []),
     ...herramientasDeConectores(config)
@@ -1295,6 +1352,10 @@ async function inicioDeElevenLabs(config) {
       conversation: {
         client_events: [
           "audio",
+          // Lo que dice la PERSONA, no sólo lo que dice ella. Sin esto la
+          // conversación queda con una sola voz, y una minuta con acuerdos
+          // sacada de un monólogo no es una minuta.
+          "user_transcript",
           "agent_response",
           "agent_response_correction",
           "agent_chat_response_part",

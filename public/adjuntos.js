@@ -23,13 +23,24 @@ import { leerDocumento } from "./reunion.js";
 const ADELANTO = 6000;
 // Cuánto puede pedir de una vez con `consultar_documento`.
 const TROZO = 12_000;
+// Cuánto texto se guarda de cada documento. Mucho más que en una reunión: aquí
+// el documento ES el tema de la conversación, y recortarlo a cuarenta mil
+// caracteres dejaba fuera medio informe sin que se notara. Vive en la memoria
+// del navegador, así que medio millón de caracteres no molesta a nadie.
+const TOPE_TEXTO = 500_000;
+// Y un tope al archivo en sí: leer entero en memoria algo de cientos de megas
+// cuelga la pestaña. Por encima de esto no es un documento de trabajo.
+const TOPE_ARCHIVO = 80 * 1024 * 1024;
 
 const documentos = [];
 let siguienteId = 1;
 
 export const hayDocumentos = () => documentos.length > 0;
-export const listarDocumentos = () => documentos.map(({ id, nombre, tipo, tamano, caracteres, imagen, nota }) =>
-  ({ id, nombre, tipo, tamano, caracteres, imagen, nota }));
+export const listarDocumentos = () => documentos.map(({ id, nombre, extension, tipo, tamano, caracteres, imagen, nota }) =>
+  ({ id, nombre, extension, tipo, tamano, caracteres, imagen, nota }));
+
+// Los documentos enteros, para guardarlos con el resumen de la conversación.
+export const documentosCompletos = () => documentos.map(d => ({ ...d }));
 
 export function olvidarDocumentos() {
   documentos.length = 0;
@@ -55,14 +66,17 @@ const base64De = archivo => new Promise((resolve, reject) => {
 // para que la pantalla no se quede muda mientras tanto.
 export async function anadirDocumento(archivo, { nota = "", alAvisar } = {}) {
   const nombre = archivo.name || "documento";
+  if (archivo.size > TOPE_ARCHIVO) {
+    return { ok: false, nombre, error: `Pesa ${legible(archivo.size)} y el tope son ${legible(TOPE_ARCHIVO)}. Sube la parte que importa.` };
+  }
   alAvisar?.(`Leyendo «${nombre}»…`);
 
-  const leido = await leerDocumento(archivo);
+  const leido = await leerDocumento(archivo, { tope: TOPE_TEXTO });
   let texto = leido.texto || "";
   let imagen = false;
 
   // De una imagen no sale texto en el navegador: la describe el modelo.
-  if (!texto && (archivo.type || "").startsWith("image/")) {
+  if (!texto && (leido.imagen || (archivo.type || "").startsWith("image/"))) {
     imagen = true;
     alAvisar?.(`Mirando «${nombre}»…`);
     try {
@@ -86,6 +100,10 @@ export async function anadirDocumento(archivo, { nota = "", alAvisar } = {}) {
   const documento = {
     id: `d${siguienteId++}`,
     nombre,
+    // La extensión y el tipo se guardan por separado: un archivo sin extensión
+    // tiene tipo, y uno con extensión rara puede no tenerlo. Antes se mezclaban
+    // en un solo campo y la ficha acababa diciendo cualquier cosa.
+    extension: leido.extension || "",
     tipo: leido.tipo || archivo.type || "",
     tamano: archivo.size || 0,
     nota: String(nota || "").trim(),

@@ -639,3 +639,45 @@ button.primary { border-color: rgba(109,228,255,.45); background: linear-gradien
 
 /* Soltar un archivo encima del panel. */
 .panel[data-soltando="true"] { outline: 2px dashed rgba(109,228,255,.6); outline-offset: -6px; }
+
+
+/* ─── Resumen de la conversación e historial ──────────────────────────────
+   Lo que queda al cerrar: minuta, acuerdos y alcance. Se lee, no se opera, así
+   que manda la tipografía y no las cajas: un solo bloque con jerarquía, y las
+   fichas del historial con su acción a la vista. */
+.panel-head .panel-subir + .panel-subir { margin-left: 0; }
+.panel-aviso { margin: 8px 0; color: rgba(209,229,239,.6); font-size: 12px; line-height: 1.45; }
+.panel-aviso.problema { color: #FF9F0A; }
+
+.resumen {
+  margin: 10px 0; padding: 12px 14px; border: 1px solid rgba(180,225,245,.16);
+  border-radius: 12px; background: rgba(255,255,255,.04);
+}
+.resumen h3 { margin: 0 0 4px; font-size: 14px; font-weight: 650; color: #eaf6fc; }
+.resumen-meta { margin: 0 0 8px; color: rgba(169,216,236,.55); font-size: 10.5px; letter-spacing: .06em; font-variant-numeric: tabular-nums; }
+.resumen-texto { margin: 0 0 10px; color: rgba(233,246,252,.88); font-size: 12.5px; line-height: 1.5; }
+.resumen h4 {
+  margin: 10px 0 4px; color: #a9d8ec; font-size: 10px; font-weight: 700;
+  letter-spacing: .14em; text-transform: uppercase;
+}
+.resumen ul { margin: 0; padding-left: 16px; }
+.resumen li { margin: 3px 0; color: rgba(233,246,252,.85); font-size: 12px; line-height: 1.45; }
+.resumen-pie { margin: 10px 0 0; color: rgba(209,229,239,.5); font-size: 11px; line-height: 1.4; }
+.resumen-pie.problema { color: #FF9F0A; }
+
+.conversacion-ficha {
+  margin: 8px 0; padding: 11px 13px; border: 1px solid rgba(180,225,245,.14);
+  border-radius: 11px; background: rgba(255,255,255,.035);
+}
+.conversacion-cabecera { display: flex; align-items: baseline; gap: 8px; }
+.conversacion-cabecera time { color: rgba(169,216,236,.5); font-size: 10.5px; white-space: nowrap; }
+.conversacion-cabecera strong { font-size: 13px; font-weight: 650; color: #eaf6fc; }
+.conversacion-detalle { margin: 5px 0 0; color: rgba(233,246,252,.75); font-size: 12px; line-height: 1.45; }
+.conversacion-cuentas { margin: 5px 0 0; color: rgba(169,216,236,.5); font-size: 11px; }
+.conversacion-acciones { display: flex; gap: 6px; margin-top: 9px; }
+.conversacion-acciones button { min-height: 26px; padding: 0 11px; font-size: 11.5px; }
+
+/* Lo que dice la persona, distinto de lo que dice ella: si las dos voces se ven
+   igual, releer el historial no reconstruye quién dijo qué. */
+.turno[data-quien="usuario"] .turno-quien { color: rgba(209,229,239,.6); }
+.turno[data-quien="usuario"] .turno-texto { color: rgba(233,246,252,.72); }

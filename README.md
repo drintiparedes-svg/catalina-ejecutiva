@@ -582,7 +582,7 @@ puede», «no diste permiso» y «Chrome no llega a los servidores de voz».
 
 ### El banco de pruebas
 
-En `pruebas/` hay 320 comprobaciones automáticas que recorren el modo entero:
+En `pruebas/` hay 370 comprobaciones automáticas que recorren el modo entero:
 el flujo completo en un Chromium de verdad, las herramientas por voz, el ciclo
 de sordera mientras ella habla, la carpeta local con sus fallos, Google Drive
 contra un doble de Google, las rutas de fallo (servidor caído, navegador sin
@@ -598,15 +598,61 @@ mandar la reunión a un tercero sin confirmación explícita, aunque se lo pidan
 directamente a la ruta. Que el navegador pida confirmación dos veces está bien,
 pero el navegador es de quien lo abre y no es una garantía de nada.
 
-### Darle un documento para conversar sobre él
+### Cerrar una conversación y retomarla otro día
+
+Una conversación con Catalina no dejaba rastro: al colgar se perdía. Ahora se
+puede **cerrar** —con el botón «Cerrar» del panel o diciéndoselo, que para eso
+está `cerrar_conversacion`— y queda un resumen estructurado con **minuta,
+acuerdos, alcance y pendientes**.
+
+Acuerdos y alcance van separados a propósito, porque son cosas distintas: el
+acuerdo es lo que se decidió hacer, el alcance es hasta dónde llegaba lo tratado
+y qué quedó fuera. Un acuerdo sin alcance se aplica mañana a algo de lo que
+nunca se habló; un alcance sin acuerdos es una conversación que no decidió nada.
+Al redactor se le prohíbe explícitamente convertir en acuerdo lo que sólo se
+mencionó, lo que propuso ella y la persona no aceptó, y presentar como hablado
+un dato que salió de un documento.
+
+Para que eso sea posible hubo que **registrar las dos voces**. Antes sólo
+llegaba lo que decía Catalina —`user_transcript` no se pedía—, así que el
+historial era un monólogo y una minuta con acuerdos sacada de ahí habría sido
+inventada. Ahora se piden las dos y el panel las distingue.
+
+Los resúmenes quedan en el historial del navegador, en su propio almacén. Desde
+«Anteriores» se puede **retomar uno como contexto** de la conversación de ahora,
+y ahí Catalina tiene presentes sus acuerdos y sus pendientes. No entra solo: hay
+que elegirlo. Que cada conversación arrastrara la anterior por defecto la
+convertiría en rehén de lo que se dijo la última vez. También se pide hablando
+—«retoma la del piloto», «¿de qué hablamos el martes?»— con
+`conversaciones_anteriores`.
+
+Sin `GEMINI_API_KEY` el resumen no se redacta, pero la conversación **no se
+pierde**: se guarda el diálogo literal. Es peor de leer que una minuta y es
+exacto, que es lo que importa cuando la alternativa es perderlo todo.
+
+## Darle un documento para conversar sobre él
 
 En el panel de conversación hay un botón **Subir**, y también se puede soltar un
 archivo encima del panel. Sirve para lo que uno haría con una persona: enseñarle
 una presentación, un Excel o un informe y comentarlo.
 
 El texto se saca **en el propio navegador**, con el mismo lector que usa el modo
-reunión —PDF, Word, Excel, PowerPoint y texto plano, con `DecompressionStream`—,
-así que el archivo no se sube a ningún sitio. La única excepción son las
+reunión, así que el archivo no se sube a ningún sitio.
+
+Y se admite **cualquier archivo**: el lector decide por los bytes, no por la
+extensión. Antes había una lista blanca corta y un `accept` en el selector, y
+ocho de cada dieciocho archivos reales se caían con «no se reconoce este
+formato» —un `.sql`, un `.py`, un `.yaml`, uno sin extensión— aunque fueran
+texto plano que el navegador lee sin esfuerzo. Ahora se mira la cabecera: `%PDF`
+es un PDF aunque se llame `.dat`, `PK` es un OOXML y se averigua de qué familia
+mirando sus partes, y lo que no tiene firma conocida se intenta decodificar como
+UTF-8 —si sale legible, es texto y se lee—. Un binario con nombre de `.txt` no
+se cuela: los bytes nulos lo delatan.
+
+Del tamaño se guardan hasta quinientos mil caracteres por documento, no los
+cuarenta mil de una reunión: aquí el documento **es** el tema de la
+conversación. Por encima de ochenta megas se rechaza con el motivo y el tope, en
+vez de colgar la pestaña leyéndolo entero en memoria. La única excepción son las
 imágenes: de una imagen no se puede sacar texto aquí, así que se manda al
 servidor para que el modelo describa lo que se ve. Eso conviene saberlo, y la
 ficha del documento lo dice: «imagen descrita» frente al recuento de caracteres

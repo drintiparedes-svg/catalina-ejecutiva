@@ -311,6 +311,14 @@ export class ElevenLabsSession {
         break;
       }
 
+      // Lo que acaba de decir la persona, ya transcrito por ElevenLabs.
+      case "user_transcript": {
+        const dicho = mensaje.user_transcription_event?.user_transcript
+          ?? mensaje.user_transcript_event?.user_transcript ?? "";
+        if (dicho.trim()) this.#emit("onUsuario", dicho.trim());
+        break;
+      }
+
       case "interruption": {
         this.#callar();
         this.#emit("onPhase", "listening");

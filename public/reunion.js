@@ -322,45 +322,142 @@ export class MemoriaDeReunion {
 
 const EXTENSIONES_ZIP = { docx: "word", xlsx: "excel", pptx: "powerpoint" };
 
-export async function leerDocumento(archivo) {
-  const nombre = archivo.name || "documento";
-  const extension = (nombre.split(".").pop() || "").toLowerCase();
-  const base = { nombre, tipo: archivo.type || extension, tamano: archivo.size };
+// Qué es el archivo DE VERDAD, mirándolo por dentro.
+//
+// Antes se decidía sólo por la extensión, y por una lista blanca corta: un
+// `.sql`, un `.py`, un `.html`, un `.yaml` o un archivo sin extensión se
+// rechazaban con «no se reconoce este formato» aunque fueran texto plano que el
+// navegador lee sin esfuerzo. Ocho de cada dieciocho archivos reales se caían
+// por eso. La extensión es una pista, no un hecho: un `.docx` renombrado sigue
+// siendo un ZIP de Word, y un archivo sin extensión puede ser un acta entera.
+//
+// Se miran los primeros bytes, que es donde los formatos se declaran.
+const FIRMAS = [
+  { magia: [0x25, 0x50, 0x44, 0x46], clase: "pdf" },              // %PDF
+  { magia: [0x50, 0x4b, 0x03, 0x04], clase: "zip" },              // PK.. (OOXML, ODF, zip)
+  { magia: [0x50, 0x4b, 0x05, 0x06], clase: "zip" },
+  { magia: [0xd0, 0xcf, 0x11, 0xe0], clase: "ole" },              // .doc/.xls/.ppt antiguos
+  { magia: [0x89, 0x50, 0x4e, 0x47], clase: "imagen" },           // PNG
+  { magia: [0xff, 0xd8, 0xff], clase: "imagen" },                 // JPEG
+  { magia: [0x47, 0x49, 0x46, 0x38], clase: "imagen" },           // GIF
+  { magia: [0x1f, 0x8b], clase: "comprimido" },                   // gzip
+  { magia: [0x52, 0x61, 0x72, 0x21], clase: "comprimido" },       // RAR
+  { magia: [0x37, 0x7a, 0xbc, 0xaf], clase: "comprimido" }        // 7z
+];
 
+function claseDeBytes(bytes) {
+  for (const { magia, clase } of FIRMAS) {
+    if (magia.every((b, i) => bytes[i] === b)) return clase;
+  }
+  return "";
+}
+
+// ¿Esto se puede leer como texto? Se decodifica como UTF-8 estricto y se mira
+// cuánto sale legible. Un binario trae bytes nulos y caracteres de control que
+// el texto no tiene, así que la diferencia es clara sin tener que adivinar.
+function pareceTexto(bytes) {
+  if (!bytes.length) return false;
   try {
-    if (archivo.type.startsWith("image/")) {
-      return { ...base, texto: "", aviso: "Es una imagen: no se puede leer su contenido. Descríbela para que quede en la minuta." };
-    }
-    if (archivo.type.startsWith("text/") || ["txt", "md", "csv", "json", "rtf"].includes(extension)) {
-      return { ...base, texto: recortar(await archivo.text()) };
-    }
-    if (extension === "pdf") {
-      const texto = await textoDePdf(await archivo.arrayBuffer());
-      return texto
-        ? { ...base, texto: recortar(texto) }
-        : { ...base, texto: "", aviso: "No se pudo extraer el texto de este PDF (puede ser un escaneado). Descríbelo para que quede en la minuta." };
-    }
-    if (EXTENSIONES_ZIP[extension]) {
-      const texto = await textoDeOoxml(await archivo.arrayBuffer(), EXTENSIONES_ZIP[extension]);
-      return texto
-        ? { ...base, texto: recortar(texto) }
-        : { ...base, texto: "", aviso: "El archivo se abrió pero no traía texto legible. Descríbelo para que quede en la minuta." };
-    }
-    if (["doc", "xls", "ppt"].includes(extension)) {
-      return { ...base, texto: "", aviso: `Los archivos .${extension} son del formato antiguo y no se pueden leer aquí. Guárdalo como .${extension}x y vuelve a añadirlo, o descríbelo.` };
-    }
-    return { ...base, texto: "", aviso: "No se reconoce este formato. Descríbelo para que quede en la minuta." };
-  } catch (error) {
-    console.warn("Lectura de documento:", error);
-    return { ...base, texto: "", aviso: "No se pudo leer el archivo. Descríbelo para que quede en la minuta." };
+    const texto = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    // Los de control que sí aparecen en texto son el salto, el retorno y el
+    // tabulador. El resto, y sobre todo el byte nulo, delatan un binario.
+    const raros = [...texto].filter(c => {
+      const n = c.codePointAt(0);
+      return n < 32 && n !== 9 && n !== 10 && n !== 13;
+    }).length;
+    return raros / texto.length < 0.02;
+  } catch {
+    return false;   // no es UTF-8 válido
   }
 }
 
-const recortar = texto => {
+// Qué familia de OOXML es un ZIP, mirando qué partes trae dentro. Así un
+// documento renombrado —o bajado sin extensión— se lee igual.
+function familiaDeZip(buffer) {
+  try {
+    const nombres = entradasZip(buffer).entradas.map(e => e.nombre);
+    if (nombres.includes("word/document.xml")) return "word";
+    if (nombres.some(n => n.startsWith("xl/"))) return "excel";
+    if (nombres.some(n => n.startsWith("ppt/"))) return "powerpoint";
+  } catch { /* no era un ZIP legible */ }
+  return "";
+}
+
+export async function leerDocumento(archivo, { tope = TOPE_DOCUMENTO } = {}) {
+  const nombre = archivo.name || "documento";
+  const extension = (nombre.split(".").pop() || "").toLowerCase();
+  const base = {
+    nombre,
+    extension: extension && extension !== nombre.toLowerCase() ? extension : "",
+    tipo: archivo.type || "",
+    tamano: archivo.size ?? 0
+  };
+
+  try {
+    if (!archivo.size) {
+      return { ...base, texto: "", aviso: "El archivo está vacío." };
+    }
+
+    // Se mira la cabecera antes que nada: es lo único que no miente.
+    const cabecera = new Uint8Array(await archivo.slice(0, 4096).arrayBuffer());
+    const clase = claseDeBytes(cabecera);
+
+    if (clase === "imagen" || archivo.type.startsWith("image/")) {
+      return { ...base, texto: "", imagen: true, aviso: "Es una imagen: hay que mirarla para saber qué dice." };
+    }
+
+    if (clase === "pdf" || extension === "pdf") {
+      const texto = await textoDePdf(await archivo.arrayBuffer());
+      return texto
+        ? { ...base, texto: recortar(texto, tope) }
+        : { ...base, texto: "", aviso: "Este PDF no trae capa de texto: probablemente es un escaneado. Sube una captura de la página y se lee como imagen." };
+    }
+
+    if (clase === "zip") {
+      const buffer = await archivo.arrayBuffer();
+      const familia = familiaDeZip(buffer) || EXTENSIONES_ZIP[extension] || "";
+      if (familia) {
+        const texto = await textoDeOoxml(buffer, familia);
+        if (texto) return { ...base, texto: recortar(texto, tope) };
+        return { ...base, texto: "", aviso: "El documento se abrió pero no traía texto: puede ser todo imágenes." };
+      }
+      return { ...base, texto: "", aviso: "Es un archivo comprimido. Descomprímelo y sube el documento que hay dentro." };
+    }
+
+    if (clase === "ole" || ["doc", "xls", "ppt"].includes(extension)) {
+      return { ...base, texto: "", aviso: `Es un ${extension || "documento"} del formato antiguo de Office. Guárdalo como .docx, .xlsx o .pptx y vuelve a subirlo.` };
+    }
+
+    if (clase === "comprimido") {
+      return { ...base, texto: "", aviso: "Es un archivo comprimido. Descomprímelo y sube el documento que hay dentro." };
+    }
+
+    // Y si no es ninguno de los formatos con firma, se prueba a leerlo como
+    // texto: da igual la extensión. Aquí entran .sql, .py, .html, .xml, .log,
+    // .yaml, los que no tienen extensión y todo lo demás que sea legible.
+    if (pareceTexto(cabecera)) {
+      const texto = await archivo.text();
+      return texto.trim()
+        ? { ...base, texto: recortar(texto, tope) }
+        : { ...base, texto: "", aviso: "El archivo no tiene contenido legible." };
+    }
+
+    return {
+      ...base,
+      texto: "",
+      aviso: `No se puede leer el contenido de este archivo${extension ? ` (.${extension})` : ""}: no es texto ni un formato conocido. Si es una imagen, súbela como imagen.`
+    };
+  } catch (error) {
+    console.warn("Lectura de documento:", error);
+    return { ...base, texto: "", aviso: `No se pudo leer el archivo: ${error.message}` };
+  }
+}
+
+const recortar = (texto, tope = TOPE_DOCUMENTO) => {
   const limpio = String(texto ?? "").replace(/\r/g, "").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
-  return limpio.length <= TOPE_DOCUMENTO
+  return limpio.length <= tope
     ? limpio
-    : `${limpio.slice(0, TOPE_DOCUMENTO)}\n\n[…el documento sigue; se guardaron los primeros ${TOPE_DOCUMENTO} caracteres…]`;
+    : `${limpio.slice(0, tope)}\n\n[…el documento sigue; se guardaron los primeros ${tope.toLocaleString("es-CL")} caracteres de ${limpio.length.toLocaleString("es-CL")}…]`;
 };
 
 // ── ZIP en el navegador ──────────────────────────────────────────────────────

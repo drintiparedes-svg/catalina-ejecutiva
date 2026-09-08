@@ -690,6 +690,105 @@ export async function describirImagen({ base64, tipo, nombre = "", nota = "" }) 
   return { ok: true, descripcion: salida.texto.trim(), modelo: modeloQueFunciona };
 }
 
+// Resumen estructurado de una conversación.
+//
+// No es la minuta de una reunión: allí Catalina toma acta de lo que dice una
+// sala; aquí conversó ella misma con una persona, y lo que hay que dejar por
+// escrito es a qué llegaron los dos. Por eso separa ACUERDOS —lo que se decidió
+// hacer— de ALCANCE —hasta dónde llegó lo tratado y qué quedó fuera—, que es lo
+// que se pidió y son cosas distintas: un acuerdo sin alcance se aplica donde no
+// tocaba, y un alcance sin acuerdos es una conversación que no decidió nada.
+const ESQUEMA_CONVERSACION = {
+  type: "object",
+  properties: {
+    titulo: { type: "string" },
+    resumen: { type: "string" },
+    minuta: { type: "array", items: { type: "string" } },
+    acuerdos: { type: "array", items: { type: "string" } },
+    alcance: { type: "array", items: { type: "string" } },
+    pendientes: { type: "array", items: { type: "string" } },
+    temas: { type: "array", items: { type: "string" } }
+  },
+  required: ["titulo", "resumen", "minuta", "acuerdos", "alcance", "pendientes", "temas"]
+};
+
+export async function redactarConversacion(conversacion) {
+  const turnos = conversacion.turnos ?? [];
+  if (!turnos.length) {
+    return { ok: false, code: "SIN_MATERIAL", error: "No hay conversación que resumir." };
+  }
+  if (!hayRedaccion()) {
+    return { ok: false, code: "SIN_CLAVE", error: "Falta GEMINI_API_KEY para redactar el resumen." };
+  }
+
+  const dialogo = turnos
+    .map(t => `${t.quien === "catalina" ? "CATALINA" : "INTI"}: ${t.texto}`)
+    .join("\n");
+
+  const docs = (conversacion.documentos ?? []).length
+    ? "\n\n=== DOCUMENTOS QUE SE USARON ===\n" + conversacion.documentos
+        .map(d => `«${d.nombre}»${d.imagen ? " (imagen descrita)" : ""}:\n${d.texto}`).join("\n\n")
+    : "";
+
+  const previo = conversacion.antecedente
+    ? `\n\nEsta conversación retomaba otra anterior titulada «${conversacion.antecedente.titulo}». No repitas lo de aquélla: resume SÓLO lo de ahora.`
+    : "";
+
+  const prompt = [
+    "Resumes una conversación entre Catalina —asistente clínica virtual— e Inti, para que él pueda retomarla otro día.",
+    "Escribes en español de Chile, directo y sin relleno.",
+    "",
+    "Saca, cada cosa en su sitio:",
+    "· titulo: de qué trató, en menos de ocho palabras. Sin comillas ni la palabra «conversación».",
+    "· resumen: dos o tres frases con lo esencial. Qué se buscaba y a qué se llegó.",
+    "· minuta: los puntos que se trataron, en orden, uno por elemento. Lo que se dijo, no lo que significa.",
+    "· acuerdos: lo que se decidió HACER, con quién y para cuándo si se dijo. Sólo lo acordado de verdad;",
+    "  una idea que se mencionó y no se cerró NO es un acuerdo, va en minuta o en pendientes.",
+    "· alcance: hasta dónde llegó lo tratado y qué quedó explícitamente fuera. Sirve para no aplicar mañana",
+    "  un acuerdo a algo que nunca se habló.",
+    "· pendientes: lo que quedó abierto, con la pregunta sin responder si la hubo.",
+    "· temas: tres a seis etiquetas cortas para reconocer la conversación después.",
+    "",
+    "PROHIBIDO, sin excepción:",
+    "· Inventar un acuerdo, una fecha o un responsable que no esté dicho.",
+    "· Convertir en acuerdo lo que sólo propuso Catalina y la persona no aceptó.",
+    "· Sacar conclusiones propias o recomendar nada: esto es un registro, no un informe.",
+    "· Meter en el resumen lo que venía en un documento como si se hubiera hablado. Si un dato salió de un",
+    "  documento, dilo así: «según el archivo X…».",
+    "Una lista que no tenga contenido va vacía. Vacía es una respuesta correcta y frecuente.",
+    previo,
+    "",
+    "=== LA CONVERSACIÓN ===",
+    dialogo,
+    docs
+  ].filter(Boolean).join("\n");
+
+  const salida = await pedir(prompt, { esquema: ESQUEMA_CONVERSACION, temperatura: 0.2 });
+  if (!salida.ok) return salida;
+
+  try {
+    const datos = JSON.parse(salida.texto);
+    return { ok: true, resumen: datos, modelo: modeloQueFunciona };
+  } catch {
+    return { ok: false, code: "RESPUESTA_ILEGIBLE", error: "El modelo no devolvió un resumen legible." };
+  }
+}
+
+// Si no hay modelo, el resumen se queda en lo que sí se sabe sin interpretar:
+// el diálogo tal cual. Es peor de leer que una minuta, pero es exacto, y perder
+// la conversación entera por no tener clave sería mucho peor.
+export function conversacionSinModelo(conversacion) {
+  const turnos = conversacion.turnos ?? [];
+  const fecha = new Date(conversacion.inicio || Date.now());
+  return {
+    titulo: `Conversación del ${fecha.toLocaleDateString("es-CL", { day: "numeric", month: "long" })}`,
+    resumen: "No se pudo redactar el resumen automáticamente. Abajo queda la conversación tal como ocurrió.",
+    minuta: turnos.map(t => `${t.quien === "catalina" ? "Catalina" : "Inti"}: ${t.texto}`),
+    acuerdos: [], alcance: [], pendientes: [], temas: [],
+    sinModelo: true
+  };
+}
+
 export function minutaSinModelo(reunion) {
   const turnos = reunion.turnos ?? [];
   return {

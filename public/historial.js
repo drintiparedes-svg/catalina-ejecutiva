@@ -22,7 +22,12 @@ const ALMACEN = "reuniones";
 // depende de que el navegador siga vivo al final. Antes vivía sólo en memoria y
 // bastaba con un cierre a medias para perder la reunión entera.
 const BORRADORES = "borradores";
-const VERSION = 2;
+// Las conversaciones cerradas, con su resumen. Aparte de las reuniones porque
+// son otra cosa: una reunión tiene acta de lo que dijo una sala; una
+// conversación tiene acuerdos a los que llegaron dos. Mezclarlas en un listado
+// obligaría a distinguirlas en cada consulta.
+const CONVERSACIONES = "conversaciones";
+const VERSION = 3;
 
 let conexion = null;
 
@@ -43,6 +48,10 @@ function abrir() {
       }
       if (!db.objectStoreNames.contains(BORRADORES)) {
         db.createObjectStore(BORRADORES, { keyPath: "id" });
+      }
+      if (!db.objectStoreNames.contains(CONVERSACIONES)) {
+        const almacen = db.createObjectStore(CONVERSACIONES, { keyPath: "id" });
+        almacen.createIndex("inicio", "inicio");
       }
     };
     peticion.onsuccess = () => resolver(peticion.result);
@@ -181,4 +190,37 @@ export function comoAntecedente(registro) {
     proximos_pasos: m.proximos_pasos ?? [],
     participantes: registro.participantes ?? []
   };
+}
+
+// ── Conversaciones cerradas ──────────────────────────────────────────────────
+
+export async function guardarConversacion(resumen) {
+  const registro = {
+    ...resumen,
+    id: resumen.id || `c-${resumen.inicio || Date.now()}`,
+    guardado: Date.now()
+  };
+  try {
+    await transaccion("readwrite", a => a.put(registro), CONVERSACIONES);
+    return { ok: true, registro };
+  } catch (error) {
+    return { ok: false, error: String(error?.message || error) };
+  }
+}
+
+export async function listarConversaciones(cuantas = 30) {
+  try {
+    const todas = await transaccion("readonly", a => a.getAll(), CONVERSACIONES);
+    return (todas || []).sort((a, b) => (b.inicio || 0) - (a.inicio || 0)).slice(0, cuantas);
+  } catch { return []; }
+}
+
+export async function leerConversacion(id) {
+  try { return (await transaccion("readonly", a => a.get(id), CONVERSACIONES)) || null; }
+  catch { return null; }
+}
+
+export async function borrarConversacion(id) {
+  try { await transaccion("readwrite", a => a.delete(id), CONVERSACIONES); return true; }
+  catch { return false; }
 }

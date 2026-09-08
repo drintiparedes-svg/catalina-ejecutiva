@@ -90,6 +90,46 @@ anotar("Si es clínica, describe sin diagnosticar", /sin diagnosticar/.test(prom
 anotar("Se le pasa el nombre del archivo y lo que dijo quien la sube",
   /diapositiva\.png/.test(promptImagen) && /es del comité/.test(promptImagen), "");
 
+// ── Resumen de una conversación ─────────────────────────────────────────────
+const { redactarConversacion, conversacionSinModelo } = await import("../redaccion.mjs");
+enviados.length = 0;
+const charla = {
+  inicio: Date.now() - 600000, fin: Date.now(), minutos: 10,
+  turnos: [
+    { quien: "usuario", texto: "Necesito cerrar el alcance del piloto." },
+    { quien: "catalina", texto: "Son dos servicios, y el presupuesto son doce millones." }
+  ],
+  documentos: [{ nombre: "presupuesto.xlsx", imagen: false, caracteres: 400, texto: "Detalle de gastos" }]
+};
+await redactarConversacion(charla);
+const pc = enviados[0] || "";
+anotar("El resumen separa acuerdos de alcance, que son cosas distintas",
+  /· acuerdos:/.test(pc) && /· alcance:/.test(pc), "");
+anotar("Y se le dice para qué sirve cada uno",
+  /decidió HACER/.test(pc) && /qué quedó explícitamente fuera/.test(pc), "");
+anotar("Se le prohíbe convertir en acuerdo lo que no se cerró",
+  /no se cerró NO es un acuerdo/.test(pc), "");
+anotar("Y lo que sólo propuso ella y no se aceptó",
+  /sólo propuso Catalina y la persona no aceptó/.test(pc), "");
+anotar("Un dato de un documento se marca como tal, no como algo hablado",
+  /según el archivo X/.test(pc), "");
+anotar("Una lista vacía es una respuesta válida, no algo que rellenar",
+  /Vacía es una respuesta correcta/.test(pc), "");
+anotar("El diálogo va con quién dijo cada cosa", /INTI: Necesito cerrar/.test(pc) && /CATALINA: Son dos servicios/.test(pc), "");
+anotar("Y los documentos van aparte de lo hablado", /DOCUMENTOS QUE SE USARON/.test(pc) && /presupuesto\.xlsx/.test(pc), "");
+
+// Sin conversación no se inventa un resumen.
+const nada = await redactarConversacion({ turnos: [] });
+anotar("Sin conversación no se redacta nada", nada.ok === false && nada.code === "SIN_MATERIAL", JSON.stringify(nada));
+
+// Sin modelo, el diálogo se conserva tal cual en vez de perderse.
+const respaldo = conversacionSinModelo(charla);
+anotar("Sin modelo, la conversación se conserva literal en vez de perderse",
+  respaldo.sinModelo === true && respaldo.minuta.length === 2 && /Inti: Necesito cerrar/.test(respaldo.minuta[0]),
+  JSON.stringify(respaldo.minuta));
+anotar("Y no se inventan acuerdos que nadie sacó",
+  respaldo.acuerdos.length === 0 && respaldo.alcance.length === 0, "");
+
 let mal = 0;
 for (const p of paso) { if (!p.ok) mal += 1; console.log(`${p.ok ? "ok   " : "FALLA"} ${p.n}${p.ok ? "" : "\n        → " + p.d}`); }
 console.log(mal ? `\n✗ ${mal} de ${paso.length}` : `\n✓ las ${paso.length} comprobaciones de redacción pasan`);

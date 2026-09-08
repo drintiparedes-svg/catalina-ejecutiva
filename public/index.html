@@ -28,6 +28,8 @@
       <header class="panel-head">
         <span class="panel-title">Conversación</span>
         <button class="panel-subir" id="panelSubir" title="Subir un documento para comentarlo con Catalina">Subir</button>
+        <button class="panel-subir" id="panelConversaciones" title="Conversaciones anteriores, para retomar una">Anteriores</button>
+        <button class="panel-subir" id="panelCerrarCharla" title="Cerrar la conversación y guardar su resumen">Cerrar</button>
         <button class="panel-close" id="panelClose" aria-label="Cerrar el historial">&minus;</button>
       </header>
       <!-- Documentos subidos a esta conversación. Se lee el texto aquí mismo y
@@ -37,8 +39,10 @@
       <div class="panel-body" id="panelBody">
         <p class="panel-empty">Lo que diga Catalina irá quedando aquí. También puedes soltar aquí una presentación, un Excel o un PDF para comentarlo con ella.</p>
       </div>
-      <input type="file" id="panelArchivo" multiple hidden
-             accept=".pdf,.docx,.xlsx,.pptx,.doc,.xls,.ppt,.txt,.md,.csv,.json,image/*">
+      <!-- Sin `accept`: se admite cualquier archivo y el contenido decide si
+           se puede leer. Filtrar por extensión escondía en el selector cosas que
+           sí se leen, como un .sql o un archivo sin extensión. -->
+      <input type="file" id="panelArchivo" multiple hidden>
     </aside>
 
     <figure class="imagen" id="imagen" data-estado="oculto">
@@ -215,7 +219,7 @@
         <button id="reunionFinalizar" class="reunion-fin">Finalizar reunión</button>
       </nav>
       <input type="file" id="reunionArchivo" multiple hidden
-             accept=".pdf,.docx,.xlsx,.pptx,.doc,.xls,.ppt,.txt,.md,.csv,.json,image/*">
+            >
     </div>
 
     <!-- Resultado del cierre: los dos documentos, dónde quedaron guardados y el
@@ -231,6 +235,6 @@
     <button class="exit-meet" id="exitMeet" aria-label="Salir del modo Meet">Mostrar controles</button>
   </main>
   <audio id="remoteAudio" autoplay></audio>
-  <script type="module" src="app.js?v=43"></script>
+  <script type="module" src="app.js?v=44"></script>
 </body>
 </html>

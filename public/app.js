@@ -14,14 +14,16 @@ import { dibujarRuta } from "./mapa.js";
 import { EscuchaDeReunion, escuchaDisponible, IDIOMAS } from "./escucha.js";
 import { MemoriaDeReunion, leerDocumento, ESTADOS, ROTULOS } from "./reunion.js";
 import {
-  anadirDocumento, listarDocumentos, olvidarDocumento, olvidarDocumentos,
+  anadirDocumento, listarDocumentos, documentosCompletos, olvidarDocumento, olvidarDocumentos,
   fichaParaCatalina, leerTrozo, legible
 } from "./adjuntos.js";
+import { MemoriaDeConversacion } from "./conversacion.js";
 import { TIPOS, TIPO_POR_DEFECTO, tipoDeReunion } from "./tipos-de-reunion.js";
 import { carpetaGuardada, permisoDeCarpeta, escribirEnCarpeta, carpetaDisponible } from "./carpeta.js";
 import {
   guardarReunion, listarReuniones, leerReunion, borrarReunion, comoAntecedente, historialDisponible,
-  guardarBorrador, borradorPendiente, olvidarBorrador
+  guardarBorrador, borradorPendiente, olvidarBorrador,
+  guardarConversacion, listarConversaciones, borrarConversacion
 } from "./historial.js";
 
 const canvas = document.querySelector("#avatar");
@@ -88,6 +90,8 @@ const ui = {
   panel: document.querySelector("#panel"),
   panelBody: document.querySelector("#panelBody"),
   panelSubir: document.querySelector("#panelSubir"),
+  panelCerrarCharla: document.querySelector("#panelCerrarCharla"),
+  panelConversaciones: document.querySelector("#panelConversaciones"),
   panelAdjuntos: document.querySelector("#panelAdjuntos"),
   panelArchivo: document.querySelector("#panelArchivo"),
   panelClose: document.querySelector("#panelClose"),
@@ -197,7 +201,16 @@ const manejadores = {
   onTranscript: text => {
     hayActividad();
     anotarTurno(text);
+    // Lo que dice ella queda en el registro de la conversación, para el resumen.
+    if (text) charla.anotar("catalina", sinEtiquetas(text));
     aplicarExpresionDeFrase(text);
+  },
+  // Lo que dice la persona, transcrito por ElevenLabs. Sin esto el resumen
+  // saldría de un monólogo y los acuerdos serían suyos, no de los dos.
+  onUsuario: texto => {
+    hayActividad();
+    charla.anotar("usuario", texto);
+    anotarDicho(texto);
   },
   onResponseDone: () => {
     respuestaCerrada = true;
@@ -2246,6 +2259,8 @@ async function despacharHerramienta(nombre, argumentos) {
   if (nombre === "fuentes_clinicas") return await pedirFuentesClinicas(argumentos);
   if (nombre === "buscar_videos") return await buscarVideos(argumentos);
   if (nombre === "consultar_documento") return leerTrozo(argumentos || {});
+  if (nombre === "cerrar_conversacion") return await cerrarLaConversacion({ porVoz: true });
+  if (nombre === "conversaciones_anteriores") return await listarParaCatalina(argumentos || {});
   if (nombre === "tomar_nota") return anotarEnLaReunion(argumentos);
   if (nombre === "quien_habla") return registrarHablante(argumentos);
   if (nombre === "estado_de_la_reunion") return contarEstadoDeLaReunion();
@@ -3352,6 +3367,8 @@ function pintarReferencias() {
 const PREFS = "catalina.vista";
 let verSubtitulos = false;
 let verPanel = false;
+const charla = new MemoriaDeConversacion();
+let cerrandoCharla = false;
 let turnoVivo = null;   // { nodo, texto } del turno que Catalina está diciendo
 let avisoActivo = false;
 
@@ -3403,6 +3420,8 @@ function fijarSubtitulos(activo) {
 let subiendo = false;
 
 ui.panelSubir?.addEventListener("click", () => ui.panelArchivo?.click());
+ui.panelCerrarCharla?.addEventListener("click", () => cerrarLaConversacion());
+ui.panelConversaciones?.addEventListener("click", () => mostrarConversaciones());
 ui.panelArchivo?.addEventListener("change", async evento => {
   const archivos = [...evento.target.files];
   evento.target.value = "";
@@ -3532,6 +3551,261 @@ function pintarAdjuntos() {
   ui.panelAdjuntos.hidden = ui.panelAdjuntos.children.length === 0;
 }
 
+// ── Cerrar la conversación y guardar su resumen ──────────────────────────────
+//
+// Se pidió que al terminar quede un resumen estructurado —minuta, acuerdos y
+// alcance— y que se pueda reutilizar como contexto otro día. Esto es lo que lo
+// produce. Se puede pedir con el botón o de viva voz («Catalina, cierra la
+// conversación»), que para eso está `cerrar_conversacion`.
+async function cerrarLaConversacion({ porVoz = false } = {}) {
+  if (cerrandoCharla) return { ok: false, error: "Ya estoy cerrando la conversación." };
+  if (charla.vacia) {
+    const aviso = "Todavía no hemos hablado de nada que resumir.";
+    if (!porVoz) mostrarAviso(aviso);
+    return { ok: false, error: aviso };
+  }
+
+  cerrandoCharla = true;
+  fijarPanel(true);
+  const nota = pintarAvisoDeCierre("Redactando el resumen de la conversación…");
+
+  try {
+    charla.cerrar();
+    const respuesta = await fetch("/conversacion/cerrar", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(charla.paraCerrar(documentosCompletos()))
+    });
+    const datos = await respuesta.json().catch(() => ({}));
+    if (!respuesta.ok || !datos.ok) throw new Error(datos.error || `El servidor respondió ${respuesta.status}`);
+
+    const guardado = await guardarConversacion(datos.resumen);
+    nota.remove();
+    pintarResumen(datos.resumen, { guardado: guardado.ok, aviso: datos.aviso });
+
+    // Cerrada y guardada, se empieza otra: lo de antes queda en el historial y
+    // se puede retomar desde ahí.
+    charla.olvidar();
+    charla.abrir();
+
+    return {
+      ok: true,
+      titulo: datos.resumen.titulo,
+      acuerdos: (datos.resumen.acuerdos ?? []).length,
+      pendientes: (datos.resumen.pendientes ?? []).length,
+      guardado: guardado.ok,
+      // Es lo que dirá en voz alta si lo pidió hablando.
+      resumen: datos.resumen.resumen
+    };
+  } catch (error) {
+    nota.remove();
+    charla.fin = 0;   // no se cerró: la conversación sigue viva
+    const aviso = `No se pudo cerrar la conversación: ${error.message}`;
+    pintarAvisoDeCierre(aviso, "problema");
+    return { ok: false, error: aviso };
+  } finally {
+    cerrandoCharla = false;
+  }
+}
+
+function pintarAvisoDeCierre(texto, clase = "") {
+  ui.panelBody.querySelector(".panel-empty")?.remove();
+  const nodo = document.createElement("p");
+  nodo.className = `panel-aviso${clase ? " " + clase : ""}`;
+  nodo.textContent = texto;
+  ui.panelBody.append(nodo);
+  ui.panelBody.scrollTop = ui.panelBody.scrollHeight;
+  return nodo;
+}
+
+function pintarResumen(resumen, { guardado = true, aviso = "" } = {}) {
+  ui.panelBody.querySelector(".panel-empty")?.remove();
+  const caja = document.createElement("article");
+  caja.className = "resumen";
+
+  const titulo = document.createElement("h3");
+  titulo.textContent = resumen.titulo || "Conversación";
+  caja.append(titulo);
+
+  const meta = document.createElement("p");
+  meta.className = "resumen-meta";
+  meta.textContent = [
+    `${resumen.minutos || 0} min`,
+    `${resumen.intervenciones || 0} intervenciones`,
+    (resumen.documentos ?? []).length ? `${resumen.documentos.length} doc.` : ""
+  ].filter(Boolean).join(" · ");
+  caja.append(meta);
+
+  if (resumen.resumen) {
+    const p = document.createElement("p");
+    p.className = "resumen-texto";
+    p.textContent = resumen.resumen;
+    caja.append(p);
+  }
+
+  // Cada bloque sólo aparece si trae algo: una lista vacía es una respuesta
+  // correcta y frecuente, y enseñar «Acuerdos: ninguno» en cada resumen sería
+  // ruido en el que dejaría de mirarse lo que sí hay.
+  for (const [nombre, puntos] of [
+    ["Acuerdos", resumen.acuerdos],
+    ["Alcance", resumen.alcance],
+    ["Pendientes", resumen.pendientes],
+    ["Minuta", resumen.minuta]
+  ]) {
+    const items = (puntos ?? []).filter(Boolean);
+    if (!items.length) continue;
+    const h = document.createElement("h4");
+    h.textContent = nombre;
+    const ul = document.createElement("ul");
+    for (const punto of items) {
+      const li = document.createElement("li");
+      li.textContent = punto;
+      ul.append(li);
+    }
+    caja.append(h, ul);
+  }
+
+  const pie = document.createElement("p");
+  pie.className = guardado ? "resumen-pie" : "resumen-pie problema";
+  pie.textContent = guardado
+    ? "Guardado. Puedes retomarlo desde «Anteriores» cuando quieras."
+    : "No se pudo guardar en este navegador, así que se perderá al cerrar la pestaña.";
+  caja.append(pie);
+
+  if (aviso) {
+    const p = document.createElement("p");
+    p.className = "resumen-pie problema";
+    p.textContent = aviso;
+    caja.append(p);
+  }
+
+  ui.panelBody.append(caja);
+  ui.panelBody.scrollTop = ui.panelBody.scrollHeight;
+}
+
+// ── Conversaciones anteriores ────────────────────────────────────────────────
+//
+// El historial de conversaciones cerradas, con lo que se pidió: poder decidir si
+// una de ellas entra como contexto de la de ahora. No entra sola —eso convertiría
+// cada conversación en rehén de la anterior—; se elige.
+async function mostrarConversaciones() {
+  fijarPanel(true);
+  const guardadas = await listarConversaciones();
+  ui.panelBody.innerHTML = "";
+
+  if (!guardadas.length) {
+    const p = document.createElement("p");
+    p.className = "panel-empty";
+    p.textContent = "Todavía no has cerrado ninguna conversación. Cuando cierres una, su resumen quedará aquí "
+      + "y podrás retomarlo como contexto de otra.";
+    ui.panelBody.append(p);
+    return;
+  }
+
+  for (const c of guardadas) {
+    const ficha = document.createElement("article");
+    ficha.className = "conversacion-ficha";
+
+    const cabecera = document.createElement("div");
+    cabecera.className = "conversacion-cabecera";
+    const fecha = document.createElement("time");
+    fecha.textContent = new Date(c.inicio).toLocaleDateString("es-CL", { day: "2-digit", month: "short" });
+    const titulo = document.createElement("strong");
+    titulo.textContent = c.titulo || "Conversación";
+    cabecera.append(fecha, titulo);
+
+    const detalle = document.createElement("p");
+    detalle.className = "conversacion-detalle";
+    detalle.textContent = c.resumen || "";
+
+    const cuentas = document.createElement("p");
+    cuentas.className = "conversacion-cuentas";
+    cuentas.textContent = [
+      (c.acuerdos ?? []).length ? `${c.acuerdos.length} acuerdo${c.acuerdos.length === 1 ? "" : "s"}` : "",
+      (c.pendientes ?? []).length ? `${c.pendientes.length} pendiente${c.pendientes.length === 1 ? "" : "s"}` : "",
+      (c.temas ?? []).length ? c.temas.slice(0, 3).join(" · ") : ""
+    ].filter(Boolean).join(" — ");
+
+    const acciones = document.createElement("div");
+    acciones.className = "conversacion-acciones";
+    const usar = document.createElement("button");
+    usar.className = "reunion-si";
+    usar.textContent = "Usar como contexto";
+    usar.addEventListener("click", () => usarConversacion(c));
+    const borrar = document.createElement("button");
+    borrar.textContent = "Borrar";
+    borrar.addEventListener("click", async () => {
+      await borrarConversacion(c.id);
+      mostrarConversaciones();
+    });
+    acciones.append(usar, borrar);
+
+    ficha.append(cabecera, detalle, cuentas, acciones);
+    ui.panelBody.append(ficha);
+  }
+}
+
+// Retomar una conversación anterior: su resumen entra como contexto de ésta.
+function usarConversacion(resumen) {
+  charla.antecedente = { titulo: resumen.titulo, inicio: resumen.inicio };
+  const contexto = MemoriaDeConversacion.contextoDe(resumen);
+
+  ui.panelBody.innerHTML = "";
+  pintarAvisoDeCierre(`Retomando «${resumen.titulo}». Catalina ya tiene el contexto de esa conversación.`);
+
+  if (connected && sesion) {
+    if (sesion.enviarTexto(contexto) !== true) {
+      mostrarAviso("No pude pasarle el contexto: la conversación se cortó.");
+    }
+  } else {
+    // Queda esperando: al conectar se le entrega, como cualquier otro aviso.
+    avisarAlAgente(contexto);
+    mostrarAviso(`«${resumen.titulo}» quedó cargada. Al iniciar la conversación, Catalina la tendrá presente.`);
+  }
+  return { ok: true, titulo: resumen.titulo };
+}
+
+// Lo que ve Catalina del historial cuando se lo piden hablando: «¿de qué
+// hablamos el martes?», «retoma la del piloto». Sin `titulo` lista lo que hay;
+// con `titulo`, carga esa como contexto. Cargarla es un cambio de estado, así
+// que se enseña en pantalla además de decirlo.
+async function listarParaCatalina({ titulo = "" } = {}) {
+  const guardadas = await listarConversaciones();
+  if (!guardadas.length) return { ok: true, hay: 0, aviso: "No hay ninguna conversación cerrada todavía." };
+
+  const buscado = String(titulo || "").trim().toLowerCase();
+  if (!buscado) {
+    return {
+      ok: true,
+      hay: guardadas.length,
+      conversaciones: guardadas.slice(0, 8).map(c => ({
+        titulo: c.titulo,
+        cuando: new Date(c.inicio).toLocaleDateString("es-CL", { day: "numeric", month: "long" }),
+        resumen: c.resumen,
+        acuerdos: (c.acuerdos ?? []).length
+      })),
+      comoSeguir: "Para retomar una, vuelve a llamarme con su título en `titulo`."
+    };
+  }
+
+  const elegida = guardadas.find(c => (c.titulo || "").toLowerCase().includes(buscado))
+    || guardadas.find(c => (c.temas ?? []).some(t => String(t).toLowerCase().includes(buscado)));
+  if (!elegida) {
+    return { ok: false, error: `No encuentro ninguna conversación que hable de «${titulo}».`,
+      disponibles: guardadas.slice(0, 8).map(c => c.titulo) };
+  }
+
+  usarConversacion(elegida);
+  return {
+    ok: true,
+    cargada: elegida.titulo,
+    resumen: elegida.resumen,
+    acuerdos: elegida.acuerdos ?? [],
+    pendientes: elegida.pendientes ?? [],
+    aviso: "Ya tienes el contexto de esa conversación. Dilo en una frase y sigue."
+  };
+}
+
 function fijarPanel(activo) {
   verPanel = activo;
   ui.panel.dataset.open = String(activo);
@@ -3615,6 +3889,20 @@ function crearTurno(deQuien = "Catalina") {
   nodo.append(cabecera, texto);
   ui.panelBody.append(nodo);
   return { nodo, texto };
+}
+
+// Lo que dijo la persona, en el panel. Antes sólo se veía a Catalina, así que
+// el historial parecía un monólogo y releerlo no servía para reconstruir nada.
+function anotarDicho(texto) {
+  const limpio = String(texto ?? "").trim();
+  if (!limpio) return;
+  cerrarTurno();
+  const turno = crearTurno("Inti");
+  turno.nodo.dataset.quien = "usuario";
+  turno.nodo.dataset.vivo = "false";
+  turno.texto.textContent = limpio;
+  const alFondo = ui.panelBody.scrollHeight - ui.panelBody.scrollTop - ui.panelBody.clientHeight < 60;
+  if (alFondo) ui.panelBody.scrollTop = ui.panelBody.scrollHeight;
 }
 
 // Estas notas —por qué se cerró la sesión, qué activar en el panel del agente—
