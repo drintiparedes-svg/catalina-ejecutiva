@@ -3418,6 +3418,7 @@ function fijarSubtitulos(activo) {
 // ningún sitio, salvo las imágenes, que necesitan al modelo para describirse.
 
 let subiendo = false;
+const colaDeAdjuntos = [];
 
 ui.panelSubir?.addEventListener("click", () => ui.panelArchivo?.click());
 ui.panelCerrarCharla?.addEventListener("click", () => cerrarLaConversacion());
@@ -3450,19 +3451,34 @@ ui.panel?.addEventListener("drop", async e => {
 });
 
 async function subirDocumentos(archivos) {
-  if (!archivos.length || subiendo) return;
+  if (!archivos.length) return;
+  // Los archivos entran en una cola, no directamente al bucle. Antes esto
+  // empezaba con «si ya hay uno subiendo, vuélvete»: el segundo archivo que se
+  // soltara mientras se leía el primero DESAPARECÍA, sin ficha, sin aviso y sin
+  // error. Leer un PDF de cien páginas o mirar una imagen tarda lo bastante
+  // como para que soltar dos seguidos sea lo normal, no un caso raro.
+  colaDeAdjuntos.push(...archivos);
+  if (subiendo) return;
+
   subiendo = true;
   if (ui.panelSubir) ui.panelSubir.disabled = true;
   fijarPanel(true);
 
   try {
-    for (const archivo of archivos) {
+    while (colaDeAdjuntos.length) {
+      const archivo = colaDeAdjuntos.shift();
       // Una ficha en estado «leyendo» mientras tanto: leer un PowerPoint o
       // mirar una imagen tarda, y sin esto la pantalla se queda muda.
       const fila = pintarAdjuntoProvisional(archivo.name);
-      const r = await anadirDocumento(archivo, {
-        alAvisar: texto => { fila.querySelector("i").textContent = texto; }
-      });
+      let r;
+      try {
+        r = await anadirDocumento(archivo, {
+          alAvisar: texto => { fila.querySelector("i").textContent = texto; }
+        });
+      } catch (error) {
+        // Que uno estalle no puede llevarse por delante a los que quedan.
+        r = { ok: false, nombre: archivo.name, error: `No se pudo leer: ${error.message}` };
+      }
       fila.remove();
       pintarAdjuntos();
 
@@ -3532,11 +3548,17 @@ function pintarAdjuntos() {
     b.textContent = d.nombre;
     const i = document.createElement("i");
     // De dónde salió el texto: leído aquí, o mirado por el modelo. La
-    // diferencia importa y por eso se ve.
-    i.className = d.imagen ? "adjunto-ojo" : "";
-    i.textContent = d.imagen
-      ? `imagen descrita · ${legible(d.tamano)}`
-      : `${d.caracteres.toLocaleString("es-CL")} car. · ${legible(d.tamano)}`;
+    // diferencia importa —el archivo salió del navegador— y por eso se ve.
+    const porElModelo = d.imagen || d.porElModelo;
+    i.className = porElModelo ? "adjunto-ojo" : "";
+    i.textContent = [
+      d.imagen ? "imagen descrita por el modelo"
+        : d.porElModelo ? "sin texto legible: transcrito por el modelo"
+        : `${d.caracteres.toLocaleString("es-CL")} car.`,
+      d.paginas ? `${d.paginas} pág.` : "",
+      d.incompleto ? "transcripción incompleta" : "",
+      legible(d.tamano)
+    ].filter(Boolean).join(" · ");
     const quitar = document.createElement("button");
     quitar.textContent = "×";
     quitar.setAttribute("aria-label", `Quitar ${d.nombre}`);

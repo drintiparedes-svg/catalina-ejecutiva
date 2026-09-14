@@ -16,6 +16,8 @@
 // La distinción no es burocrática: una nota editorial puede cambiar el énfasis
 // de la minuta, pero jamás puede acabar convertida en algo que alguien dijo.
 
+import { textoDePdf } from "./pdf.js";
+
 // ── Estados ──────────────────────────────────────────────────────────────────
 //
 // Por defecto escucha y calla. Sólo habla cuando se la habilita y se la invoca,
@@ -322,6 +324,14 @@ export class MemoriaDeReunion {
 
 const EXTENSIONES_ZIP = { docx: "word", xlsx: "excel", pptx: "powerpoint" };
 
+// Por qué un PDF no soltó texto. Los tres casos se arreglan distinto y por eso
+// se dicen distinto.
+const AVISOS_PDF = {
+  "sin-texto": "Este PDF no trae texto: sus páginas son imágenes, como en un escaneado.",
+  "ilegible": "Este PDF trae el texto en tipografías sin tabla de caracteres, y no se puede leer aquí.",
+  "cifrado": "Este PDF está protegido con contraseña y su texto va cifrado."
+};
+
 // Qué es el archivo DE VERDAD, mirándolo por dentro.
 //
 // Antes se decidía sólo por la extensión, y por una lista blanca corta: un
@@ -407,10 +417,22 @@ export async function leerDocumento(archivo, { tope = TOPE_DOCUMENTO } = {}) {
     }
 
     if (clase === "pdf" || extension === "pdf") {
-      const texto = await textoDePdf(await archivo.arrayBuffer());
-      return texto
-        ? { ...base, texto: recortar(texto, tope) }
-        : { ...base, texto: "", aviso: "Este PDF no trae capa de texto: probablemente es un escaneado. Sube una captura de la página y se lee como imagen." };
+      const leido = await textoDePdf(await archivo.arrayBuffer());
+      if (leido.texto) return { ...base, texto: recortar(leido.texto, tope), paginas: leido.paginas };
+      // Por qué no salió texto importa, y mucho: de un escaneado se sale
+      // mirándolo, de uno protegido hay que quitarle la contraseña, y de uno
+      // con tipografías sin traducción no se sale desde el navegador. Decir
+      // «es un escaneado» a las tres cosas mandaba a la gente a hacer capturas
+      // de pantalla de documentos que tenían su texto perfectamente puesto.
+      return {
+        ...base,
+        texto: "",
+        paginas: leido.paginas,
+        // Que se pueda mirar con el modelo, que es lo que resuelve los tres casos.
+        mirable: true,
+        motivo: leido.motivo,
+        aviso: AVISOS_PDF[leido.motivo] || AVISOS_PDF.ilegible
+      };
     }
 
     if (clase === "zip") {
@@ -466,9 +488,9 @@ const recortar = (texto, tope = TOPE_DOCUMENTO) => {
 // descomprimir (DecompressionStream), pero no sabe leer un ZIP: hay que
 // recorrer su índice a mano. Son cuarenta líneas y evita cargar una librería.
 
-// Los dos formatos no son el mismo: dentro de un ZIP el deflate va crudo, y
-// dentro de un PDF va envuelto en la cabecera de zlib. Confundirlos es el error
-// que hace que la descompresión falle sin decir por qué.
+// Dentro de un ZIP el deflate va crudo, sin la cabecera de zlib. Es lo que lo
+// distingue del de un PDF, y confundirlos hace que la descompresión falle sin
+// decir por qué.
 async function inflar(datos, formato = "deflate-raw") {
   if (typeof DecompressionStream !== "function") throw new Error("el navegador no sabe descomprimir");
   const flujo = new Blob([datos]).stream().pipeThrough(new DecompressionStream(formato));
@@ -556,86 +578,4 @@ async function textoDeOoxml(buffer, familia) {
     try { partes.push(textoDeXml(await zip.leer(entrada))); } catch { /* una parte ilegible no tumba el resto */ }
   }
   return partes.join("\n\n").trim();
-}
-
-// ── PDF en el navegador ──────────────────────────────────────────────────────
-//
-// Extracción best-effort: se descomprimen los flujos de contenido y se recogen
-// los operadores de texto. Con un PDF normal sale bien; con uno escaneado no
-// hay texto que sacar, y con tipografías incrustadas de codificación propia
-// sale ilegible. Ese último caso se detecta abajo y se dice, en vez de meter
-// basura en la minuta.
-
-async function textoDePdf(buffer) {
-  const bytes = new Uint8Array(buffer);
-  const crudo = new TextDecoder("latin1").decode(bytes);
-  const trozos = [];
-
-  const marca = /stream\r?\n/g;
-  let encuentro;
-  while ((encuentro = marca.exec(crudo)) !== null) {
-    const inicio = encuentro.index + encuentro[0].length;
-    const fin = crudo.indexOf("endstream", inicio);
-    if (fin < 0) continue;
-    const cabecera = crudo.slice(Math.max(0, encuentro.index - 300), encuentro.index);
-    // Sólo interesan los flujos de contenido; las imágenes se saltan porque
-    // descomprimirlas cuesta y no aportan texto.
-    if (/\/Subtype\s*\/Image/.test(cabecera)) continue;
-
-    let contenido = bytes.subarray(inicio, fin);
-    if (/\/FlateDecode/.test(cabecera)) {
-      try {
-        contenido = await inflar(contenido, "deflate");
-      } catch {
-        // Algunos generadores escriben el flujo sin la cabecera de zlib. Se
-        // reintenta como deflate crudo antes de darlo por perdido.
-        try { contenido = await inflar(contenido, "deflate-raw"); } catch { continue; }
-      }
-    }
-    trozos.push(new TextDecoder("latin1").decode(contenido));
-  }
-
-  const texto = trozos.map(operadoresDeTexto).join("\n").trim();
-  return legible(texto) ? texto : "";
-}
-
-// De los operadores de dibujo a las palabras. `Tj` pinta una cadena y `TJ` una
-// lista donde los números son ajustes de espaciado: los grandes son un espacio.
-function operadoresDeTexto(flujo) {
-  const lineas = [];
-  const patron = /\((?:\\.|[^\\()])*\)\s*Tj|\[(?:[^\][\\]|\\.)*\]\s*TJ|\bT\*|\bTd\b|\bTD\b/g;
-  let encuentro;
-  let linea = "";
-  while ((encuentro = patron.exec(flujo)) !== null) {
-    const pieza = encuentro[0];
-    if (["T*", "Td", "TD"].includes(pieza.trim())) { if (linea.trim()) lineas.push(linea.trim()); linea = ""; continue; }
-    if (pieza.endsWith("Tj")) {
-      linea += cadenaPdf(pieza.slice(pieza.indexOf("(") + 1, pieza.lastIndexOf(")")));
-      continue;
-    }
-    const interior = pieza.slice(pieza.indexOf("[") + 1, pieza.lastIndexOf("]"));
-    for (const parte of interior.match(/\((?:\\.|[^\\()])*\)|-?[\d.]+/g) ?? []) {
-      if (parte.startsWith("(")) linea += cadenaPdf(parte.slice(1, -1));
-      else if (Number(parte) < -120) linea += " ";
-    }
-  }
-  if (linea.trim()) lineas.push(linea.trim());
-  return lineas.join("\n");
-}
-
-function cadenaPdf(cruda) {
-  return cruda.replace(/\\(\d{1,3}|.)/g, (_, escape) => {
-    if (/^\d+$/.test(escape)) return String.fromCharCode(parseInt(escape, 8));
-    return { n: "\n", r: "\n", t: "\t", b: "", f: "" }[escape] ?? escape;
-  });
-}
-
-// ¿Esto es texto o es ruido? Un PDF con tipografía de codificación propia
-// devuelve secuencias sin vocales ni espacios; meterlas en la minuta sería peor
-// que decir que no se pudo leer.
-function legible(texto) {
-  if (texto.length < 20) return false;
-  const letras = (texto.match(/[a-záéíóúñüA-ZÁÉÍÓÚÑÜ]/g) ?? []).length;
-  const espacios = (texto.match(/\s/g) ?? []).length;
-  return letras / texto.length > 0.5 && espacios / texto.length > 0.08;
 }

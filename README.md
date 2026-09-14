@@ -652,11 +652,69 @@ se cuela: los bytes nulos lo delatan.
 Del tamaño se guardan hasta quinientos mil caracteres por documento, no los
 cuarenta mil de una reunión: aquí el documento **es** el tema de la
 conversación. Por encima de ochenta megas se rechaza con el motivo y el tope, en
-vez de colgar la pestaña leyéndolo entero en memoria. La única excepción son las
-imágenes: de una imagen no se puede sacar texto aquí, así que se manda al
-servidor para que el modelo describa lo que se ve. Eso conviene saberlo, y la
-ficha del documento lo dice: «imagen descrita» frente al recuento de caracteres
-de un archivo leído.
+vez de colgar la pestaña leyéndolo entero en memoria.
+
+Hay dos excepciones a que el archivo no salga del navegador, y las dos se dicen
+en la ficha del documento, porque son una salida de datos y quien sube el
+archivo tiene que verla, no deducirla:
+
+- **Las imágenes.** De una imagen no se puede sacar texto aquí, así que se manda
+  al servidor para que el modelo describa lo que se ve. La ficha lo dice:
+  «imagen descrita por el modelo».
+- **Los PDF sin texto legible.** Un escaneado, uno protegido con contraseña, o
+  uno cuyas tipografías incrustadas no traen tabla de caracteres. La ficha dice
+  «sin texto legible: transcrito por el modelo», y a Catalina se le advierte de
+  que lo que tiene es una transcripción automática y no el documento literal.
+  El tope aquí son tres megas: Vercel corta las peticiones por encima de 4,5 MB
+  y en base64 un archivo crece un tercio.
+
+### El lector de PDF
+
+`public/pdf.js` es un lector de PDF escrito a mano, y está ahí en vez de pdf.js
+por dos razones: el archivo no sale del navegador, y traer más de un mega de
+librería para leer un informe de cuatro páginas es caro en una pantalla que
+además está sosteniendo una conversación por voz.
+
+El lector que había antes no leía **ningún** PDF comprimido, que son todos. Dos
+fallos, los dos silenciosos:
+
+1. Cortaba el flujo buscando `endstream` en vez de usar su `/Length`, y se
+   llevaba por delante el salto de línea que va justo antes. `DecompressionStream`
+   rechaza los bytes de más —«trailing junk»— y el flujo se descartaba entero.
+2. No leía los CMaps `/ToUnicode`. Las tipografías incrustadas viajan
+   subconjuntadas —`AAAAAA+LiberationSans`— y sus códigos no son Unicode: en un
+   PDF de Chrome, de Figma o de InDesign la letra «D» puede ser el código
+   `0x0027`. Sin esa tabla lo que sale son números de glifo.
+
+Y el resultado de los dos era el mismo mensaje: «este PDF no trae capa de texto:
+probablemente es un escaneado», dicho de documentos que llevaban su texto
+perfectamente puesto. Un diagnóstico equivocado es peor que ninguno, porque
+manda a hacer capturas de pantalla de algo que se podía leer.
+
+Lo que hace ahora, por orden:
+
+| Paso | Qué resuelve |
+|---|---|
+| Índice de objetos recorriendo el archivo | La tabla `xref` miente en cuanto alguien edita el PDF |
+| `/Type /ObjStm` | Donde guardan los objetos Word, Acrobat y Ghostscript desde 2005 |
+| Flate, LZW, ASCIIHex, ASCII85, RunLength | Con predictores PNG y TIFF |
+| Árbol de páginas `/Root → /Pages → /Kids` | Para saber qué tipografía usa cada texto, y en qué orden van las páginas |
+| CMaps `/ToUnicode`, `/Differences`, WinAnsi | De código de glifo a letra |
+| `Tj`, `TJ`, `'`, `"`, con `Tm`/`Td`/`T*` | Los saltos de línea no están escritos: se deducen de dónde cae cada trozo |
+| Formularios `/Subtype /Form` | Donde guardan el texto InDesign, Illustrator y los PDF de diseño |
+
+Cuando no sale texto, el motivo se distingue, porque cada uno se arregla de una
+forma distinta: `sin-texto` (las páginas son imágenes), `ilegible` (tipografías
+sin tabla de caracteres) y `cifrado` (protegido con contraseña). Los tres tienen
+la misma salida —leerlo con el modelo— pero no el mismo aviso.
+
+Hay una prueba de regresión que no necesita ningún archivo de ejemplo: forja los
+PDF en memoria, uno por cada forma de escribir texto que se ha visto romper un
+lector.
+
+```bash
+node work/prueba-pdf.mjs
+```
 
 A Catalina **no se le manda el documento entero**. Se le manda una ficha con el
 nombre y los primeros seis mil caracteres, y se le dice cómo pedir el resto: un
@@ -714,7 +772,8 @@ procesamiento sin perder lo capturado.
 Los documentos se leen en el propio navegador —PDF, Word, Excel, PowerPoint y
 texto— con `DecompressionStream`, sin subirlos: el archivo ya está ahí y Vercel
 tiene un tope de tamaño por petición que un PowerPoint se salta sin esfuerzo. De
-una imagen o de un PDF escaneado no se puede sacar texto: en vez de inventarlo,
+una imagen o de un PDF escaneado no se puede sacar texto en el navegador: en
+vez de inventarlo,
 pide una descripción y la usa como tal.
 
 Al finalizar se generan dos documentos, **sin instalar ninguna dependencia**

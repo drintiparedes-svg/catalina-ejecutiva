@@ -690,6 +690,61 @@ export async function describirImagen({ base64, tipo, nombre = "", nota = "" }) 
   return { ok: true, descripcion: salida.texto.trim(), modelo: modeloQueFunciona };
 }
 
+// Lo que dice un PDF que el navegador no supo leer.
+//
+// El lector del navegador resuelve la inmensa mayoría de los PDF, pero hay tres
+// que no puede: el escaneado —sus páginas son fotos—, el que trae tipografías
+// incrustadas sin tabla de caracteres, y el protegido con contraseña. En esos
+// tres el archivo sí viaja hasta aquí, porque es la única forma de leerlo.
+//
+// Se transcribe, no se resume: quien sube un documento a una conversación lo
+// sube para hablar de lo que dice, y un resumen automático le quitaría de
+// delante justo lo que quería mirar.
+export async function leerPdf({ base64, nombre = "", nota = "" }) {
+  if (!base64) return { ok: false, code: "SIN_PDF", error: "No llegó el documento." };
+  if (!hayRedaccion()) {
+    return { ok: false, code: "SIN_CLAVE", error: "Falta GEMINI_API_KEY: no se pueden leer PDF sin capa de texto." };
+  }
+
+  const prompt = [
+    "Transcribes un PDF para que alguien pueda conversar sobre su contenido.",
+    nombre ? `El archivo se llama «${nombre}».` : "",
+    nota ? `Quien lo sube dice: «${nota}». Ténlo en cuenta, pero transcribe lo que de verdad hay.` : "",
+    "",
+    "Devuelve el texto del documento, página por página, en este formato:",
+    "[Página 1]",
+    "…el texto de esa página, tal como está escrito…",
+    "",
+    "Reglas:",
+    "- Transcribe literalmente: títulos, párrafos, listas, pies de página y rótulos.",
+    "- Las tablas, fila por fila, separando las celdas con « | » y conservando sus encabezados.",
+    "- Los gráficos y las imágenes, descritos en una línea entre corchetes con los valores que se lean.",
+    "- Lo que no se lea con claridad, [ilegible]. No completes palabras ni cifras.",
+    "",
+    "PROHIBIDO: resumir, interpretar, reordenar, corregir la redacción o añadir nada que no esté en el documento.",
+    "Si el documento es más largo de lo que cabe en tu respuesta, transcribe desde el principio hasta donde llegues",
+    "y termina con la línea [TRANSCRIPCIÓN INCOMPLETA]."
+  ].filter(Boolean).join("\n");
+
+  const salida = await pedir(prompt, {
+    temperatura: 0,
+    // Transcribir cuesta más que describir una imagen: una tabla de veinte
+    // filas ya se come el minuto por defecto.
+    tiempo: 120_000,
+    partes: [{ inlineData: { mimeType: "application/pdf", data: base64 } }]
+  });
+  if (!salida.ok) return salida;
+
+  const texto = salida.texto.trim();
+  if (!texto) return { ok: false, code: "VACIO", error: "El modelo no sacó nada de este PDF." };
+  return {
+    ok: true,
+    texto,
+    incompleto: /\[TRANSCRIPCI[ÓO]N INCOMPLETA\]/i.test(texto),
+    modelo: modeloQueFunciona
+  };
+}
+
 // Resumen estructurado de una conversación.
 //
 // No es la minuta de una reunión: allí Catalina toma acta de lo que dice una

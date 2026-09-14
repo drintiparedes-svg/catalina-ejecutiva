@@ -7,9 +7,15 @@
 //
 // El texto se saca en el propio navegador con el mismo lector del modo reunión
 // (PDF, Word, Excel, PowerPoint, texto plano), así que el archivo NO se sube a
-// ningún sitio. La única excepción son las imágenes: de una imagen no se puede
-// sacar texto aquí, así que se manda al servidor para que el modelo la describa.
-// Eso conviene decirlo, y se dice en pantalla.
+// ningún sitio. Hay dos excepciones, y las dos se dicen en pantalla:
+//
+//   · las imágenes, de las que aquí no se puede sacar texto;
+//   · los PDF sin texto legible —escaneados, protegidos, o con tipografías
+//     incrustadas sin tabla de caracteres—, que sólo puede leer el modelo.
+//
+// En los dos casos el archivo viaja al servidor y de ahí a Gemini. Es la única
+// forma de leerlos, pero es una salida de datos y quien sube el archivo tiene
+// que verla, no deducirla.
 //
 // A Catalina no se le manda el documento entero: se le manda una ficha con el
 // principio, y si necesita más lo pide con `consultar_documento`. Un Excel de
@@ -31,13 +37,18 @@ const TOPE_TEXTO = 500_000;
 // Y un tope al archivo en sí: leer entero en memoria algo de cientos de megas
 // cuelga la pestaña. Por encima de esto no es un documento de trabajo.
 const TOPE_ARCHIVO = 80 * 1024 * 1024;
+// Y un tope aparte para lo que se manda al modelo: Vercel corta las peticiones
+// por encima de 4,5 MB, y en base64 un archivo crece un tercio.
+const TOPE_AL_MODELO = 3 * 1024 * 1024;
 
 const documentos = [];
 let siguienteId = 1;
 
 export const hayDocumentos = () => documentos.length > 0;
-export const listarDocumentos = () => documentos.map(({ id, nombre, extension, tipo, tamano, caracteres, imagen, nota }) =>
-  ({ id, nombre, extension, tipo, tamano, caracteres, imagen, nota }));
+export const listarDocumentos = () => documentos.map(
+  ({ id, nombre, extension, tipo, tamano, caracteres, imagen, porElModelo, incompleto, paginas, nota }) =>
+    ({ id, nombre, extension, tipo, tamano, caracteres, imagen, porElModelo, incompleto, paginas, nota })
+);
 
 // Los documentos enteros, para guardarlos con el resumen de la conversación.
 export const documentosCompletos = () => documentos.map(d => ({ ...d }));
@@ -51,6 +62,25 @@ export function olvidarDocumento(id) {
   const i = documentos.findIndex(d => d.id === id);
   if (i >= 0) documentos.splice(i, 1);
   return i >= 0;
+}
+
+// Las dos llamadas al servidor fallan igual y hay que contarlas igual: un 500
+// sin cuerpo y una red caída se veían antes como «undefined».
+async function preguntarAlModelo(ruta, cuerpo, que) {
+  try {
+    const respuesta = await fetch(ruta, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(cuerpo)
+    });
+    const datos = await respuesta.json().catch(() => ({}));
+    if (!respuesta.ok || !datos.ok) {
+      return { ok: false, error: datos.error || `No se pudo ${que} (${respuesta.status}).` };
+    }
+    return { ok: true, datos };
+  } catch (error) {
+    return { ok: false, error: `No se pudo ${que}: ${error.message}` };
+  }
 }
 
 const base64De = archivo => new Promise((resolve, reject) => {
@@ -74,25 +104,41 @@ export async function anadirDocumento(archivo, { nota = "", alAvisar } = {}) {
   const leido = await leerDocumento(archivo, { tope: TOPE_TEXTO });
   let texto = leido.texto || "";
   let imagen = false;
+  // Si lo leyó el modelo y no el navegador, se guarda: cambia lo que se enseña
+  // en pantalla y lo que se le dice a Catalina sobre de dónde salió el texto.
+  let porElModelo = false;
+  let incompleto = false;
 
   // De una imagen no sale texto en el navegador: la describe el modelo.
   if (!texto && (leido.imagen || (archivo.type || "").startsWith("image/"))) {
     imagen = true;
     alAvisar?.(`Mirando «${nombre}»…`);
-    try {
-      const respuesta = await fetch("/documento/imagen", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ base64: await base64De(archivo), tipo: archivo.type, nombre, nota })
-      });
-      const datos = await respuesta.json().catch(() => ({}));
-      if (!respuesta.ok || !datos.ok) {
-        return { ok: false, nombre, error: datos.error || `No se pudo mirar la imagen (${respuesta.status}).` };
-      }
-      texto = datos.descripcion || "";
-    } catch (error) {
-      return { ok: false, nombre, error: `No se pudo mirar la imagen: ${error.message}` };
+    const mirada = await preguntarAlModelo("/documento/imagen", {
+      base64: await base64De(archivo), tipo: archivo.type, nombre, nota
+    }, "mirar la imagen");
+    if (!mirada.ok) return { ok: false, nombre, error: mirada.error };
+    texto = mirada.datos.descripcion || "";
+  }
+
+  // Un PDF del que el navegador no sacó texto todavía tiene salida: lo lee el
+  // modelo. Es lo que resuelve de una vez el escaneado, el protegido y el de
+  // tipografías raras, que hasta ahora acababan los tres en el mismo callejón.
+  if (!texto && leido.mirable) {
+    if (archivo.size > TOPE_AL_MODELO) {
+      return {
+        ok: false,
+        nombre,
+        error: `${leido.aviso} Leerlo con el modelo exige mandarlo entero, y pesa ${legible(archivo.size)}: el tope son ${legible(TOPE_AL_MODELO)}.`
+      };
     }
+    porElModelo = true;
+    alAvisar?.(`Leyendo «${nombre}» con el modelo…`);
+    const lectura = await preguntarAlModelo("/documento/pdf", {
+      base64: await base64De(archivo), nombre, nota
+    }, "leer el PDF");
+    if (!lectura.ok) return { ok: false, nombre, error: `${leido.aviso} ${lectura.error}` };
+    texto = lectura.datos.texto || "";
+    incompleto = Boolean(lectura.datos.incompleto);
   }
 
   if (!texto) return { ok: false, nombre, error: leido.aviso || "No se pudo sacar nada de este archivo." };
@@ -108,6 +154,9 @@ export async function anadirDocumento(archivo, { nota = "", alAvisar } = {}) {
     tamano: archivo.size || 0,
     nota: String(nota || "").trim(),
     imagen,
+    porElModelo,
+    incompleto,
+    paginas: leido.paginas || 0,
     texto,
     caracteres: texto.length
   };
@@ -123,6 +172,15 @@ export function fichaParaCatalina(documento) {
     imagen(documento)
       ? `[Contexto] Te acaban de mostrar una imagen: «${documento.nombre}». Esto es lo que se ve en ella, descrito por el lector de imágenes:`
       : `[Contexto] Te acaban de dar un documento: «${documento.nombre}» (${legible(documento.tamano)}, ${documento.caracteres.toLocaleString("es-CL")} caracteres de texto).`,
+    // De dónde salió el texto no es un detalle: una transcripción automática
+    // puede traer errores de lectura, y ella no puede tratarla como si fuera el
+    // documento literal.
+    documento.porElModelo
+      ? "El PDF no traía texto legible, así que esto es una transcripción automática de sus páginas: puede tener errores de lectura y no es el documento literal."
+      : "",
+    documento.incompleto
+      ? "La transcripción se cortó antes del final: sólo tienes el principio del documento."
+      : "",
     documento.nota ? `Quien lo sube dice: «${documento.nota}».` : "",
     "",
     completo ? documento.texto : documento.texto.slice(0, ADELANTO),

@@ -17,7 +17,7 @@ import {
   terminarLlamadaElevenLabs, diagnosticoElevenLabs
 } from "./llamadas.mjs";
 import { cerrarReunion } from "./reunion.mjs";
-import { hayRedaccion, probarRedaccion, describirImagen, redactarConversacion, conversacionSinModelo } from "./redaccion.mjs";
+import { hayRedaccion, probarRedaccion, describirImagen, leerPdf, redactarConversacion, conversacionSinModelo } from "./redaccion.mjs";
 import { estadoDrive, urlDeConsentimiento, canjearCodigo, carpetasPropias, crearCarpeta } from "./drive.mjs";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -319,6 +319,31 @@ export async function atender(req, res) {
       return json(res, 200, await describirImagen({
         base64,
         tipo: String(cuerpo.tipo || "image/png"),
+        nombre: String(cuerpo.nombre || "").slice(0, 120),
+        nota: String(cuerpo.nota || "").slice(0, 400)
+      }));
+    }
+
+    // El texto de un PDF que el navegador no supo leer: escaneado, protegido, o
+    // con tipografías incrustadas sin tabla de caracteres. Es la excepción a que
+    // los documentos no salgan del navegador, y por eso el navegador lo dice en
+    // pantalla antes de mandarlo.
+    if (req.method === "POST" && req.url === "/documento/pdf") {
+      let cuerpo = {};
+      try { cuerpo = JSON.parse(await readBody(req) || "{}"); } catch {}
+      const base64 = String(cuerpo.base64 || "");
+      // Vercel corta las peticiones por encima de 4,5 MB y en base64 un archivo
+      // crece un tercio: por encima de esto la petición no llegaría entera y el
+      // error que se vería sería otro, más difícil de entender.
+      if (base64.length > 4_000_000) {
+        return json(res, 413, {
+          ok: false,
+          code: "DEMASIADO_GRANDE",
+          error: "El PDF es demasiado grande para leerlo así. Sube las páginas que importan."
+        });
+      }
+      return json(res, 200, await leerPdf({
+        base64,
         nombre: String(cuerpo.nombre || "").slice(0, 120),
         nota: String(cuerpo.nota || "").slice(0, 400)
       }));
