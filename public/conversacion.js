@@ -11,6 +11,33 @@
 
 const TOPE_TURNOS = 600;   // una conversación muy larga se recorta por el principio
 
+// Cuántos caracteres del principio bastan para reconocer que dos textos son la
+// misma intervención de Catalina vista en dos momentos.
+const PRINCIPIO = 24;
+
+// ¿Son el mismo turno, o son dos cosas distintas que dijo?
+//
+// El texto de Catalina llega varias veces y no siempre creciendo:
+//
+//   · en trozos, mientras habla, cada uno con lo acumulado hasta ahí;
+//   · entero, cuando el agente termina de generar;
+//   · CORREGIDO y más CORTO, si la interrumpieron: ahí el agente dice qué
+//     alcanzó a decir de verdad, y eso es más corto que lo que iba a decir.
+//
+// Comparar sólo con «empieza por» —que era lo que había— reconoce los dos
+// primeros y no el tercero: la corrección parecía una intervención nueva y la
+// conversación acababa con lo mismo dicho dos veces, una entera y otra a medias.
+// Compartir el principio los reconoce a los tres, y sigue distinguiendo dos
+// respuestas seguidas de verdad, que no empiezan igual.
+export function esElMismoTurno(a, b) {
+  const x = String(a ?? "").trim();
+  const y = String(b ?? "").trim();
+  if (!x || !y) return false;
+  if (x.startsWith(y) || y.startsWith(x)) return true;
+  const cuantos = Math.min(x.length, y.length, PRINCIPIO);
+  return cuantos >= 12 && x.slice(0, cuantos) === y.slice(0, cuantos);
+}
+
 export class MemoriaDeConversacion {
   constructor() { this.olvidar(); }
 
@@ -38,9 +65,10 @@ export class MemoriaDeConversacion {
     if (!this.inicio) this.abrir();
 
     // Los trozos seguidos de la misma voz son una intervención, no varias: la
-    // sesión entrega el texto de Catalina creciendo palabra a palabra.
+    // sesión entrega el texto de Catalina varias veces —creciendo, entero, y
+    // corregido si la interrumpen— y las tres versiones son el mismo turno.
     const ultimo = this.turnos.at(-1);
-    if (ultimo && ultimo.quien === quien && limpio.startsWith(ultimo.texto)) {
+    if (ultimo && ultimo.quien === quien && esElMismoTurno(ultimo.texto, limpio)) {
       ultimo.texto = limpio;
       return ultimo;
     }

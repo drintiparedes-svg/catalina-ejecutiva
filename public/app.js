@@ -17,7 +17,7 @@ import {
   anadirDocumento, listarDocumentos, documentosCompletos, olvidarDocumento, olvidarDocumentos,
   fichaParaCatalina, leerTrozo, legible
 } from "./adjuntos.js";
-import { MemoriaDeConversacion } from "./conversacion.js";
+import { MemoriaDeConversacion, esElMismoTurno } from "./conversacion.js";
 import { TIPOS, TIPO_POR_DEFECTO, tipoDeReunion } from "./tipos-de-reunion.js";
 import { carpetaGuardada, permisoDeCarpeta, escribirEnCarpeta, carpetaDisponible } from "./carpeta.js";
 import {
@@ -3369,7 +3369,13 @@ let verSubtitulos = false;
 let verPanel = false;
 const charla = new MemoriaDeConversacion();
 let cerrandoCharla = false;
-let turnoVivo = null;   // { nodo, texto } del turno que Catalina está diciendo
+let turnoVivo = null;    // { nodo, texto } del turno que Catalina está diciendo
+// El último turno suyo ya cerrado, por si llega una versión corregida de lo
+// mismo. Ver `turnoQueSeReescribe`.
+let turnoAnterior = null;
+// Cuánto tiempo sigue siendo reescribible un turno cerrado. Una corrección
+// llega en cuanto la interrumpen, no un minuto después.
+const VENTANA_DE_CORRECCION = 20_000;
 let avisoActivo = false;
 
 try {
@@ -3864,7 +3870,7 @@ function anotarTurno(texto) {
   ui.caption.textContent = limpio;
   ui.caption.dataset.visible = String(verSubtitulos);
 
-  if (!turnoVivo) turnoVivo = crearTurno();
+  if (!turnoVivo) turnoVivo = turnoQueSeReescribe(limpio) ?? crearTurno();
   turnoVivo.texto.textContent = limpio;
 
   // Sólo se sigue el fondo si ya estábamos abajo: si la persona subió a releer
@@ -3884,8 +3890,34 @@ function sinEtiquetas(texto) {
     .replace(/^\s+/, "");
 }
 
-function crearTurno(deQuien = "Catalina") {
+// El turno de Catalina que hay que REESCRIBIR en vez de abrir uno nuevo.
+//
+// Su texto llega varias veces: en trozos mientras habla, entero cuando el
+// agente termina de generar, y corregido —más corto— si la interrumpen. Las
+// tres son el mismo turno, pero no llegan siempre en ese orden: la corrección
+// llega DESPUÉS de que el turno se haya dado por cerrado. Como el turno cerrado
+// se olvidaba, esa corrección abría una burbuja nueva y el panel mostraba lo
+// mismo dos veces, una entera y otra a medias. Es el fallo que se veía.
+//
+// Se reescribe sólo si se cumplen las tres cosas, porque dos respuestas
+// seguidas de verdad también llegan una detrás de otra y ésas SÍ son dos:
+//
+//   1. el turno cerrado sigue siendo lo último que hay en el panel;
+//   2. se cerró hace poco;
+//   3. el texto nuevo y el viejo son la misma intervención.
+function turnoQueSeReescribe(texto) {
+  if (!turnoAnterior) return null;
+  if (ui.panelBody.lastElementChild !== turnoAnterior.nodo) return null;
+  if (Date.now() - turnoAnterior.cerradoEn > VENTANA_DE_CORRECCION) return null;
+  if (!esElMismoTurno(turnoAnterior.texto.textContent, texto)) return null;
+  const turno = turnoAnterior;
+  turnoAnterior = null;
+  return turno;
+}
+
+function crearTurno() {
   ui.panelBody.querySelector(".panel-empty")?.remove();
+  turnoAnterior = null;
 
   const nodo = document.createElement("article");
   nodo.className = "turno";
@@ -3896,7 +3928,7 @@ function crearTurno(deQuien = "Catalina") {
 
   const quien = document.createElement("span");
   quien.className = "turno-quien";
-  quien.textContent = deQuien;
+  quien.textContent = "Catalina";
 
   const hora = document.createElement("time");
   hora.className = "turno-hora";
@@ -3913,18 +3945,20 @@ function crearTurno(deQuien = "Catalina") {
   return { nodo, texto };
 }
 
-// Lo que dijo la persona, en el panel. Antes sólo se veía a Catalina, así que
-// el historial parecía un monólogo y releerlo no servía para reconstruir nada.
+// Lo que dijo la persona NO se pinta en el panel: ahí se lee a Catalina.
+//
+// Sí se guarda, y entero, en la memoria de la conversación —lo hace quien llama
+// aquí—, porque el resumen necesita las dos voces: un «me parece bien» de la
+// persona es un acuerdo y el mismo «me parece bien» dicho por ella no lo es.
+// Lo que se quita es la lectura en pantalla, no el registro.
+//
+// Lo que sí hace es cerrar el turno de Catalina: si habla la persona, lo que
+// ella dijo ya está dicho, y lo que venga después es una respuesta nueva y no
+// una corrección de la anterior.
 function anotarDicho(texto) {
-  const limpio = String(texto ?? "").trim();
-  if (!limpio) return;
+  if (!String(texto ?? "").trim()) return;
   cerrarTurno();
-  const turno = crearTurno("Inti");
-  turno.nodo.dataset.quien = "usuario";
-  turno.nodo.dataset.vivo = "false";
-  turno.texto.textContent = limpio;
-  const alFondo = ui.panelBody.scrollHeight - ui.panelBody.scrollTop - ui.panelBody.clientHeight < 60;
-  if (alFondo) ui.panelBody.scrollTop = ui.panelBody.scrollHeight;
+  turnoAnterior = null;
 }
 
 // Estas notas —por qué se cerró la sesión, qué activar en el panel del agente—
@@ -3943,7 +3977,11 @@ function cerrarTurno() {
   // Un turno sin texto no deja rastro: pasa cuando la respuesta se interrumpe
   // antes de que llegue el primer delta.
   if (!dicho) turnoVivo.nodo.remove();
-  else turnoVivo.nodo.dataset.vivo = "false";
+  else {
+    turnoVivo.nodo.dataset.vivo = "false";
+    // Se guarda por si de este mismo turno llega todavía una versión corregida.
+    turnoAnterior = { ...turnoVivo, cerradoEn: Date.now() };
+  }
   // Lo que dijo en una reunión queda en la memoria de la reunión, marcado como
   // suyo. Sin esto, la minuta no sabría que la asistente intervino y sus
   // aportes se perderían o —peor— se atribuirían a un participante.

@@ -242,16 +242,39 @@ Los dos nacen **apagados**: leer lo mismo que se está oyendo compite con la
 cara, que es lo que sostiene la conversación.
 
 - **Subtítulos** (tecla `S`) muestra sobre la imagen sólo el turno en curso.
-- **Historial** guarda todos los turnos con su hora, en un panel lateral que se
-  cierra con `Esc`.
+- **Historial** guarda los turnos con su hora, en un panel lateral que se cierra
+  con `Esc`.
 
 La elección se recuerda entre sesiones. El historial se registra siempre, aunque
 esté cerrado, así que al abrirlo aparece lo dicho hasta ese momento. Los avisos
 de error de conexión pasan por encima de la preferencia: si hay algo que leer,
 se lee.
 
-Sólo se transcribe la voz de Catalina. Transcribir además la de la persona
-requiere activar `input_audio_transcription` en la sesión, con su costo aparte.
+**En el panel se lee a Catalina, no a uno mismo.** Lo que dice la persona se
+transcribe y se guarda —el resumen necesita las dos voces: un «me parece bien»
+suyo es un acuerdo y el mismo «me parece bien» dicho por ella no lo es—, pero no
+se pinta. Leer en pantalla lo que uno acaba de decir no aporta nada y desplaza
+hacia arriba lo que sí hay que leer.
+
+### Un turno es un turno
+
+El texto de Catalina no llega una vez, llega tres: en trozos mientras habla,
+entero cuando el agente termina de generar, y **corregido y más corto** si la
+interrumpen —ahí el agente dice qué alcanzó a decir de verdad—. Y no siempre en
+ese orden.
+
+Eso duplicaba sus intervenciones, en el panel y en el resumen. La burbuja se
+daba por cerrada al recibir el texto entero, y la corrección, que llega después,
+abría una nueva: lo mismo dicho dos veces, una completa y otra a medias. Ahora
+una versión posterior **reescribe** la burbuja anterior en vez de añadir otra,
+con tres condiciones para no fundir dos respuestas que sí son distintas: que la
+burbuja siga siendo lo último del panel, que se cerrara hace menos de veinte
+segundos, y que los dos textos compartan el principio.
+
+El límite conocido —y escrito en `work/prueba-conversacion.mjs`— es que dos
+respuestas seguidas con los mismos veinticuatro caracteres iniciales se toman
+por una. Es el precio de reconocer la corrección, que por definición empieza
+igual que el texto que corrige.
 
 ## Respaldo con Gemini
 

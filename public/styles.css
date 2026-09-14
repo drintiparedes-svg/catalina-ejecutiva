@@ -690,5 +690,3 @@ button.primary { border-color: rgba(109,228,255,.45); background: linear-gradien
 
 /* Lo que dice la persona, distinto de lo que dice ella: si las dos voces se ven
    igual, releer el historial no reconstruye quién dijo qué. */
-.turno[data-quien="usuario"] .turno-quien { color: rgba(209,229,239,.6); }
-.turno[data-quien="usuario"] .turno-texto { color: rgba(233,246,252,.72); }
