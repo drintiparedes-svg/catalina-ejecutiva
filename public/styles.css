@@ -274,3 +274,37 @@ button.primary { border-color: rgba(109,228,255,.45); background: linear-gradien
 .referencias-ampliar:hover { background: rgba(169,216,236,.12); }
 .referencias[data-expandido="si"] { max-height: 72dvh; }
 .referencia-impacto { color: #8fd0b0; }
+
+/* Teclado seguro del PIN. Cubre toda la escena: mientras está abierto no se
+   hace otra cosa, y así también queda claro que lo que se escribe no va a la
+   conversación. */
+.teclado {
+  position: fixed; inset: 0; z-index: 60;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(2, 6, 10, .82); backdrop-filter: blur(6px);
+}
+.teclado[hidden] { display: none; }
+.teclado-caja {
+  width: min(92vw, 340px); padding: 22px 20px 18px; border-radius: 22px;
+  background: #0b1520; border: 1px solid rgba(255, 255, 255, .10);
+  box-shadow: 0 30px 80px rgba(0, 0, 0, .6); text-align: center;
+}
+.teclado-titulo { margin: 0 0 6px; font-size: 18px; font-weight: 600; }
+.teclado-ayuda { margin: 0 0 14px; font-size: 13px; color: rgba(244, 251, 255, .62); min-height: 1.2em; }
+.teclado-puntos {
+  min-height: 34px; letter-spacing: .5em; font-size: 22px; line-height: 34px;
+  color: #73f5ff; transition: transform .12s;
+}
+.teclado-puntos[data-corto="true"] { transform: translateX(-6px); color: #FF9F0A; }
+.teclado-grilla { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 14px 0 12px; }
+.teclado-grilla button {
+  height: 58px; border-radius: 16px; border: 1px solid rgba(255, 255, 255, .10);
+  background: rgba(255, 255, 255, .06); color: #f4fbff; font: inherit; font-size: 22px;
+  cursor: pointer; touch-action: manipulation;
+}
+.teclado-grilla button:active { background: rgba(255, 255, 255, .16); }
+.teclado-grilla .teclado-confirmar { background: #34C759; color: #02110a; border-color: transparent; }
+.teclado-acciones button {
+  border: none; background: transparent; color: rgba(244, 251, 255, .7); font: inherit; font-size: 14px;
+  padding: 8px 12px; cursor: pointer;
+}

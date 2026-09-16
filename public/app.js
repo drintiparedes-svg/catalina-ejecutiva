@@ -12,6 +12,7 @@ import { GeminiSession } from "./realtime/gemini-session.js";
 import { ElevenLabsSession } from "./realtime/elevenlabs-session.js";
 import { dibujarRuta } from "./mapa.js";
 import { EscuchaDeReunion, escuchaDisponible } from "./escucha.js";
+import { pedirPorTeclado } from "./teclado.js";
 
 const canvas = document.querySelector("#avatar");
 const ctx = canvas.getContext("2d");
@@ -487,6 +488,9 @@ async function despacharHerramienta(nombre, argumentos) {
   if (nombre === "buscar_imagenes_web") return await buscarImagenesWeb(argumentos);
   if (nombre === "fuentes_clinicas") return await pedirFuentesClinicas(argumentos);
   if (nombre === "buscar_videos") return await buscarVideos(argumentos);
+  if (nombre === "validar_identidad") return await validarIdentidad(argumentos);
+  if (nombre === "consultar_sesion") return await consultarSesion();
+  if (nombre === "cerrar_sesion") return await cerrarSesion();
   // Cualquier otro nombre viene de un conector definido en el administrador.
   // Se manda el nombre, no la dirección: el servidor la resuelve.
   return await usarConector(nombre, argumentos);
@@ -823,6 +827,98 @@ function mostrarLlamada(datos) {
   ui.referencias.dataset.estado = "visible";
   referenciasEnPantalla = [];
   setStatus(ESTADOS_LLAMADA[datos.estado] || "Te escucho");
+}
+
+// Validación de identidad.
+//
+// El agente aporta lo dictado —nombre, apellido, fecha—; el PIN lo escribe la
+// persona en el teclado de pantalla y va directo al servidor, que lo reenvía al
+// servicio de autenticación. Al agente vuelve sólo el resultado y un mensaje
+// sugerido: nunca el PIN, nunca el token (queda en una cookie HttpOnly), nunca
+// qué dato falló. Si el servicio pide un segundo factor, se resuelve aquí mismo
+// con el teclado antes de devolver el control.
+let desafioPendiente = null;   // id del desafío que sigue admitiendo intentos
+
+async function validarIdentidad(argumentos) {
+  const nombre = String(argumentos.nombre || "").trim();
+  const apellido = String(argumentos.apellido || "").trim();
+  const fecha = String(argumentos.fecha_nacimiento || "").trim();
+  if (!nombre || !apellido || !fecha) {
+    return { ok: false, resultado: "DATOS_INCOMPLETOS", mensaje: "Faltan datos: pide nombre, apellido y fecha de nacimiento antes de validar." };
+  }
+
+  setStatus("Validando identidad…");
+  try {
+    if (!desafioPendiente) {
+      const inicio = await pedirJson("POST", "/auth/iniciar", {});
+      if (!inicio.ok) return inicio;
+      desafioPendiente = inicio.session_id;
+    }
+
+    const pin = await pedirPorTeclado({
+      titulo: "Ingrese su PIN",
+      ayuda: "El PIN no se dice en voz alta ni queda en la conversación."
+    });
+    if (pin === null) {
+      return { ok: false, resultado: "CANCELADO", mensaje: "La persona canceló el ingreso del PIN. Pregunta si quiere intentarlo de nuevo." };
+    }
+
+    let r = await pedirJson("POST", "/auth/verificar", {
+      session_id: desafioPendiente, nombre, apellido, fecha_nacimiento: fecha, pin
+    });
+
+    if (r.resultado === "SECOND_FACTOR_REQUIRED") {
+      const codigo = await pedirPorTeclado({
+        titulo: "Código de verificación",
+        ayuda: "Le enviamos un código. Ingréselo aquí.",
+        minimo: 4
+      });
+      if (codigo === null) {
+        return { ok: false, resultado: "CANCELADO", mensaje: "La persona canceló el ingreso del código. Pregunta si quiere intentarlo de nuevo." };
+      }
+      r = await pedirJson("POST", "/auth/segundo-factor", { session_id: desafioPendiente, codigo });
+    }
+
+    // El desafío sólo sigue vivo si el servicio dice que admite otro intento.
+    if (r.estado_sesion !== "PENDING" && r.estado_sesion !== "SECOND_FACTOR_PENDING") desafioPendiente = null;
+    setStatus(r.ok ? "Identidad validada" : "Identidad no validada");
+    return r;
+  } catch (error) {
+    console.error(error?.name || error);
+    desafioPendiente = null;
+    return { ok: false, resultado: "SERVICIO_NO_DISPONIBLE", mensaje: "Tengo un problema técnico para validar su identidad. Intente en unos minutos." };
+  }
+}
+
+async function consultarSesion() {
+  try {
+    return await pedirJson("GET", "/auth/permisos");
+  } catch {
+    return { ok: false, resultado: "SERVICIO_NO_DISPONIBLE", validada: false };
+  }
+}
+
+async function cerrarSesion() {
+  desafioPendiente = null;
+  try {
+    const r = await pedirJson("POST", "/auth/cerrar", {});
+    setStatus("Sesión cerrada");
+    return r;
+  } catch {
+    return { ok: false, resultado: "SERVICIO_NO_DISPONIBLE" };
+  }
+}
+
+async function pedirJson(metodo, ruta, cuerpo) {
+  const respuesta = await fetch(ruta, {
+    method: metodo,
+    headers: cuerpo === undefined ? {} : { "Content-Type": "application/json" },
+    body: cuerpo === undefined ? undefined : JSON.stringify(cuerpo),
+    credentials: "same-origin"
+  });
+  const datos = await respuesta.json().catch(() => ({}));
+  if (!respuesta.ok && datos.ok === undefined) return { ok: false, resultado: "SERVICIO_RECHAZO", mensaje: datos.error || "No fue posible completar la validación." };
+  return datos;
 }
 
 async function usarConector(nombre, argumentos) {

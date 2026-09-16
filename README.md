@@ -308,6 +308,40 @@ porque puede llevar credenciales de conectores. **En Vercel no se puede guardar*
 el disco es de sólo lectura y el panel lo dirá con un error claro en vez de fingir
 que guardó. Para editar en producción haría falta un almacén externo.
 
+## Validación de identidad
+
+Catalina puede validar quién le habla antes de entregar información personal.
+No lo decide ella: lo decide un servicio aparte,
+[administrador-catalina-ai](https://github.com/drintiparedes-svg/administrador-catalina-ai),
+que valida nombre, apellido, fecha de nacimiento y PIN de forma determinística y
+devuelve uno de seis estados. Catalina adapta el mensaje; no reinterpreta el
+resultado.
+
+**Cómo se enciende.** Dos variables de entorno: `CATALINA_AUTH_URL` (la
+dirección del servicio desplegado) y `CATALINA_AUTH_SERVICE_KEY` (la misma clave
+que el servicio tiene como `CATALINA_AUTH_SERVICE_API_KEY`). Con ellas, `/health`
+responde `autenticacion: true` y el agente gana tres herramientas:
+`validar_identidad`, `consultar_sesion` y `cerrar_sesion`. Hay que volver a
+llamar a `/elevenlabs/registrar-herramientas` para que el agente de ElevenLabs
+las reciba. Sin las variables, no existen y Catalina no valida a nadie.
+
+**Cómo se ve.** Catalina pide nombre y apellido, luego la fecha de nacimiento,
+repite lo que entendió y espera confirmación. Entonces se abre un teclado en
+pantalla para el PIN. El PIN no se dice en voz alta, no pasa por el agente ni
+por la transcripción: va del teclado a `/auth/verificar` y de ahí al servicio.
+Si el servicio exige un segundo factor, el mismo teclado pide el código.
+
+**Qué recibe el modelo.** Sólo el resultado, un mensaje sugerido, el rol y la
+lista de permisos. Nunca el PIN, nunca el token, nunca qué dato falló ni si la
+persona existe. El token queda en una cookie `HttpOnly` con `Path=/auth`, que el
+JavaScript de la página no puede leer.
+
+**Lo que no cambia.** Una identidad validada acota lo que Catalina puede
+consultar; no la convierte en médica. Las reglas de la persona siguen mandando:
+no diagnostica ni indica tratamientos.
+
+Las rutas viven en `autenticacion.mjs`; el teclado en `public/teclado.js`.
+
 ## Cuando algo no funciona
 
 Abre **`/diagnostico.html`**, en local o en el despliegue. Recorre el camino
@@ -329,6 +363,8 @@ conecta el repositorio una vez y cada cambio queda publicado solo.
 2. En **Settings → Git**, pon la rama de producción en `elevenlabs-ejecutiva`.
 3. En **Settings → Environment Variables**, añade `ELEVENLABS_API_KEY` (la que
    empieza por `sk_`) y `ELEVENLABS_AGENT_ID`.
+   Para la validación de identidad, añade también `CATALINA_AUTH_URL` y
+   `CATALINA_AUTH_SERVICE_KEY` (ver «Validación de identidad»).
 4. **Deploy**.
 
 Cómo está montado: `app.mjs` tiene el manejador de peticiones y no escucha en

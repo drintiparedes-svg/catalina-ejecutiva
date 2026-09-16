@@ -1,6 +1,9 @@
 import { readFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import {
+  autenticacionLista, atenderAutenticacion, HERRAMIENTAS_AUTENTICACION, USO_DE_AUTENTICACION
+} from "./autenticacion.mjs";
+import {
   cargarConfig, guardarConfig, componerInstrucciones, herramientasDeConectores
 } from "./config.mjs";
 import { plantillaMediSmart, versionTexto, enviarPorResend } from "./correo.mjs";
@@ -19,7 +22,7 @@ import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // Se sube a mano con cada arreglo que el usuario tiene que descargar.
-export const VERSION = "2026-08-24.24";
+export const VERSION = "2026-09-16.1";
 
 const root = fileURLToPath(new URL("./public", import.meta.url));
 // El .env se lee de forma síncrona a propósito. Con `await` aquí arriba, en el
@@ -80,7 +83,9 @@ export async function atender(req, res) {
         imagenesWebAbierta: hayImagenesWebAbierta(),
         buscadorWebCompleto: hayBuscadorWebCompleto(),
         // Llamadas salientes: por ElevenLabs (preferido) o por el puente Twilio.
-        telefonia: telefoniaElevenLabsLista() ? "elevenlabs" : telefoniaLista() ? "twilio" : false
+        telefonia: telefoniaElevenLabsLista() ? "elevenlabs" : telefoniaLista() ? "twilio" : false,
+        // Validación de identidad contra el servicio de autenticación (administrador-catalina-ai).
+        autenticacion: autenticacionLista()
       });
     }
 
@@ -252,6 +257,12 @@ export async function atender(req, res) {
       return await usarConector(req, res);
     }
 
+    // Validación de identidad. Las rutas viven en autenticacion.mjs; aquí sólo
+    // se les pasa el control con los ayudantes de lectura y respuesta.
+    if (req.url.startsWith("/auth/")) {
+      return await atenderAutenticacion(req, res, { readBody, json });
+    }
+
     if (req.url === "/admin/config" && (req.method === "GET" || req.method === "PUT")) {
       if (!autorizado(req)) return json(res, 401, { error: motivoDeRechazo(), code: "ADMIN_NO_AUTORIZADO" });
       if (req.method === "GET") return json(res, 200, await cargarConfig());
@@ -352,7 +363,8 @@ async function instruccionesDeSesion(config) {
   return [
     componerInstrucciones(config),
     USO_DE_HERRAMIENTAS,
-    puedeLlamar ? USO_DEL_TELEFONO : ""
+    puedeLlamar ? USO_DEL_TELEFONO : "",
+    autenticacionLista() ? USO_DE_AUTENTICACION : ""
   ].filter(Boolean).join(" ");
 }
 
@@ -652,6 +664,7 @@ function todasLasHerramientas(config) {
   return [
     ...HERRAMIENTAS,
     ...((telefoniaElevenLabsLista() || telefoniaLista()) && config.telefono?.activo !== false ? HERRAMIENTAS_TELEFONO : []),
+    ...(autenticacionLista() ? HERRAMIENTAS_AUTENTICACION : []),
     ...herramientasDeConectores(config)
   ];
 }
@@ -937,7 +950,11 @@ async function registrarHerramientas(res) {
   // dejaba fuera porque necesitaba una conexión sostenida. Sin esto el agente
   // no tenía la herramienta de llamar y por voz no pasaba nada.
   const conTelefono = telefoniaElevenLabsLista() || telefoniaLista();
-  const aRegistrar = [...HERRAMIENTAS, ...(conTelefono ? HERRAMIENTAS_TELEFONO : [])];
+  const aRegistrar = [
+    ...HERRAMIENTAS,
+    ...(conTelefono ? HERRAMIENTAS_TELEFONO : []),
+    ...(autenticacionLista() ? HERRAMIENTAS_AUTENTICACION : [])
+  ];
   const nuestras = aRegistrar.map(h => ({
     type: "client",
     name: h.nombre,
@@ -946,7 +963,9 @@ async function registrarHerramientas(res) {
     // No bloquear la conversación mientras corre: la boca sigue, y el resultado
     // aparece en pantalla cuando llega.
     expects_response: true,
-    response_timeout_secs: 20,
+    // La validación de identidad espera a que la persona escriba en el teclado
+    // y necesita más margen que las demás.
+    response_timeout_secs: h.tiempoRespuesta ?? 20,
     // Que diga algo antes de ejecutar —«déjame ver», «lo estoy buscando»— para
     // que la espera suene humana en vez de un silencio. Lo que diga lo decide su
     // persona; esto sólo le da el turno para decirlo.
