@@ -11,10 +11,21 @@
 
 const TOPE_TURNOS = 600;   // una conversación muy larga se recorta por el principio
 
+// `crypto.randomUUID` sólo existe en contextos seguros (https o localhost);
+// fuera de ahí se compone uno con la hora y azar, que para esto basta.
+function nuevoId() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  return `c-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 export class MemoriaDeConversacion {
   constructor() { this.olvidar(); }
 
   olvidar() {
+    // Identificador de la conversación. Lo pone el navegador al abrirla y viaja
+    // con cada guardado al servidor, para que el historial de la persona no
+    // duplique la misma conversación cada vez que se sincroniza.
+    this.id = "";
     this.inicio = 0;
     this.fin = 0;
     this.turnos = [];
@@ -29,6 +40,7 @@ export class MemoriaDeConversacion {
     if (this.inicio && !this.fin) return this;   // ya estaba abierta
     this.olvidar();
     this.inicio = Date.now();
+    this.id = nuevoId();
     return this;
   }
 
@@ -64,6 +76,7 @@ export class MemoriaDeConversacion {
   // Lo que se manda al servidor para que redacte el resumen.
   paraCerrar(documentos = []) {
     return {
+      id: this.id,
       inicio: this.inicio,
       fin: this.fin || Date.now(),
       minutos: this.minutos(),

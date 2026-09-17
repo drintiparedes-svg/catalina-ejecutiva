@@ -19,11 +19,15 @@ import {
 import { cerrarReunion } from "./reunion.mjs";
 import { hayRedaccion, probarRedaccion, describirImagen, redactarConversacion, conversacionSinModelo } from "./redaccion.mjs";
 import { estadoDrive, urlDeConsentimiento, canjearCodigo, carpetasPropias, crearCarpeta } from "./drive.mjs";
+import {
+  accesoConfigurado, accesoForzadoAbierto, usuarioDeSesion, estadoDeAcceso,
+  atenderAcceso, atenderAdministracionDeAcceso, cerrarConversacion as guardarCierreDeConversacion
+} from "./acceso.mjs";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // Se sube a mano con cada arreglo que el usuario tiene que descargar.
-export const VERSION = "2026-09-08.1";
+export const VERSION = "2026-09-17.1";
 
 const root = fileURLToPath(new URL("./public", import.meta.url));
 // El .env se lee de forma síncrona a propósito. Con `await` aquí arriba, en el
@@ -54,6 +58,16 @@ const mime = {
 // en lugar de mantener dos copias que se desincronizan.
 export async function atender(req, res) {
   try {
+    // La puerta. Antes de cualquier ruta que gaste crédito o toque datos se
+    // comprueba quién es: sin sesión, 401 y el navegador pide entrar. Las
+    // rutas abiertas están listadas en `rutaAbierta`, con su motivo.
+    const rutaPedida = req.url.split("?")[0];
+    if (rutaDeApi(rutaPedida) && !rutaAbierta(rutaPedida)) {
+      const paso = await permitirPaso(req);
+      if (!paso.ok) return json(res, paso.estado, { ok: false, error: paso.error, code: paso.code });
+      req.persona = paso.persona || null;
+    }
+
     if (req.method === "GET" && req.url === "/health") {
       return json(res, 200, {
         ok: true,
@@ -83,6 +97,9 @@ export async function atender(req, res) {
         // clave). "completo" indica si además hay Google CSE o SerpAPI.
         imagenesWebAbierta: hayImagenesWebAbierta(),
         buscadorWebCompleto: hayBuscadorWebCompleto(),
+        // Acceso con usuarios: cerrado cuando hay base de datos; abierto sólo
+        // en el propio equipo o si se fuerza con CATALINA_ACCESO=abierto.
+        acceso: (await estadoDeAcceso(req, { local: esLocal(req) })).modo,
         // Llamadas salientes: por ElevenLabs (preferido) o por el puente Twilio.
         telefonia: telefoniaElevenLabsLista() ? "elevenlabs" : telefoniaLista() ? "twilio" : false,
         // Si la conversación de voz lleva de verdad la herramienta de llamar.
@@ -102,7 +119,7 @@ export async function atender(req, res) {
     }
 
     if (req.method === "POST" && req.url === "/elevenlabs/sesion") {
-      return await createElevenLabsSession(res);
+      return await createElevenLabsSession(req, res);
     }
 
     // Qué herramientas tiene REGISTRADAS el agente en ElevenLabs, según
@@ -333,19 +350,35 @@ export async function atender(req, res) {
       const redactado = await redactarConversacion(cuerpo);
       // Sin clave o con el modelo caído se devuelve el diálogo tal cual: es peor
       // de leer, pero es exacto, y perder la conversación sería mucho peor.
-      const resumen = redactado.ok ? redactado.resumen : conversacionSinModelo(cuerpo);
+      const resumen = {
+        ...(redactado.ok ? redactado.resumen : conversacionSinModelo(cuerpo)),
+        id: typeof cuerpo.id === "string" ? cuerpo.id : undefined,
+        inicio: cuerpo.inicio || Date.now(),
+        fin: cuerpo.fin || Date.now(),
+        minutos: cuerpo.minutos || 0,
+        intervenciones: (cuerpo.turnos ?? []).length,
+        documentos: (cuerpo.documentos ?? []).map(d => ({ nombre: d.nombre, imagen: Boolean(d.imagen) }))
+      };
+      // Con acceso por usuarios, el resumen y el diálogo quedan además a
+      // nombre de quien conversó, para retomarlos desde cualquier equipo. Si
+      // la base falla, la persona no se queda sin resumen: se le devuelve igual
+      // y se le dice que no quedó guardado.
+      let guardadoEnServidor = false;
+      let avisoDeGuardado = "";
+      if (req.persona && resumen.id) {
+        try {
+          guardadoEnServidor = (await guardarCierreDeConversacion(req.persona, { ...cuerpo, resumen })).ok;
+        } catch (error) {
+          console.error("conversacion/cerrar guardar:", error.message);
+          avisoDeGuardado = "El resumen no quedó guardado en tu historial del servidor.";
+        }
+      }
       return json(res, 200, {
         ok: true,
-        resumen: {
-          ...resumen,
-          inicio: cuerpo.inicio || Date.now(),
-          fin: cuerpo.fin || Date.now(),
-          minutos: cuerpo.minutos || 0,
-          intervenciones: (cuerpo.turnos ?? []).length,
-          documentos: (cuerpo.documentos ?? []).map(d => ({ nombre: d.nombre, imagen: Boolean(d.imagen) }))
-        },
+        resumen,
         redactado: redactado.ok,
-        aviso: redactado.ok ? "" : (redactado.error || "No se pudo redactar el resumen.")
+        guardadoEnServidor,
+        aviso: [redactado.ok ? "" : (redactado.error || "No se pudo redactar el resumen."), avisoDeGuardado].filter(Boolean).join(" ")
       });
     }
 
@@ -404,6 +437,18 @@ export async function atender(req, res) {
 
     if (req.method === "POST" && req.url === "/conector") {
       return await usarConector(req, res);
+    }
+
+    // Entrar, salir, sesión e historial de la persona. Las rutas viven en
+    // acceso.mjs; aquí sólo se les pasa el control con los ayudantes.
+    if (req.url.startsWith("/acceso/")) {
+      return await atenderAcceso(req, res, { readBody, json, local: esLocal(req) });
+    }
+
+    // Usuarios y auditoría del acceso, con la llave del administrador.
+    if (req.url.startsWith("/admin/usuarios") || req.url.split("?")[0] === "/admin/acceso") {
+      if (!autorizado(req)) return json(res, 401, { error: motivoDeRechazo(), code: "ADMIN_NO_AUTORIZADO" });
+      return await atenderAdministracionDeAcceso(req, res, { readBody, json });
     }
 
     if (req.url === "/admin/config" && (req.method === "GET" || req.method === "PUT")) {
@@ -1158,7 +1203,7 @@ async function createGeminiToken(res) {
 // decisiones que no deben poder cambiarse desde la consola del navegador.
 const ELEVENLABS_API = "https://api.elevenlabs.io";
 
-async function createElevenLabsSession(res) {
+async function createElevenLabsSession(req, res) {
   if (!hasElevenLabsKey()) {
     return json(res, 503, {
       error: "Falta ELEVENLABS_API_KEY.",
@@ -1240,7 +1285,7 @@ async function createElevenLabsSession(res) {
     });
   }
 
-  json(res, 200, { url, inicio: await inicioDeElevenLabs(await cargarConfig()) });
+  json(res, 200, { url, inicio: await inicioDeElevenLabs(await cargarConfig(), req.persona) });
 }
 
 // Primer mensaje del protocolo. Todo lo que va aquí pisa lo que esté guardado
@@ -1315,9 +1360,17 @@ async function registrarHerramientas(res) {
   });
 }
 
-async function inicioDeElevenLabs(config) {
+async function inicioDeElevenLabs(config, persona = null) {
   const ajustes = config.modelos?.elevenlabs || {};
   const voz = (ajustes.voz || process.env.ELEVENLABS_VOICE_ID || "").trim();
+
+  // Con acceso por usuarios, Catalina sabe con quién habla desde la primera
+  // frase: el nombre viene de la sesión, no de lo que la persona diga. Va
+  // dentro del prompt, que es un override ya permitido; no se añade ningún
+  // campo nuevo al inicio, porque uno no permitido tumba la sesión.
+  const quien = persona
+    ? `\n\nLa persona con la que hablas entró con su usuario y se llama ${persona.nombre}. Trátala por su nombre.`
+    : "";
 
   const agent = {
     // SÓLO las instrucciones. Las herramientas NO se mandan aquí: el override
@@ -1325,7 +1378,7 @@ async function inicioDeElevenLabs(config) {
     // no esté permitido hace que ElevenLabs rechace la sesión —es lo que pasó
     // con first_message en la llamada—. Las herramientas viven registradas en
     // el agente (PATCH de /elevenlabs/registrar-herramientas) y de ahí salen.
-    prompt: { prompt: await instruccionesDeSesion(config) },
+    prompt: { prompt: (await instruccionesDeSesion(config)) + quien },
     // Se declara el idioma de partida, no el único: el agente cambia de idioma
     // durante la conversación si quien habla lo hace.
     language: ajustes.idioma || "es"
@@ -1852,6 +1905,54 @@ async function buscarReferencias(req, res) {
     return json(res, 404, { error: "Sin referencias para ese tema.", code: "SIN_REFERENCIAS" });
   }
   json(res, 200, salida);
+}
+
+// Puerta de acceso con usuarios.
+//
+// Tres modos, y sólo uno abre la puerta a cualquiera: en el propio equipo sin
+// base de datos (donde ya hace falta estar sentado delante). Desplegada sin
+// base, se cierra y lo dice: es preferible a quedar abierta sin darse cuenta.
+// `CATALINA_ACCESO=abierto` es la salida de emergencia, explícita y escrita.
+async function permitirPaso(req) {
+  if (accesoForzadoAbierto()) return { ok: true, persona: null };
+  if (!accesoConfigurado()) {
+    if (esLocal(req)) return { ok: true, persona: null };
+    return {
+      ok: false, estado: 503, code: "ACCESO_NO_CONFIGURADO",
+      error: "El acceso con usuarios no está configurado: falta conectar una base de datos Postgres al proyecto."
+    };
+  }
+  try {
+    const persona = await usuarioDeSesion(req);
+    if (persona) return { ok: true, persona };
+    return { ok: false, estado: 401, code: "ACCESO_REQUERIDO", error: "Tienes que entrar con tu usuario." };
+  } catch (error) {
+    console.error("acceso:", error.message);
+    return { ok: false, estado: 503, code: "ACCESO_NO_DISPONIBLE", error: "No se pudo comprobar el acceso: la base de datos no responde." };
+  }
+}
+
+// Todo lo que atiende el servidor y no es un archivo de public/. Se comprueba
+// contra vercel.json en pruebas/qa-rutas.mjs: una ruta nueva que no esté aquí
+// quedaría abierta sin querer.
+const RUTAS_DE_API = /^\/(health|acceso\/|admin\/|session$|gemini\/|elevenlabs\/|imagen-medica|referencias|literatura\/|web\/|imagen\/|videos\/|imagenes\/|fuentes-clinicas|img|salud|ruta|correo|conector|llamada|reunion\/|documento\/|conversacion\/|drive\/|telefonia\/)/;
+export function rutaDeApi(ruta) {
+  return RUTAS_DE_API.test(ruta);
+}
+
+// Las que no piden sesión, y por qué:
+//   /health           lo consulta la interfaz antes de que nadie entre
+//   /acceso/*         es la propia puerta
+//   /admin/*          tiene su llave (ADMIN_TOKEN)
+//   /telefonia/*      son webhooks de OpenAI y Twilio, con firma propia
+//   /drive/autorizar  y /drive/callback son la vuelta del consentimiento de
+//                     Google, una navegación que llega desde otro sitio
+export function rutaAbierta(ruta) {
+  return ruta === "/health"
+    || ruta.startsWith("/acceso/")
+    || ruta.startsWith("/admin/")
+    || ruta.startsWith("/telefonia/")
+    || ruta === "/drive/autorizar" || ruta === "/drive/callback";
 }
 
 // Puerta del administrador.

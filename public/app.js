@@ -114,7 +114,28 @@ const ui = {
   marcadorLlamar: document.querySelector("#marcadorLlamar"),
   marcadorColgar: document.querySelector("#marcadorColgar"),
   marcadorCerrar: document.querySelector("#marcadorCerrar"),
-  abrirMarcador: document.querySelector("#abrirMarcador")
+  abrirMarcador: document.querySelector("#abrirMarcador"),
+  // Acceso con usuarios.
+  acceso: document.querySelector("#acceso"),
+  accesoForm: document.querySelector("#accesoForm"),
+  accesoUsuario: document.querySelector("#accesoUsuario"),
+  accesoClave: document.querySelector("#accesoClave"),
+  accesoError: document.querySelector("#accesoError"),
+  accesoEntrar: document.querySelector("#accesoEntrar"),
+  claveForm: document.querySelector("#claveForm"),
+  claveAyuda: document.querySelector("#claveAyuda"),
+  claveActual: document.querySelector("#claveActual"),
+  claveNueva: document.querySelector("#claveNueva"),
+  claveRepetir: document.querySelector("#claveRepetir"),
+  claveError: document.querySelector("#claveError"),
+  claveGuardar: document.querySelector("#claveGuardar"),
+  claveMasTarde: document.querySelector("#claveMasTarde"),
+  accesoBloqueo: document.querySelector("#accesoBloqueo"),
+  accesoBloqueoTexto: document.querySelector("#accesoBloqueoTexto"),
+  quien: document.querySelector("#quien"),
+  quienNombre: document.querySelector("#quienNombre"),
+  quienSalir: document.querySelector("#quienSalir"),
+  quienClave: document.querySelector("#quienClave")
 };
 
 const director = new PerformanceDirector();
@@ -155,6 +176,9 @@ const manejadores = {
   onDisconnected: () => {
     connected = false;
     pararRelojes();
+    // Lo hablado hasta aquí queda en el historial de la persona ahora mismo,
+    // no dentro de unos segundos: si cierra la pestaña, ya está guardado.
+    programarSincronizacion(true);
     // El historial se conserva: sirve para releer lo dicho al terminar. Lo que
     // se va es el subtítulo, que sólo tiene sentido mientras Catalina habla.
     cerrarTurno();
@@ -202,7 +226,7 @@ const manejadores = {
     hayActividad();
     anotarTurno(text);
     // Lo que dice ella queda en el registro de la conversación, para el resumen.
-    if (text) charla.anotar("catalina", sinEtiquetas(text));
+    if (text) { charla.anotar("catalina", sinEtiquetas(text)); programarSincronizacion(); }
     aplicarExpresionDeFrase(text);
   },
   // Lo que dice la persona, transcrito por ElevenLabs. Sin esto el resumen
@@ -210,6 +234,7 @@ const manejadores = {
   onUsuario: texto => {
     hayActividad();
     charla.anotar("usuario", texto);
+    programarSincronizacion();
     anotarDicho(texto);
   },
   onResponseDone: () => {
@@ -3690,7 +3715,7 @@ function pintarResumen(resumen, { guardado = true, aviso = "" } = {}) {
 // cada conversación en rehén de la anterior—; se elige.
 async function mostrarConversaciones() {
   fijarPanel(true);
-  const guardadas = await listarConversaciones();
+  const guardadas = await todasLasConversaciones();
   ui.panelBody.innerHTML = "";
 
   if (!guardadas.length) {
@@ -3723,7 +3748,8 @@ async function mostrarConversaciones() {
     cuentas.textContent = [
       (c.acuerdos ?? []).length ? `${c.acuerdos.length} acuerdo${c.acuerdos.length === 1 ? "" : "s"}` : "",
       (c.pendientes ?? []).length ? `${c.pendientes.length} pendiente${c.pendientes.length === 1 ? "" : "s"}` : "",
-      (c.temas ?? []).length ? c.temas.slice(0, 3).join(" · ") : ""
+      (c.temas ?? []).length ? c.temas.slice(0, 3).join(" · ") : "",
+      c.sinCerrar ? `sin cerrar · ${c.intervenciones || 0} intervenciones` : ""
     ].filter(Boolean).join(" — ");
 
     const acciones = document.createElement("div");
@@ -3736,6 +3762,9 @@ async function mostrarConversaciones() {
     borrar.textContent = "Borrar";
     borrar.addEventListener("click", async () => {
       await borrarConversacion(c.id);
+      if (accesoActual.sesion) {
+        await fetch(`/acceso/conversaciones/${encodeURIComponent(c.id)}`, { method: "DELETE" }).catch(() => {});
+      }
       mostrarConversaciones();
     });
     acciones.append(usar, borrar);
@@ -3770,7 +3799,7 @@ function usarConversacion(resumen) {
 // con `titulo`, carga esa como contexto. Cargarla es un cambio de estado, así
 // que se enseña en pantalla además de decirlo.
 async function listarParaCatalina({ titulo = "" } = {}) {
-  const guardadas = await listarConversaciones();
+  const guardadas = await todasLasConversaciones();
   if (!guardadas.length) return { ok: true, hay: 0, aviso: "No hay ninguna conversación cerrada todavía." };
 
   const buscado = String(titulo || "").trim().toLowerCase();
@@ -3897,7 +3926,7 @@ function anotarDicho(texto) {
   const limpio = String(texto ?? "").trim();
   if (!limpio) return;
   cerrarTurno();
-  const turno = crearTurno("Inti");
+  const turno = crearTurno(nombreDeQuienHabla());
   turno.nodo.dataset.quien = "usuario";
   turno.nodo.dataset.vivo = "false";
   turno.texto.textContent = limpio;
@@ -3933,6 +3962,228 @@ function cerrarTurno() {
 
 fijarSubtitulos(verSubtitulos);
 fijarPanel(verPanel);
+
+// ── Acceso con usuarios ──────────────────────────────────────────────────────
+//
+// El servidor decide quién entra; aquí sólo se pide el usuario y la contraseña
+// cuando hace falta, se muestra quién está dentro y se manda el diálogo al
+// historial de esa persona. Sin base de datos en el propio equipo no hay
+// puerta, y todo esto queda apagado.
+let accesoActual = { requerido: false, modo: "desconocido", sesion: null };
+let relojSincronizacion = null;
+let cambioObligatorio = false;
+
+function nombreDeQuienHabla() {
+  const nombre = String(accesoActual.sesion?.nombre || "").trim();
+  return nombre ? nombre.split(/\s+/)[0] : "Inti";
+}
+
+async function comprobarAcceso() {
+  try {
+    const respuesta = await fetch("/acceso/estado");
+    aplicarAcceso(await respuesta.json());
+  } catch {
+    // Sin servidor (archivo abierto a mano): ya lo avisa el arranque.
+  }
+}
+
+function aplicarAcceso(estado) {
+  accesoActual = estado || accesoActual;
+  if (estado?.problema === "ACCESO_NO_CONFIGURADO") {
+    return mostrarBloqueoDeAcceso("Falta conectar una base de datos al despliegue. Es un paso del administrador en Vercel: Storage → Create Database → Postgres.");
+  }
+  if (estado?.modo === "base-de-datos-caida") {
+    return mostrarBloqueoDeAcceso("La base de datos no responde. Vuelve a intentarlo en un momento.");
+  }
+  if (estado?.requerido && !estado.sesion) return pedirAcceso();
+  ocultarAcceso();
+  pintarQuien(estado?.sesion || null);
+  if (estado?.sesion?.debe_cambiar_clave) pedirCambioDeClave({ obligatorio: true });
+}
+
+function pintarQuien(sesion) {
+  if (!ui.quien) return;
+  ui.quien.hidden = !sesion;
+  ui.quienNombre.textContent = sesion ? sesion.nombre : "";
+}
+
+function pedirAcceso(mensaje = "") {
+  if (!ui.acceso) return;
+  ui.acceso.hidden = false;
+  ui.accesoForm.hidden = false;
+  ui.claveForm.hidden = true;
+  ui.accesoBloqueo.hidden = true;
+  ui.accesoError.textContent = mensaje;
+  ui.accesoEntrar.disabled = false;
+  ui.accesoClave.value = "";
+  setTimeout(() => (ui.accesoUsuario.value ? ui.accesoClave : ui.accesoUsuario).focus(), 50);
+}
+
+function mostrarBloqueoDeAcceso(texto) {
+  if (!ui.acceso) return;
+  ui.acceso.hidden = false;
+  ui.accesoForm.hidden = true;
+  ui.claveForm.hidden = true;
+  ui.accesoBloqueo.hidden = false;
+  ui.accesoBloqueoTexto.textContent = texto;
+}
+
+function ocultarAcceso() {
+  if (ui.acceso) ui.acceso.hidden = true;
+}
+
+function pedirCambioDeClave({ obligatorio = false } = {}) {
+  if (!ui.acceso) return;
+  cambioObligatorio = obligatorio;
+  ui.acceso.hidden = false;
+  ui.accesoForm.hidden = true;
+  ui.accesoBloqueo.hidden = true;
+  ui.claveForm.hidden = false;
+  ui.claveError.textContent = "";
+  ui.claveAyuda.textContent = obligatorio
+    ? "Tu contraseña la generó el administrador. Cámbiala por una que sólo sepas tú, de al menos 8 caracteres."
+    : "Elige una que sólo sepas tú, de al menos 8 caracteres.";
+  ui.claveActual.value = ui.claveNueva.value = ui.claveRepetir.value = "";
+  setTimeout(() => ui.claveActual.focus(), 50);
+}
+
+ui.accesoForm?.addEventListener("submit", async evento => {
+  evento.preventDefault();
+  ui.accesoEntrar.disabled = true;
+  ui.accesoError.textContent = "";
+  try {
+    const respuesta = await fetch("/acceso/entrar", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ usuario: ui.accesoUsuario.value, clave: ui.accesoClave.value })
+    });
+    const datos = await respuesta.json().catch(() => ({}));
+    if (!respuesta.ok || !datos.ok) {
+      ui.accesoError.textContent = datos.error || "No se pudo entrar.";
+      ui.accesoEntrar.disabled = false;
+      ui.accesoClave.value = "";
+      ui.accesoClave.focus();
+      return;
+    }
+    ui.accesoClave.value = "";
+    aplicarAcceso({ requerido: true, modo: "cerrado", sesion: datos.sesion });
+    setStatus(`Hola, ${nombreDeQuienHabla()}. Lista para comenzar`);
+  } catch {
+    ui.accesoError.textContent = "No hay conexión con el servidor.";
+    ui.accesoEntrar.disabled = false;
+  }
+});
+
+ui.quienSalir?.addEventListener("click", async () => {
+  if (connected) sesion?.disconnect();
+  programarSincronizacion(true);
+  await fetch("/acceso/salir", { method: "POST" }).catch(() => {});
+  pintarQuien(null);
+  accesoActual = { ...accesoActual, sesion: null };
+  pedirAcceso("Sesión cerrada.");
+});
+
+ui.quienClave?.addEventListener("click", () => pedirCambioDeClave({ obligatorio: false }));
+
+ui.claveMasTarde?.addEventListener("click", () => {
+  // Con cambio obligatorio también se puede posponer: se volverá a pedir al
+  // entrar la próxima vez. Bloquear a alguien por esto sería peor que el riesgo.
+  ocultarAcceso();
+});
+
+ui.claveForm?.addEventListener("submit", async evento => {
+  evento.preventDefault();
+  ui.claveError.textContent = "";
+  if (ui.claveNueva.value !== ui.claveRepetir.value) {
+    ui.claveError.textContent = "Las dos contraseñas nuevas no coinciden.";
+    return;
+  }
+  ui.claveGuardar.disabled = true;
+  try {
+    const respuesta = await fetch("/acceso/cambiar-clave", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ actual: ui.claveActual.value, nueva: ui.claveNueva.value })
+    });
+    const datos = await respuesta.json().catch(() => ({}));
+    if (!respuesta.ok || !datos.ok) {
+      ui.claveError.textContent = datos.error || "No se pudo cambiar la contraseña.";
+      return;
+    }
+    if (accesoActual.sesion) accesoActual.sesion.debe_cambiar_clave = false;
+    cambioObligatorio = false;
+    ocultarAcceso();
+    mostrarAviso("Contraseña cambiada.");
+    setTimeout(() => mostrarAviso(""), 4000);
+  } catch {
+    ui.claveError.textContent = "No hay conexión con el servidor.";
+  } finally {
+    ui.claveGuardar.disabled = false;
+  }
+});
+
+// Cualquier ruta del servidor puede contestar «entra primero»: una sesión que
+// caducó a mitad de conversación, o un despliegue sin base. Se atiende en un
+// solo sitio, envolviendo fetch, en vez de repetirlo en cada llamada.
+const fetchOriginal = window.fetch.bind(window);
+window.fetch = async (recurso, opciones) => {
+  const respuesta = await fetchOriginal(recurso, opciones);
+  const ruta = typeof recurso === "string" ? recurso : (recurso?.url || "");
+  if (ruta.startsWith("/") && !ruta.startsWith("/acceso/") && (respuesta.status === 401 || respuesta.status === 503)) {
+    const datos = await respuesta.clone().json().catch(() => ({}));
+    if (datos.code === "ACCESO_REQUERIDO") {
+      pintarQuien(null);
+      accesoActual = { ...accesoActual, sesion: null };
+      pedirAcceso("Tu sesión terminó. Vuelve a entrar.");
+    } else if (datos.code === "ACCESO_NO_CONFIGURADO") {
+      mostrarBloqueoDeAcceso(datos.error || "El acceso con usuarios no está configurado.");
+    }
+  }
+  return respuesta;
+};
+
+// El diálogo va al historial de la persona cada pocos segundos, entero: el
+// servidor lo reemplaza por identificador, así que reenviarlo no duplica nada
+// y una pestaña que se cierra de golpe pierde como mucho lo último.
+function programarSincronizacion(ahora = false) {
+  if (!accesoActual.sesion) return;
+  clearTimeout(relojSincronizacion);
+  relojSincronizacion = setTimeout(sincronizarConversacion, ahora ? 0 : 4000);
+}
+
+async function sincronizarConversacion() {
+  if (!accesoActual.sesion || !charla.id || charla.vacia) return;
+  try {
+    await fetch("/acceso/conversacion", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: charla.id, inicio: charla.inicio, turnos: charla.turnos }),
+      keepalive: true
+    });
+  } catch {
+    // Sin red ahora: el siguiente turno vuelve a intentarlo con todo.
+  }
+}
+
+// «Anteriores»: lo de este navegador más lo guardado a nombre de la persona en
+// el servidor, sin duplicar lo que está en los dos sitios.
+async function todasLasConversaciones() {
+  const locales = await listarConversaciones();
+  if (!accesoActual.sesion) return locales;
+  let remotas = [];
+  try {
+    const respuesta = await fetch("/acceso/conversaciones");
+    const datos = await respuesta.json();
+    remotas = datos.conversaciones || [];
+  } catch {}
+  const porId = new Map();
+  for (const c of locales) porId.set(c.id, c);
+  for (const c of remotas) porId.set(c.id, { ...(porId.get(c.id) || {}), ...c });
+  return [...porId.values()].sort((a, b) => (b.inicio || 0) - (a.inicio || 0)).slice(0, 30);
+}
+
+window.addEventListener("pagehide", () => sincronizarConversacion());
+comprobarAcceso();
 
 // Se pregunta al arrancar qué proveedores hay: sin esto habría que esperar a
 // que OpenAI fallara para descubrir que tampoco hay respaldo.

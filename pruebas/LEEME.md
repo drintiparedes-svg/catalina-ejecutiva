@@ -44,6 +44,7 @@ Con navegador y servidor, todo junto:
 | `qa-formatos` | Que se lea cualquier archivo con texto dentro —.sql, .py, .yaml, sin extensión— decidiendo por los bytes y no por el nombre, que un binario disfrazado de .txt no se cuele, y que la extensión y el tamaño se informen bien. |
 | `qa-conversacion` | El ciclo entero: que se registren las dos voces, que al cerrar salga el resumen con minuta, acuerdos y alcance, que quede en el historial, que se pueda retomar como contexto sólo si se elige, y que todo se pueda pedir hablando. |
 | `qa-correo` | Que el SERVIDOR se niegue a mandar la reunión a un tercero sin confirmación explícita. El navegador no es una garantía: es de quien lo abre. |
+| `qa-acceso` | El acceso con usuarios contra un Postgres de verdad (`CATALINA_BD_URL`): sin sesión nada responde, el administrador crea usuarios, cada uno ve sólo su historial, bloqueo por intentos, sesión revocada al desactivar, auditoría sin contraseñas. |
 | `qa-drive` | Google Drive entero contra un doble de Google: consentimiento, canje, carpetas, subida a la carpeta elegida, y Drive caído sin llevarse el cierre. |
 
 `qa-correo` y `qa-drive` necesitan servidores propios —uno con clave de correo,

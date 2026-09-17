@@ -319,6 +319,52 @@ acepta firmar la sesión pero cierra la conversación al abrirla. Ahí aparece s
 código y su motivo textual, que es lo que distingue una cuenta sin crédito de un
 agente que no permite sobrescribir su configuración.
 
+## Acceso con usuarios
+
+Cualquiera con la dirección podía abrir la página y arrancar una sesión de voz
+con el crédito de ElevenLabs. Ahora la página pide **usuario y contraseña**,
+los usuarios los crea el **administrador** (`/admin.html` → Usuarios), y lo que
+conversa cada persona queda guardado **a su nombre**: se ve en «Anteriores»
+desde cualquier equipo, y el administrador puede verlo por usuario.
+
+Hace falta una base de datos PostgreSQL, porque en Vercel el disco es de sólo
+lectura. Se conecta desde el panel de Vercel, sin teclear ninguna clave:
+
+1. En el proyecto → **Storage** → **Create Database** → **Postgres** (Neon) →
+   **Connect** a este proyecto, en todos los entornos. Deja solas
+   `POSTGRES_URL` y `DATABASE_URL`.
+2. **Deployments** → **Redeploy** del último despliegue.
+3. Entra en `/admin.html`, pestaña **Usuarios**, y crea el primero. Si no se
+   escribe contraseña, se genera una y se muestra una sola vez; la persona la
+   cambia al entrar.
+
+Cómo se comporta según lo que haya:
+
+| Situación | Qué pasa |
+| --- | --- |
+| Base conectada | Puerta cerrada: sin sesión, todas las rutas responden 401 y la página pide entrar. |
+| Sin base, en el propio equipo (`start.command`) | No hay puerta: todo sigue como antes. |
+| Sin base, desplegada | Se cierra y lo dice (503 `ACCESO_NO_CONFIGURADO`): es preferible a quedar abierta sin darse cuenta. |
+| `CATALINA_ACCESO=abierto` | Salida de emergencia: cualquiera entra, como antes. Queda declarado en `/health`. |
+
+Lo que se guarda y lo que no: las contraseñas van con scrypt y nunca en claro;
+de la sesión se guarda su SHA-256, no el token; la cookie es HttpOnly. Cinco
+fallos seguidos bloquean la cuenta quince minutos; usuario inexistente y
+contraseña incorrecta responden lo mismo. Desactivar a alguien lo saca al
+instante. Todo queda en un registro de accesos (sin contraseñas) que se ve en
+el panel.
+
+El diálogo se manda al servidor cada pocos segundos mientras se habla, y el
+resumen al cerrar. Lo que ya estaba en el historial del navegador (IndexedDB)
+sigue ahí y se muestra junto a lo del servidor, sin duplicar.
+
+Quedan fuera, a propósito, hasta que se pidan: recuperación de contraseña por
+correo, segundo factor, y registro de usuarios por su cuenta.
+
+La prueba está en `pruebas/qa-acceso.mjs` y necesita un Postgres de pruebas:
+
+    CATALINA_BD_URL=postgres://usuario:clave@127.0.0.1:5432/catalina_prueba node pruebas/qa-acceso.mjs
+
 ## Desplegar en Vercel
 
 En Vercel no hace falta descargar nada ni pegar claves en ningún archivo: se

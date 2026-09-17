@@ -20,6 +20,12 @@
         <p class="eyebrow">ASISTENTE CONVERSACIONAL</p>
         <h1>Catalina</h1>
         <p class="status" id="status">Lista para comenzar</p>
+        <!-- Quién está dentro. Sólo aparece con acceso por usuarios. -->
+        <p class="quien" id="quien" hidden>
+          <span id="quienNombre"></span>
+          <button class="quien-boton" id="quienClave" type="button" title="Cambiar tu contraseña">Contraseña</button>
+          <button class="quien-boton" id="quienSalir" type="button" title="Cerrar tu sesión">Salir</button>
+        </p>
       </div>
     </section>
     <section class="caption" id="caption" aria-live="polite" data-visible="false"></section>
@@ -234,7 +240,51 @@
 
     <button class="exit-meet" id="exitMeet" aria-label="Salir del modo Meet">Mostrar controles</button>
   </main>
+  <!-- Puerta de entrada. Con acceso por usuarios nada funciona hasta entrar:
+       el servidor rechaza cualquier ruta sin sesión, y esto es lo que la pide.
+       La contraseña va de aquí a /acceso/entrar y a ningún otro sitio. -->
+  <div class="acceso" id="acceso" hidden role="dialog" aria-modal="true" aria-labelledby="accesoTitulo">
+    <form class="acceso-caja" id="accesoForm" autocomplete="on">
+      <p class="eyebrow">CATALINA</p>
+      <h2 class="acceso-titulo" id="accesoTitulo">Entra con tu usuario</h2>
+      <p class="acceso-ayuda" id="accesoAyuda">Tu usuario y tu contraseña te los entrega el administrador.</p>
+      <label class="acceso-campo">Usuario
+        <input id="accesoUsuario" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required>
+      </label>
+      <label class="acceso-campo">Contraseña
+        <input id="accesoClave" name="password" type="password" autocomplete="current-password" required>
+      </label>
+      <p class="acceso-error" id="accesoError" role="alert"></p>
+      <button class="acceso-entrar" id="accesoEntrar" type="submit">Entrar</button>
+    </form>
+
+    <form class="acceso-caja" id="claveForm" hidden autocomplete="on">
+      <p class="eyebrow">TU CONTRASEÑA</p>
+      <h2 class="acceso-titulo" id="claveTitulo">Cambia tu contraseña</h2>
+      <p class="acceso-ayuda" id="claveAyuda">Elige una que sólo sepas tú, de al menos 8 caracteres.</p>
+      <label class="acceso-campo">Contraseña actual
+        <input id="claveActual" type="password" autocomplete="current-password" required>
+      </label>
+      <label class="acceso-campo">Nueva contraseña
+        <input id="claveNueva" type="password" autocomplete="new-password" minlength="8" required>
+      </label>
+      <label class="acceso-campo">Repite la nueva
+        <input id="claveRepetir" type="password" autocomplete="new-password" minlength="8" required>
+      </label>
+      <p class="acceso-error" id="claveError" role="alert"></p>
+      <div class="acceso-acciones">
+        <button class="acceso-entrar" id="claveGuardar" type="submit">Guardar</button>
+        <button class="acceso-luego" id="claveMasTarde" type="button">Más tarde</button>
+      </div>
+    </form>
+
+    <div class="acceso-caja" id="accesoBloqueo" hidden>
+      <p class="eyebrow">CATALINA</p>
+      <h2 class="acceso-titulo">Acceso no disponible</h2>
+      <p class="acceso-ayuda" id="accesoBloqueoTexto"></p>
+    </div>
+  </div>
   <audio id="remoteAudio" autoplay></audio>
-  <script type="module" src="app.js?v=44"></script>
+  <script type="module" src="app.js?v=45"></script>
 </body>
 </html>

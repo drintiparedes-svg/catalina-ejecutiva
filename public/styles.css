@@ -681,3 +681,43 @@ button.primary { border-color: rgba(109,228,255,.45); background: linear-gradien
    igual, releer el historial no reconstruye quién dijo qué. */
 .turno[data-quien="usuario"] .turno-quien { color: rgba(209,229,239,.6); }
 .turno[data-quien="usuario"] .turno-texto { color: rgba(233,246,252,.72); }
+
+/* Acceso con usuarios. La puerta tapa la escena entera: sin sesión no hay nada
+   que hacer detrás, y una cara animada bajo un formulario sólo distrae. */
+.quien { display: flex; align-items: center; gap: 8px; margin: 6px 0 0; color: #a9d8ec; font-size: 12px; }
+.quien[hidden] { display: none; }
+.quien-boton {
+  min-height: 22px; padding: 0 8px; border: 1px solid rgba(180,225,245,.22); border-radius: 7px;
+  background: rgba(255,255,255,.05); color: #a9d8ec; font: inherit; font-size: 11px; font-weight: 600;
+  letter-spacing: .04em; cursor: pointer;
+}
+.quien-boton:hover { background: rgba(255,255,255,.12); }
+.acceso {
+  position: fixed; inset: 0; z-index: 40; display: grid; place-items: center; padding: 16px;
+  background: rgba(3, 9, 15, .82); backdrop-filter: blur(22px) saturate(1.1);
+}
+.acceso[hidden] { display: none; }
+.acceso-caja {
+  width: min(380px, 100%); padding: 24px 24px 22px; border: 1px solid rgba(180,225,245,.2); border-radius: 22px;
+  background: rgba(5,14,23,.92); box-shadow: 0 28px 80px rgba(0,0,0,.6); color: #eaf8ff;
+}
+.acceso-caja[hidden] { display: none; }
+.acceso-titulo { margin: 0 0 6px; font-size: 22px; font-weight: 500; letter-spacing: -.02em; }
+.acceso-ayuda { margin: 0 0 14px; color: rgba(209,229,239,.62); font-size: 13px; line-height: 1.5; }
+.acceso-campo { display: block; margin: 10px 0 0; color: #a9d8ec; font-size: 11px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+.acceso-campo input {
+  display: block; width: 100%; margin-top: 6px; padding: 11px 12px; box-sizing: border-box;
+  border: 1px solid rgba(180,225,245,.2); border-radius: 11px; background: rgba(3,9,15,.7);
+  color: #eaf8ff; font: inherit; font-size: 15px; letter-spacing: 0; text-transform: none;
+}
+.acceso-campo input:focus { outline: 2px solid rgba(109,228,255,.45); outline-offset: 1px; }
+.acceso-error { min-height: 1.3em; margin: 10px 0 4px; color: #ff9a9a; font-size: 13px; line-height: 1.4; }
+.acceso-error:empty { margin: 6px 0 0; }
+.acceso-acciones { display: flex; gap: 10px; flex-wrap: wrap; }
+.acceso-entrar, .acceso-luego {
+  min-height: 42px; padding: 0 18px; border-radius: 12px; font: inherit; font-size: 14px; font-weight: 600; cursor: pointer;
+}
+.acceso-entrar { flex: 1; border: 1px solid rgba(109,228,255,.45); background: linear-gradient(135deg, rgba(25,134,173,.95), rgba(39,82,126,.95)); color: #eaf8ff; }
+.acceso-entrar[disabled] { opacity: .6; cursor: wait; }
+.acceso-caja > .acceso-entrar { display: block; width: 100%; }
+.acceso-luego { border: 1px solid rgba(180,225,245,.2); background: rgba(255,255,255,.05); color: #d1e5ef; }
