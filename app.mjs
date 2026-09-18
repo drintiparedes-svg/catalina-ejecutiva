@@ -21,7 +21,7 @@ import { hayRedaccion, probarRedaccion, describirImagen, redactarConversacion, c
 import { estadoDrive, urlDeConsentimiento, canjearCodigo, carpetasPropias, crearCarpeta } from "./drive.mjs";
 import {
   accesoConfigurado, accesoForzadoAbierto, usuarioDeSesion, estadoDeAcceso,
-  atenderAcceso, atenderAdministracionDeAcceso, cerrarConversacion as guardarCierreDeConversacion
+  atenderAcceso, cerrarConversacion as guardarCierreDeConversacion
 } from "./acceso.mjs";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -443,12 +443,6 @@ export async function atender(req, res) {
     // acceso.mjs; aquí sólo se les pasa el control con los ayudantes.
     if (req.url.startsWith("/acceso/")) {
       return await atenderAcceso(req, res, { readBody, json, local: esLocal(req) });
-    }
-
-    // Usuarios y auditoría del acceso, con la llave del administrador.
-    if (req.url.startsWith("/admin/usuarios") || req.url.split("?")[0] === "/admin/acceso") {
-      if (!autorizado(req)) return json(res, 401, { error: motivoDeRechazo(), code: "ADMIN_NO_AUTORIZADO" });
-      return await atenderAdministracionDeAcceso(req, res, { readBody, json });
     }
 
     if (req.url === "/admin/config" && (req.method === "GET" || req.method === "PUT")) {

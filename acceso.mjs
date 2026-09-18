@@ -5,6 +5,9 @@
 // con un usuario y una contraseña que crea el administrador, y lo que conversa
 // queda guardado a su nombre, para retomarlo desde cualquier equipo.
 //
+// Los usuarios los crea el administrador de Catalina, una aplicación aparte
+// que escribe en esta misma base; aquí sólo se comprueban.
+//
 // Todo vive en una base de datos PostgreSQL. No es un capricho: en Vercel el
 // disco es de sólo lectura y cada petición cae en una instancia distinta, así
 // que un archivo de usuarios no sobreviviría al siguiente despliegue. La base
@@ -688,57 +691,9 @@ export async function atenderAcceso(req, res, { readBody, json, local = false })
   return json(res, 404, { ok: false, error: "Ruta de acceso no reconocida.", code: "RUTA_INEXISTENTE" });
 }
 
-// Las rutas /admin/usuarios* y /admin/acceso. Quien llama ya comprobó el token
-// de administración; aquí sólo se hace el trabajo.
-export async function atenderAdministracionDeAcceso(req, res, { readBody, json }) {
-  const ruta = req.url.split("?")[0];
-  const consulta = new URL(req.url, "http://x").searchParams;
-  const leer = async () => { try { return JSON.parse(await readBody(req) || "{}"); } catch { return {}; } };
-  const contexto = { actor: "administrador", ip: ipDe(req) };
-
-  if (req.method === "GET" && ruta === "/admin/acceso") {
-    const base = await comprobarBaseDeDatos();
-    return json(res, 200, {
-      ok: true,
-      configurado: accesoConfigurado(),
-      forzadoAbierto: accesoForzadoAbierto(),
-      base,
-      auditoria: base.ok ? await ultimaAuditoria() : []
-    });
-  }
-
-  if (!accesoConfigurado()) {
-    return json(res, 503, { ok: false, error: "Falta la base de datos: conecta un Postgres al proyecto en Vercel (Storage → Create Database).", code: "ACCESO_NO_CONFIGURADO" });
-  }
-
-  if (req.method === "GET" && ruta === "/admin/usuarios") {
-    return json(res, 200, { ok: true, usuarios: await listarUsuarios() });
-  }
-  if (req.method === "POST" && ruta === "/admin/usuarios") {
-    const cuerpo = await leer();
-    const r = await crearUsuario(cuerpo, contexto);
-    return json(res, r.ok ? 200 : 400, r);
-  }
-  if (req.method === "POST" && ruta === "/admin/usuarios/actualizar") {
-    const r = await actualizarUsuario(await leer(), contexto);
-    return json(res, r.ok ? 200 : 400, r);
-  }
-  if (req.method === "POST" && ruta === "/admin/usuarios/clave") {
-    const r = await restablecerClave(await leer(), contexto);
-    return json(res, r.ok ? 200 : 400, r);
-  }
-  if (req.method === "GET" && ruta === "/admin/usuarios/conversaciones") {
-    const usuarioId = Number(consulta.get("usuario"));
-    if (!usuarioId) return json(res, 400, { ok: false, error: "Falta el usuario.", code: "USUARIO_INVALIDO" });
-    const id = consulta.get("id");
-    if (id) {
-      const registro = await conversacionDeUsuario(usuarioId, id);
-      return json(res, registro ? 200 : 404, registro ? { ok: true, conversacion: registro } : { ok: false, code: "CONVERSACION_INEXISTENTE" });
-    }
-    return json(res, 200, { ok: true, conversaciones: await conversacionesDeUsuario(usuarioId) });
-  }
-
-  return json(res, 404, { ok: false, error: "Ruta de administración no reconocida.", code: "RUTA_INEXISTENTE" });
-}
+// La gestión de usuarios (crear, desactivar, contraseñas, rol) NO vive aquí: es
+// una aplicación aparte, el administrador de Catalina (repositorio
+// administrador-catalina-ai), que escribe en esta misma base. Las funciones
+// de arriba se exportan para las pruebas y para un arranque local.
 
 export const _pruebas = { hashDeClave, claveCoincide, configurarConexion, randomUUID };

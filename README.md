@@ -322,10 +322,14 @@ agente que no permite sobrescribir su configuración.
 ## Acceso con usuarios
 
 Cualquiera con la dirección podía abrir la página y arrancar una sesión de voz
-con el crédito de ElevenLabs. Ahora la página pide **usuario y contraseña**,
-los usuarios los crea el **administrador** (`/admin.html` → Usuarios), y lo que
-conversa cada persona queda guardado **a su nombre**: se ve en «Anteriores»
-desde cualquier equipo, y el administrador puede verlo por usuario.
+con el crédito de ElevenLabs. Ahora la página pide **usuario y contraseña**, y
+lo que conversa cada persona queda guardado **a su nombre**: se ve en
+«Anteriores» desde cualquier equipo.
+
+Los usuarios y sus contraseñas se gestionan desde una aplicación **aparte**, el
+[administrador de Catalina](https://github.com/drintiparedes-svg/administrador-catalina-ai),
+que escribe en la misma base de datos. Aquí no se crean usuarios: sólo se
+comprueban.
 
 Hace falta una base de datos PostgreSQL, porque en Vercel el disco es de sólo
 lectura. Se conecta desde el panel de Vercel, sin teclear ninguna clave:
@@ -334,9 +338,9 @@ lectura. Se conecta desde el panel de Vercel, sin teclear ninguna clave:
    **Connect** a este proyecto, en todos los entornos. Deja solas
    `POSTGRES_URL` y `DATABASE_URL`.
 2. **Deployments** → **Redeploy** del último despliegue.
-3. Entra en `/admin.html`, pestaña **Usuarios**, y crea el primero. Si no se
-   escribe contraseña, se genera una y se muestra una sola vez; la persona la
-   cambia al entrar.
+3. Conecta la **misma** base al proyecto del administrador de Catalina y crea
+   ahí a las personas. Si no se escribe contraseña, se genera una y se muestra
+   una sola vez; la persona la cambia al entrar.
 
 Cómo se comporta según lo que haya:
 

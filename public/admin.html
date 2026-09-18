@@ -59,20 +59,6 @@ input:focus, textarea:focus, select:focus { outline: 2px solid rgba(109,228,255,
 .lista { list-style: none; margin: 0; padding: 0; }
 .lista li { display: flex; gap: 10px; margin-top: 8px; }
 .acciones { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 18px; }
-.tabla { width: 100%; margin-top: 14px; border-collapse: collapse; font-size: 13.5px; }
-.tabla th, .tabla td { padding: 9px 10px; border-bottom: 1px solid var(--linea); text-align: left; vertical-align: middle; }
-.tabla th { font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: #a9d8ec; }
-.tabla td .fila-botones { display: flex; gap: 6px; flex-wrap: wrap; }
-.tabla td button { min-height: 30px; padding: 0 10px; font-size: 12.5px; }
-.tabla tr[data-activo="false"] td { color: var(--tenue); }
-.pastilla { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11.5px; border: 1px solid var(--linea); }
-.pastilla[data-tipo="ok"] { color: #7ee3a8; border-color: rgba(126,227,168,.35); }
-.pastilla[data-tipo="no"] { color: #ff9a9a; border-color: rgba(255,154,154,.35); }
-.clave-generada { margin-top: 14px; padding: 12px 14px; border-radius: 12px; border: 1px solid rgba(126,227,168,.35); background: rgba(126,227,168,.08); font-size: 13.5px; line-height: 1.5; }
-.clave-generada code { font-size: 15px; letter-spacing: .04em; }
-.registro { margin: 0; padding: 0; list-style: none; font-size: 12.5px; color: var(--tenue); }
-.registro li { padding: 5px 0; border-bottom: 1px solid var(--linea); }
-.registro time { color: #a9d8ec; font-variant-numeric: tabular-nums; margin-right: 8px; }
 .marco { width: 100%; height: min(78vh, 820px); margin-top: 12px; border: 1px solid var(--linea); border-radius: 16px; background: #01060b; }
 code { padding: 1px 5px; border-radius: 5px; background: rgba(255,255,255,.08); font-size: 12.5px; }
 </style>
@@ -92,7 +78,6 @@ code { padding: 1px 5px; border-radius: 5px; background: rgba(255,255,255,.08); 
   <button data-seccion="limites" aria-selected="false">Límites</button>
   <button data-seccion="modelos" aria-selected="false">Modelos</button>
   <button data-seccion="conectores" aria-selected="false">Conectores</button>
-  <button data-seccion="usuarios" aria-selected="false">Usuarios</button>
 </nav>
 
 <main>
@@ -172,31 +157,6 @@ code { padding: 1px 5px; border-radius: 5px; background: rgba(255,255,255,.08); 
     <div class="acciones"><button id="agregarConector">Agregar conector</button></div>
   </section>
 
-  <section id="usuarios" hidden>
-    <h2>Usuarios</h2>
-    <p class="ayuda">Quién puede usar a Catalina. Cada persona entra con su usuario y su contraseña, y lo
-      que conversa queda guardado a su nombre en «Anteriores», desde cualquier equipo. Sin usuarios creados,
-      nadie puede entrar desde fuera.</p>
-    <p class="aviso" id="usuariosEstado">Comprobando la base de datos…</p>
-    <div class="tarjeta" id="usuariosAlta">
-      <div class="fila">
-        <div><label>Usuario</label><input id="nuevoUsuario" placeholder="p. ej. mgonzalez" autocapitalize="none" spellcheck="false"></div>
-        <div><label>Nombre</label><input id="nuevoNombre" placeholder="María González"></div>
-        <div><label>Contraseña (vacío = se genera una)</label><input id="nuevaClave" placeholder="mínimo 8 caracteres" autocomplete="off"></div>
-        <div><label>Rol</label><select id="nuevoRol"><option value="usuario">Usuario</option><option value="administrador">Administrador</option></select></div>
-      </div>
-      <div class="acciones"><button class="principal" id="crearUsuario">Crear usuario</button></div>
-      <div class="clave-generada" id="claveGenerada" hidden></div>
-    </div>
-    <table class="tabla" id="tablaUsuarios" hidden>
-      <thead><tr><th>Usuario</th><th>Nombre</th><th>Rol</th><th>Estado</th><th>Último acceso</th><th>Conversaciones</th><th></th></tr></thead>
-      <tbody></tbody>
-    </table>
-    <div id="conversacionesDeUsuario"></div>
-    <h2>Registro de accesos</h2>
-    <p class="ayuda">Los últimos movimientos: entradas, rechazos, bloqueos y cambios. Nunca contiene contraseñas.</p>
-    <ul class="registro" id="auditoria"></ul>
-  </section>
 </main>
 
 <script type="module">
@@ -418,228 +378,8 @@ $("#secciones").addEventListener("click", evento => {
   // El banco se carga sólo al abrirlo: arrastra la fotografía y el bucle de
   // dibujo, y no tiene sentido pagarlo si nunca se mira.
   if (boton.dataset.seccion === "banco") cargarBanco();
-  if (boton.dataset.seccion === "usuarios") cargarUsuarios();
 });
 
-// ── Usuarios ────────────────────────────────────────────────────────────────
-
-async function pedirAdmin(metodo, ruta, cuerpo) {
-  const respuesta = await fetch(ruta, {
-    method: metodo,
-    headers: { ...cabeceras(), ...(cuerpo === undefined ? {} : { "Content-Type": "application/json" }) },
-    body: cuerpo === undefined ? undefined : JSON.stringify(cuerpo)
-  });
-  const datos = await respuesta.json().catch(() => ({}));
-  return { estado: respuesta.status, datos };
-}
-
-async function cargarUsuarios() {
-  const estadoAcceso = $("#usuariosEstado");
-  const { estado: codigo, datos } = await pedirAdmin("GET", "/admin/acceso");
-  if (codigo === 401) return avisar("Sin acceso", "error");
-  if (!datos.configurado) {
-    estadoAcceso.textContent = "No hay base de datos conectada. En Vercel: Storage → Create Database → Postgres → conectar a este proyecto, y volver a desplegar. Mientras tanto, desde fuera nadie puede entrar.";
-    $("#usuariosAlta").hidden = true;
-    $("#tablaUsuarios").hidden = true;
-    return;
-  }
-  if (!datos.base?.ok) {
-    estadoAcceso.textContent = `La base de datos está configurada (${datos.base?.origen || "…"}) pero no responde: ${datos.base?.problema || ""}.`;
-    $("#usuariosAlta").hidden = true;
-    return;
-  }
-  estadoAcceso.textContent = datos.forzadoAbierto
-    ? "OJO: CATALINA_ACCESO=abierto está puesto. La puerta está abierta a cualquiera; quítalo para exigir usuario."
-    : `Acceso cerrado con usuarios. Base de datos conectada por ${datos.base.origen}. ${datos.base.usuarios} usuario${datos.base.usuarios === 1 ? "" : "s"}.`;
-  $("#usuariosAlta").hidden = false;
-  pintarAuditoria(datos.auditoria || []);
-
-  const lista = await pedirAdmin("GET", "/admin/usuarios");
-  pintarUsuarios(lista.datos.usuarios || []);
-}
-
-function pintarUsuarios(usuarios) {
-  const tabla = $("#tablaUsuarios");
-  const cuerpo = tabla.querySelector("tbody");
-  cuerpo.replaceChildren();
-  tabla.hidden = usuarios.length === 0;
-  for (const u of usuarios) {
-    const tr = document.createElement("tr");
-    tr.dataset.activo = String(u.activo);
-    const celda = texto => { const td = document.createElement("td"); td.textContent = texto; return td; };
-    const estado = document.createElement("td");
-    const pastilla = document.createElement("span");
-    pastilla.className = "pastilla";
-    pastilla.dataset.tipo = u.activo ? (u.bloqueado ? "no" : "ok") : "no";
-    pastilla.textContent = !u.activo ? "Desactivado" : u.bloqueado ? "Bloqueado" : u.debe_cambiar_clave ? "Debe cambiar contraseña" : "Activo";
-    estado.append(pastilla);
-
-    const acciones = document.createElement("td");
-    const botones = document.createElement("div");
-    botones.className = "fila-botones";
-    const ver = document.createElement("button");
-    ver.textContent = "Conversaciones";
-    ver.addEventListener("click", () => verConversaciones(u));
-    const clave = document.createElement("button");
-    clave.textContent = "Nueva contraseña";
-    clave.addEventListener("click", async () => {
-      if (!confirm(`¿Generar una contraseña nueva para ${u.nombre}? La actual dejará de valer y se cerrarán sus sesiones.`)) return;
-      const r = await pedirAdmin("POST", "/admin/usuarios/clave", { id: u.id });
-      if (!r.datos.ok) return avisar(r.datos.error || "No se pudo", "error");
-      mostrarClave(u.usuario, r.datos.clave);
-      cargarUsuarios();
-    });
-    const alternar = document.createElement("button");
-    alternar.className = u.activo ? "peligro" : "";
-    alternar.textContent = u.activo ? "Desactivar" : "Activar";
-    alternar.addEventListener("click", async () => {
-      if (u.activo && !confirm(`¿Desactivar a ${u.nombre}? Se cerrarán sus sesiones y no podrá entrar.`)) return;
-      const r = await pedirAdmin("POST", "/admin/usuarios/actualizar", { id: u.id, activo: !u.activo });
-      if (!r.datos.ok) return avisar(r.datos.error || "No se pudo", "error");
-      cargarUsuarios();
-    });
-    botones.append(ver, clave, alternar);
-    acciones.append(botones);
-
-    tr.append(
-      celda(u.usuario), celda(u.nombre), celda(u.rol), estado,
-      celda(u.ultimo_acceso ? new Date(u.ultimo_acceso).toLocaleString("es-CL") : "Nunca"),
-      celda(String(u.conversaciones ?? 0)), acciones
-    );
-    cuerpo.append(tr);
-  }
-}
-
-function mostrarClave(usuario, clave) {
-  const caja = $("#claveGenerada");
-  caja.hidden = false;
-  caja.replaceChildren();
-  const texto = document.createElement("span");
-  texto.textContent = `Contraseña de ${usuario}: `;
-  const codigo = document.createElement("code");
-  codigo.textContent = clave;
-  const nota = document.createElement("div");
-  nota.textContent = "Entrégasela a la persona ahora: no se vuelve a mostrar ni se guarda en claro. Al entrar se le pedirá cambiarla.";
-  caja.append(texto, codigo, nota);
-}
-
-$("#crearUsuario").addEventListener("click", async () => {
-  const r = await pedirAdmin("POST", "/admin/usuarios", {
-    usuario: $("#nuevoUsuario").value,
-    nombre: $("#nuevoNombre").value,
-    clave: $("#nuevaClave").value || undefined,
-    rol: $("#nuevoRol").value
-  });
-  if (!r.datos.ok) return avisar(r.datos.error || "No se pudo crear el usuario", "error");
-  avisar(`Usuario ${r.datos.usuario.usuario} creado`, "ok");
-  if (r.datos.clave) mostrarClave(r.datos.usuario.usuario, r.datos.clave);
-  else $("#claveGenerada").hidden = true;
-  $("#nuevoUsuario").value = $("#nuevoNombre").value = $("#nuevaClave").value = "";
-  cargarUsuarios();
-});
-
-async function verConversaciones(u) {
-  const contenedor = $("#conversacionesDeUsuario");
-  contenedor.replaceChildren();
-  const r = await pedirAdmin("GET", `/admin/usuarios/conversaciones?usuario=${u.id}`);
-  const titulo = document.createElement("h2");
-  titulo.textContent = `Conversaciones de ${u.nombre}`;
-  contenedor.append(titulo);
-  const lista = r.datos.conversaciones || [];
-  if (!lista.length) {
-    const p = document.createElement("p");
-    p.className = "ayuda";
-    p.textContent = "Todavía no tiene ninguna.";
-    contenedor.append(p);
-    return;
-  }
-  for (const c of lista) {
-    const tarjeta = document.createElement("div");
-    tarjeta.className = "tarjeta";
-    const cabecera = document.createElement("strong");
-    cabecera.textContent = `${new Date(c.inicio).toLocaleString("es-CL")} — ${c.titulo || "Conversación"}${c.sinCerrar ? " (sin cerrar)" : ""}`;
-    const detalle = document.createElement("p");
-    detalle.className = "ayuda";
-    detalle.textContent = c.resumen || "";
-    const cuentas = document.createElement("p");
-    cuentas.className = "ayuda";
-    cuentas.textContent = [
-      `${c.intervenciones || 0} intervenciones`,
-      (c.acuerdos ?? []).length ? `${c.acuerdos.length} acuerdos` : "",
-      (c.pendientes ?? []).length ? `${c.pendientes.length} pendientes` : ""
-    ].filter(Boolean).join(" · ");
-    tarjeta.append(cabecera, detalle, cuentas);
-    contenedor.append(tarjeta);
-  }
-}
-
-function pintarAuditoria(eventos) {
-  const lista = $("#auditoria");
-  lista.replaceChildren();
-  for (const e of eventos) {
-    const li = document.createElement("li");
-    const cuando = document.createElement("time");
-    cuando.textContent = new Date(e.momento).toLocaleString("es-CL");
-    const motivo = e.detalle?.motivo ? ` (${e.detalle.motivo})` : "";
-    li.append(cuando, document.createTextNode(`${e.evento} · ${e.usuario || "—"}${e.actor ? ` · por ${e.actor}` : ""}${motivo}${e.ip ? ` · ${e.ip}` : ""}`));
-    lista.append(li);
-  }
-}
-
-function cargarBanco() {
-  const marco = $("#marcoBanco");
-  if (marco.dataset.cargado) return;
-  marco.src = "/banco.html";
-  marco.dataset.cargado = "1";
-}
-
-$("#agregarNota").addEventListener("click", () => {
-  (config.conocimiento ??= []).push({ titulo: "", texto: "", activo: true });
-  pintarConocimiento();
-});
-
-$("#agregarConector").addEventListener("click", () => {
-  (config.conectores ??= []).push({ nombre: "", descripcion: "", url: "", metodo: "GET", activo: true });
-  pintarConectores();
-});
-
-for (const boton of document.querySelectorAll("[data-agregar]")) {
-  boton.addEventListener("click", () => {
-    const clave = boton.dataset.agregar;
-    (config.limites[clave] ??= []).push("");
-    pintarPuntos(clave);
-  });
-}
-
-$("#instrucciones").addEventListener("input", evento => {
-  config.persona.instrucciones = evento.target.value;
-});
-
-for (const [id, ruta] of Object.entries({
-  modeloOpenai: ["openai", "modelo"], vozOpenai: ["openai", "voz"],
-  modeloGemini: ["gemini", "modelo"], vozGemini: ["gemini", "voz"], idiomaGemini: ["gemini", "idioma"]
-})) {
-  $("#" + id).addEventListener("input", evento => {
-    config.modelos[ruta[0]][ruta[1]] = evento.target.value;
-  });
-}
-
-$("#guardar").addEventListener("click", async () => {
-  avisar("Guardando…");
-  const respuesta = await fetch("/admin/config", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json", ...cabeceras() },
-    body: JSON.stringify(config)
-  });
-  const datos = await respuesta.json().catch(() => ({}));
-  if (!respuesta.ok) return avisar(datos.error || "No se pudo guardar", "error");
-  config = datos;
-  pintar();
-  avisar("Guardado · se aplica en la próxima conversación", "ok");
-});
-
-cargarBanco();
-cargar();
 </script>
 </body>
 </html>

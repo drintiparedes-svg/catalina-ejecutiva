@@ -64,38 +64,37 @@ try {
   const estado = await pedir("GET", "/acceso/estado");
   comprobar("/acceso/estado dice que hace falta entrar", estado.estado === 200 && estado.datos.requerido === true && estado.datos.sesion === null);
 
-  const adminSinLlave = await pedir("GET", "/admin/usuarios");
-  comprobar("el panel de usuarios pide la llave del administrador", adminSinLlave.estado === 401);
+  const adminNoExiste = await pedir("GET", "/admin/usuarios", { admin: true });
+  comprobar("la gestión de usuarios no vive aquí: /admin/usuarios no existe (es el administrador aparte)", adminNoExiste.estado === 404 || adminNoExiste.estado === 405, String(adminNoExiste.estado));
 
   // ── El administrador crea usuarios ────────────────────────────────────────
   const sufijo = Date.now().toString(36);
   const usuarioA = `qa-ana-${sufijo}`;
   const usuarioB = `qa-bruno-${sufijo}`;
 
-  const creacionA = await pedir("POST", "/admin/usuarios", { ...ADMIN, cuerpo: { usuario: usuarioA.toUpperCase(), nombre: "Ana de Pruebas" } });
+  // Los usuarios los crea el administrador aparte; aquí se crean por el
+  // módulo, que es lo mismo que hace aquella aplicación sobre esta base.
+  const creacionA = { datos: await acceso.crearUsuario({ usuario: usuarioA.toUpperCase(), nombre: "Ana de Pruebas" }) };
   comprobar("crear usuario sin contraseña devuelve una generada, una sola vez",
-    creacionA.estado === 200 && typeof creacionA.datos.clave === "string" && creacionA.datos.clave.length >= 12
+    creacionA.datos.ok && typeof creacionA.datos.clave === "string" && creacionA.datos.clave.length >= 12
       && creacionA.datos.usuario.usuario === usuarioA && creacionA.datos.usuario.debe_cambiar_clave === true,
     JSON.stringify(creacionA.datos));
   creados.push(creacionA.datos.usuario?.id);
   const claveA = creacionA.datos.clave;
 
-  const creacionB = await pedir("POST", "/admin/usuarios", { ...ADMIN, cuerpo: { usuario: usuarioB, nombre: "Bruno de Pruebas", clave: "clave-de-bruno-2026" } });
-  comprobar("crear usuario con contraseña propia no la devuelve", creacionB.estado === 200 && creacionB.datos.clave === undefined && creacionB.datos.usuario.debe_cambiar_clave === false);
+  const creacionB = { datos: await acceso.crearUsuario({ usuario: usuarioB, nombre: "Bruno de Pruebas", clave: "clave-de-bruno-2026" }) };
+  comprobar("crear usuario con contraseña propia no la devuelve", creacionB.datos.ok && creacionB.datos.clave === undefined && creacionB.datos.usuario.debe_cambiar_clave === false);
   creados.push(creacionB.datos.usuario?.id);
 
-  const duplicado = await pedir("POST", "/admin/usuarios", { ...ADMIN, cuerpo: { usuario: usuarioA, nombre: "Otra Ana" } });
-  comprobar("un usuario repetido se rechaza", duplicado.estado === 400 && duplicado.datos.code === "USUARIO_DUPLICADO");
-
-  const corta = await pedir("POST", "/admin/usuarios", { ...ADMIN, cuerpo: { usuario: `qa-corta-${sufijo}`, nombre: "Corta", clave: "1234" } });
-  comprobar("una contraseña corta se rechaza", corta.estado === 400 && corta.datos.code === "CLAVE_INVALIDA");
-
-  const invalido = await pedir("POST", "/admin/usuarios", { ...ADMIN, cuerpo: { usuario: "con espacios y ñ", nombre: "X" } });
-  comprobar("un nombre de usuario inválido se rechaza", invalido.estado === 400 && invalido.datos.code === "USUARIO_INVALIDO");
-
-  const lista = await pedir("GET", "/admin/usuarios", ADMIN);
+  const duplicado = await acceso.crearUsuario({ usuario: usuarioA, nombre: "Otra Ana" });
+  comprobar("un usuario repetido se rechaza", !duplicado.ok && duplicado.code === "USUARIO_DUPLICADO");
+  const corta = await acceso.crearUsuario({ usuario: `qa-corta-${sufijo}`, nombre: "Corta", clave: "1234" });
+  comprobar("una contraseña corta se rechaza", !corta.ok && corta.code === "CLAVE_INVALIDA");
+  const invalido = await acceso.crearUsuario({ usuario: "con espacios y ñ", nombre: "X" });
+  comprobar("un nombre de usuario inválido se rechaza", !invalido.ok && invalido.code === "USUARIO_INVALIDO");
+  const lista = { datos: { usuarios: await acceso.listarUsuarios() } };
   comprobar("la lista de usuarios los muestra sin hash ni contraseña",
-    lista.estado === 200 && lista.datos.usuarios.some(u => u.usuario === usuarioA) && !JSON.stringify(lista.datos).includes("scrypt$"));
+    lista.datos.usuarios.some(u => u.usuario === usuarioA) && !JSON.stringify(lista.datos).includes("scrypt$"));
 
   // ── Entrar ────────────────────────────────────────────────────────────────
   const mal = await pedir("POST", "/acceso/entrar", { cuerpo: { usuario: usuarioA, clave: "incorrecta-000" } });
@@ -149,8 +148,8 @@ try {
   const listaA2 = await pedir("GET", "/acceso/conversaciones", { cookie: cookieA });
   comprobar("la persona puede borrar una conversación suya", borrar.estado === 200 && listaA2.datos.conversaciones.length === 1);
 
-  const delAdmin = await pedir("GET", `/admin/usuarios/conversaciones?usuario=${creacionA.datos.usuario.id}`, ADMIN);
-  comprobar("el administrador ve las conversaciones de un usuario", delAdmin.estado === 200 && delAdmin.datos.conversaciones.length === 1);
+  const delAdmin = await acceso.conversacionesDeUsuario(creacionA.datos.usuario.id);
+  comprobar("el administrador ve las conversaciones de un usuario", delAdmin.length === 1);
 
   // ── Salir, bloqueo y desactivación ────────────────────────────────────────
   const salida = await pedir("POST", "/acceso/salir", { cookie: cookieA });
@@ -163,21 +162,21 @@ try {
   comprobar("cinco fallos seguidos bloquean la cuenta, incluso con la contraseña buena",
     ultimo.estado === 423 && bloqueado.estado === 423 && bloqueado.datos.code === "CUENTA_BLOQUEADA");
 
-  const desbloqueo = await pedir("POST", "/admin/usuarios/clave", { ...ADMIN, cuerpo: { id: creacionB.datos.usuario.id } });
-  comprobar("restablecer la contraseña desbloquea y devuelve una nueva", desbloqueo.estado === 200 && typeof desbloqueo.datos.clave === "string");
+  const desbloqueo = { datos: await acceso.restablecerClave({ id: creacionB.datos.usuario.id }) };
+  comprobar("restablecer la contraseña desbloquea y devuelve una nueva", desbloqueo.datos.ok && typeof desbloqueo.datos.clave === "string");
   const sesionBVieja = await pedir("GET", "/acceso/sesion", { cookie: cookieB });
   comprobar("restablecer la contraseña cierra las sesiones abiertas", sesionBVieja.estado === 401);
   const entradaB2 = await pedir("POST", "/acceso/entrar", { cuerpo: { usuario: usuarioB, clave: desbloqueo.datos.clave } });
   comprobar("con la contraseña nueva vuelve a entrar", entradaB2.estado === 200);
 
-  const desactivar = await pedir("POST", "/admin/usuarios/actualizar", { ...ADMIN, cuerpo: { id: creacionB.datos.usuario.id, activo: false } });
+  const desactivar = { estado: (await acceso.actualizarUsuario({ id: creacionB.datos.usuario.id, activo: false })).ok ? 200 : 400 };
   const sesionBDesactivada = await pedir("GET", "/acceso/sesion", { cookie: entradaB2.cookie });
   const entradaDesactivada = await pedir("POST", "/acceso/entrar", { cuerpo: { usuario: usuarioB, clave: desbloqueo.datos.clave } });
   comprobar("desactivar a alguien lo saca al instante y le impide volver a entrar",
     desactivar.estado === 200 && sesionBDesactivada.estado === 401 && entradaDesactivada.estado === 403 && entradaDesactivada.datos.code === "CUENTA_DESACTIVADA");
 
-  const auditoria = await pedir("GET", "/admin/acceso", ADMIN);
-  const eventos = (auditoria.datos.auditoria || []).map(e => e.evento);
+  const auditoria = { datos: { auditoria: await acceso.ultimaAuditoria() } };
+  const eventos = auditoria.datos.auditoria.map(e => e.evento);
   comprobar("la auditoría registra creación, accesos, bloqueo y cierre, sin contraseñas",
     ["USUARIO_CREADO", "ACCESO_CONCEDIDO", "ACCESO_RECHAZADO", "CUENTA_BLOQUEADA", "SESION_CERRADA", "CLAVE_CAMBIADA"].every(e => eventos.includes(e))
       && !JSON.stringify(auditoria.datos).includes(claveA) && !JSON.stringify(auditoria.datos).includes("clave-de-bruno-2026"),
