@@ -56,9 +56,13 @@ r.push(await escenario("Se registran las dos voces y el cierre produce el resume
   await dormir(300);
 
   const turnos = [...document.querySelectorAll("#panelBody .turno")];
-  anotar("En el panel se ven las dos voces, no sólo la de Catalina",
-    turnos.length === 4 && turnos.filter(t => t.dataset.quien === "usuario").length === 2,
+  anotar("En el panel se ve sólo lo que dice Catalina, sin repetir",
+    turnos.length === 2 && turnos.every(t => t.dataset.quien !== "usuario"),
     turnos.map(t => t.querySelector(".turno-quien").textContent).join(" / "));
+  const memoria = window.catalina.charla.turnos;
+  anotar("En la memoria quedan las dos voces, que es lo que necesita la minuta",
+    memoria.length === 4 && memoria.filter(t => t.quien === "usuario").length === 2,
+    memoria.map(t => t.quien).join(" / "));
 
   $("#panelCerrarCharla").click(); await dormir(1500);
 

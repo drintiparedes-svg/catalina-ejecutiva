@@ -52,15 +52,34 @@ export class MemoriaDeConversacion {
     // Los trozos seguidos de la misma voz son una intervención, no varias: la
     // sesión entrega el texto de Catalina creciendo palabra a palabra.
     const ultimo = this.turnos.at(-1);
-    if (ultimo && ultimo.quien === quien && limpio.startsWith(ultimo.texto)) {
-      ultimo.texto = limpio;
-      return ultimo;
+    if (ultimo && ultimo.quien === quien) {
+      if (limpio.startsWith(ultimo.texto)) {
+        ultimo.texto = limpio;
+        return ultimo;
+      }
+      // ElevenLabs manda a veces la respuesta COMPLETA antes que los trozos
+      // con los que la va diciendo. Esos trozos son un prefijo de lo que ya
+      // está anotado: no son otra intervención, y anotarlos duplicaba cada
+      // frase de Catalina en el historial y en la minuta.
+      if (ultimo.texto.startsWith(limpio)) return ultimo;
     }
 
     const turno = { t: Date.now(), quien, texto: limpio };
     this.turnos.push(turno);
     if (this.turnos.length > TOPE_TURNOS) this.turnos.splice(0, this.turnos.length - TOPE_TURNOS);
     return turno;
+  }
+
+  // Cuando la interrumpen, el agente dice qué alcanzó a decir de verdad. El
+  // historial se queda con eso, en la misma intervención, no con lo que iba
+  // a decir ni con una intervención nueva.
+  corregir(quien, texto) {
+    const limpio = String(texto ?? "").trim();
+    const ultimo = this.turnos.at(-1);
+    if (!ultimo || ultimo.quien !== quien) return null;
+    if (!limpio) { this.turnos.pop(); return null; }
+    ultimo.texto = limpio;
+    return ultimo;
   }
 
   cerrar() {

@@ -304,9 +304,12 @@ export class ElevenLabsSession {
       // de verdad. El historial se queda con eso y no con lo que iba a decir.
       case "agent_response_correction": {
         const correccion = mensaje.agent_response_correction_event ?? {};
-        if (correccion.corrected_agent_response) {
+        if (typeof correccion.corrected_agent_response === "string") {
           this.transcript = correccion.corrected_agent_response;
-          this.#emit("onTranscript", this.transcript);
+          // Va como corrección y no como transcripción: si la respuesta ya se
+          // había dado por terminada, una transcripción más abriría OTRA
+          // intervención con el mismo texto recortado.
+          this.#emit("onCorreccion", this.transcript);
         }
         break;
       }

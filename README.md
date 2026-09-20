@@ -666,7 +666,16 @@ un dato que salió de un documento.
 Para que eso sea posible hubo que **registrar las dos voces**. Antes sólo
 llegaba lo que decía Catalina —`user_transcript` no se pedía—, así que el
 historial era un monólogo y una minuta con acuerdos sacada de ahí habría sido
-inventada. Ahora se piden las dos y el panel las distingue.
+inventada. Ahora se piden las dos y quedan en la memoria de la conversación.
+En el panel, en cambio, se ve **sólo lo que dice Catalina**: pintar también la
+transcripción de la persona cortaba la intervención de Catalina en curso y, con
+el eco del micrófono, repetía sus frases como si las hubiera dicho la persona.
+
+Otra repetición venía de ElevenLabs mismo, que manda a veces la respuesta
+completa antes que los trozos con los que la va diciendo: esos trozos son un
+prefijo de lo ya anotado y ahora se reconocen como la misma intervención, en el
+panel y en la memoria. La corrección tras una interrupción reescribe la
+intervención en vez de añadir otra. Todo eso lo cubre `pruebas/qa-memoria.mjs`.
 
 Los resúmenes quedan en el historial del navegador, en su propio almacén. Desde
 «Anteriores» se puede **retomar uno como contexto** de la conversación de ahora,

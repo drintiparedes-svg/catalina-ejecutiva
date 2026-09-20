@@ -231,11 +231,21 @@ const manejadores = {
   },
   // Lo que dice la persona, transcrito por ElevenLabs. Sin esto el resumen
   // saldría de un monólogo y los acuerdos serían suyos, no de los dos.
+  // Lo que dice la persona, transcrito por ElevenLabs. Se guarda en la memoria
+  // de la conversación —la minuta necesita las dos voces— pero NO se pinta en
+  // el panel: el historial en pantalla es lo que dice Catalina. Pintarlo
+  // además cortaba la intervención de Catalina en curso y, con el eco del
+  // micrófono, repetía sus propias frases como si las hubiera dicho la persona.
   onUsuario: texto => {
     hayActividad();
     charla.anotar("usuario", texto);
     programarSincronizacion();
-    anotarDicho(texto);
+  },
+  onCorreccion: texto => {
+    const limpio = sinEtiquetas(texto);
+    charla.corregir("catalina", limpio);
+    corregirTurno(limpio);
+    programarSincronizacion();
   },
   onResponseDone: () => {
     respuestaCerrada = true;
@@ -3871,13 +3881,46 @@ function anotarTurno(texto) {
   ui.caption.textContent = limpio;
   ui.caption.dataset.visible = String(verSubtitulos);
 
-  if (!turnoVivo) turnoVivo = crearTurno();
+  if (!turnoVivo) {
+    // ElevenLabs manda a veces la respuesta completa (y su fin) ANTES que los
+    // trozos con los que la va diciendo. Esos trozos llegan con el turno ya
+    // cerrado, y abrir otro repetía cada frase de Catalina en el historial.
+    // Si lo que llega es un prefijo de lo último que dijo, o lo continúa, es
+    // la misma intervención: se corrige ese nodo y no se crea otro.
+    const ultimo = ultimoTurnoCerrado;
+    if (ultimo && ultimo.nodo.isConnected && Date.now() - ultimo.cerradoEn < TURNO_TARDIO_MS) {
+      const dicho = ultimo.texto.textContent;
+      if (dicho.startsWith(limpio)) return;   // un trozo tardío de lo ya dicho
+      if (limpio.startsWith(dicho)) { ultimo.texto.textContent = limpio; return; }
+    }
+    turnoVivo = crearTurno();
+  }
   turnoVivo.texto.textContent = limpio;
 
   // Sólo se sigue el fondo si ya estábamos abajo: si la persona subió a releer
   // algo, el texto nuevo no le arrebata la posición.
   const alFondo = ui.panelBody.scrollHeight - ui.panelBody.scrollTop - ui.panelBody.clientHeight < 60;
   if (alFondo) ui.panelBody.scrollTop = ui.panelBody.scrollHeight;
+}
+
+// Cuánto tiempo después de cerrar un turno se admite que le lleguen trozos
+// tardíos. Más allá, un texto parecido es otra intervención de verdad.
+const TURNO_TARDIO_MS = 30_000;
+let ultimoTurnoCerrado = null;   // { nodo, texto, cerradoEn } del último de Catalina
+
+// La interrupción: lo que Catalina alcanzó a decir de verdad. Se reescribe
+// la intervención en curso o la última cerrada; sin texto, se retira.
+function corregirTurno(texto) {
+  const objetivo = turnoVivo || ultimoTurnoCerrado;
+  if (!objetivo || !objetivo.nodo.isConnected) return;
+  if (!texto.trim()) {
+    objetivo.nodo.remove();
+    if (objetivo === turnoVivo) turnoVivo = null;
+    if (objetivo === ultimoTurnoCerrado) ultimoTurnoCerrado = null;
+    return;
+  }
+  objetivo.texto.textContent = texto;
+  ui.caption.textContent = texto;
 }
 
 // Quita las etiquetas de tono entre corchetes —[Con calidez]— y cualquier
@@ -3922,17 +3965,6 @@ function crearTurno(deQuien = "Catalina") {
 
 // Lo que dijo la persona, en el panel. Antes sólo se veía a Catalina, así que
 // el historial parecía un monólogo y releerlo no servía para reconstruir nada.
-function anotarDicho(texto) {
-  const limpio = String(texto ?? "").trim();
-  if (!limpio) return;
-  cerrarTurno();
-  const turno = crearTurno(nombreDeQuienHabla());
-  turno.nodo.dataset.quien = "usuario";
-  turno.nodo.dataset.vivo = "false";
-  turno.texto.textContent = limpio;
-  const alFondo = ui.panelBody.scrollHeight - ui.panelBody.scrollTop - ui.panelBody.clientHeight < 60;
-  if (alFondo) ui.panelBody.scrollTop = ui.panelBody.scrollHeight;
-}
 
 // Estas notas —por qué se cerró la sesión, qué activar en el panel del agente—
 // son de uso interno: sirven para diagnosticar, no para el usuario final, así
@@ -3950,7 +3982,10 @@ function cerrarTurno() {
   // Un turno sin texto no deja rastro: pasa cuando la respuesta se interrumpe
   // antes de que llegue el primer delta.
   if (!dicho) turnoVivo.nodo.remove();
-  else turnoVivo.nodo.dataset.vivo = "false";
+  else {
+    turnoVivo.nodo.dataset.vivo = "false";
+    ultimoTurnoCerrado = { ...turnoVivo, cerradoEn: Date.now() };
+  }
   // Lo que dijo en una reunión queda en la memoria de la reunión, marcado como
   // suyo. Sin esto, la minuta no sabría que la asistente intervino y sus
   // aportes se perderían o —peor— se atribuirían a un participante.
@@ -4076,7 +4111,10 @@ ui.accesoForm?.addEventListener("submit", async evento => {
 
 ui.quienSalir?.addEventListener("click", async () => {
   if (connected) sesion?.disconnect();
-  programarSincronizacion(true);
+  // Lo hablado se guarda ANTES de cerrar la sesión; si quedara programado
+  // para después, llegaría sin sesión y el 401 taparía el aviso de salida.
+  clearTimeout(relojSincronizacion);
+  await sincronizarConversacion();
   await fetch("/acceso/salir", { method: "POST" }).catch(() => {});
   pintarQuien(null);
   accesoActual = { ...accesoActual, sesion: null };
@@ -4153,12 +4191,16 @@ function programarSincronizacion(ahora = false) {
 
 async function sincronizarConversacion() {
   if (!accesoActual.sesion || !charla.id || charla.vacia) return;
+  const cuerpo = JSON.stringify({ id: charla.id, inicio: charla.inicio, turnos: charla.turnos });
   try {
     await fetch("/acceso/conversacion", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: charla.id, inicio: charla.inicio, turnos: charla.turnos }),
-      keepalive: true
+      body: cuerpo,
+      // `keepalive` deja que la petición sobreviva al cierre de la pestaña,
+      // pero el navegador la rechaza si pasa de 64 KB: una conversación larga
+      // se manda sin él antes que no mandarse.
+      keepalive: cuerpo.length < 60_000
     });
   } catch {
     // Sin red ahora: el siguiente turno vuelve a intentarlo con todo.
@@ -4299,6 +4341,8 @@ window.catalina = {
   // La reunión, para poder mirarla desde la consola cuando algo no cuadra:
   // `catalina.memoria.turnos.length`, `catalina.escucha.diagnostico()`.
   memoria,
+  // Y la conversación con Catalina, por lo mismo: `catalina.charla.turnos`.
+  charla,
   escucha,
   get session() { return sesion; },
   get disponible() { return disponible; },
