@@ -23,10 +23,18 @@ const TIEMPO = 15_000;
 const config = () => ({
   url: (process.env.AGENTE_TELEFONICO_URL || "").trim().replace(/\/+$/, ""),
   token: (process.env.AGENTE_TELEFONICO_TOKEN || "").trim(),
-  // Durante las pruebas sólo se marca a números autorizados. Un error de
-  // transcripción en un número dictado en voz alta llama a un desconocido.
-  permitidos: (process.env.TELEFONO_PERMITIDOS || "").split(",").map(n => n.trim()).filter(Boolean)
+  // Sólo se marca a números autorizados. Un error de transcripción en un número
+  // dictado en voz alta llama a un desconocido, y las rutas de esta aplicación
+  // no tienen autenticación. «*» permite cualquier número, a sabiendas.
+  permitidos: (process.env.TELEFONO_PERMITIDOS || "").split(",").map(n => n.trim()).filter(Boolean),
+  produccion: process.env.NODE_ENV === "production"
 });
+
+// En producción la lista blanca es obligatoria, salvo que se abra con «*».
+export function listaBlancaFalta() {
+  const c = config();
+  return c.produccion && c.permitidos.length === 0;
+}
 
 export function agenteTelefonicoListo() {
   const c = config();
@@ -43,7 +51,10 @@ export function revisarNumero(numero) {
     return { ok: false, error: "El número debe ir en formato internacional, por ejemplo +56912345678." };
   }
   const { permitidos } = config();
-  if (permitidos.length && !permitidos.includes(limpio)) {
+  if (listaBlancaFalta()) {
+    return { ok: false, error: "En producción hace falta TELEFONO_PERMITIDOS con los números autorizados, o «*» para permitir cualquiera." };
+  }
+  if (permitidos.length && !permitidos.includes("*") && !permitidos.includes(limpio)) {
     return { ok: false, error: "Ese número no está en la lista de números autorizados para llamar." };
   }
   return { ok: true, numero: limpio };
@@ -236,6 +247,7 @@ export async function diagnostico() {
     token: c.token ? (revision.ok ? "aceptado" : revision.code === "AGENTE_TOKEN" ? "rechazado" : "sin comprobar") : "no definido",
     pendientesDeRevision: revision.ok ? (revision.datos?.pendientes?.length ?? 0) : null,
     error: revision.ok ? undefined : revision.error,
-    listaBlanca: c.permitidos
+    listaBlanca: c.permitidos,
+    listaBlancaFalta: listaBlancaFalta()
   };
 }

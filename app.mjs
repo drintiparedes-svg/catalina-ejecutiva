@@ -191,16 +191,19 @@ export async function atender(req, res) {
     }
 
     if (req.method === "GET" && req.url === "/telefonia/diagnostico") {
+      if (!mismoOrigen(req)) return json(res, 403, { ok: false, error: "Sólo desde la propia aplicación.", code: "ORIGEN" });
       return json(res, 200, await diagnosticoTelefonico());
     }
 
     if (req.method === "POST" && req.url === "/llamada") {
+      if (!mismoOrigen(req)) return json(res, 403, { ok: false, error: "Sólo desde la propia aplicación.", code: "ORIGEN" });
       return await pedirLlamada(req, res);
     }
 
     // Estado de una llamada. Lo consulta el navegador en segundo plano, no el
     // modelo: la conversación sigue mientras la llamada ocurre en otro sitio.
     if (req.method === "GET" && req.url.startsWith("/llamada/")) {
+      if (!mismoOrigen(req)) return json(res, 403, { ok: false, error: "Sólo desde la propia aplicación.", code: "ORIGEN" });
       const id = decodeURIComponent(req.url.slice("/llamada/".length));
       const estado = await estadoLlamada(id);
       return json(res, estado.ok ? 200 : estado.code === "NO_ENCONTRADA" ? 404 : 502, estado);
@@ -1563,6 +1566,16 @@ async function buscarSalud(req, res) {
     // distintas y confundirlas deja a alguien sin buscar por otra vía.
     return json(res, 502, { ok: false, error: "No se pudo consultar el mapa en este momento." });
   }
+}
+
+// Las rutas que disparan o consultan una llamada clínica sólo se atienden
+// desde la propia página. Los navegadores mandan Sec-Fetch-Site en cada
+// petición; una página ajena no puede hacerse pasar por ésta. No es
+// autenticación: quien tenga la URL y una consola sigue pudiendo pedirlo, y
+// por eso además la lista blanca de números es obligatoria en producción.
+function mismoOrigen(req) {
+  const sitio = String(req.headers["sec-fetch-site"] || "").toLowerCase();
+  return sitio === "" || sitio === "same-origin" || sitio === "none";
 }
 
 // Llamada telefónica. `confirmado` no es una formalidad: marcar es

@@ -84,6 +84,7 @@ try {
       `Agente telefónico en <code>${esc(d.url)}</code>: <b class="bien">responde</b>. Token: ${esc(d.token)}.`,
       `Eventos pendientes en su cola: ${esc(d.salud?.eventosPendientes ?? "?")} · Llamadas por revisar: ${esc(d.pendientesDeRevision ?? "?")}.`,
       d.listaBlanca?.length ? `Lista blanca activa: sólo se puede llamar a <code>${esc(d.listaBlanca.join(", "))}</code>.`
+        : d.listaBlancaFalta ? `<b class="mal">Sin lista blanca en producción:</b> no se programará ninguna llamada hasta definir <code>TELEFONO_PERMITIDOS</code> (o <code>*</code>).`
         : `<b class="espera">Sin lista blanca</b> (TELEFONO_PERMITIDOS vacío): puede marcar a cualquier número. Pon tu móvil para las pruebas.`);
   }
 } catch (e) {

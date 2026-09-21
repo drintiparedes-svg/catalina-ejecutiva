@@ -455,8 +455,11 @@ tiene instrucción de no sondear por su cuenta.
 
 **Configuración.** `AGENTE_TELEFONICO_URL` y `AGENTE_TELEFONICO_TOKEN` en el
 entorno (el token es el `INTEGRACION_TOKEN` de ese servicio), y
-`TELEFONO_PERMITIDOS` con los números a los que se puede llamar durante las
-pruebas. Después de definirlas, volver a registrar las herramientas
+`TELEFONO_PERMITIDOS` con los números a los que se puede llamar. En producción
+la lista es obligatoria (`*` la abre a cualquier número, a sabiendas): las
+rutas de esta aplicación no llevan autenticación, solo se atienden desde la
+propia página, y sin lista cualquiera con la URL podría hacer que se llame a un
+paciente. Después de definirlas, volver a registrar las herramientas
 (`POST /elevenlabs/registrar-herramientas`) para que el agente de ElevenLabs
 reciba `programar_llamada_preparacion`. La página **`/telefonia.html`** comprueba
 la conexión y permite programar una llamada de prueba.
