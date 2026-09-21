@@ -342,9 +342,9 @@ navegador. La conversación no pasa por el servidor: el navegador abre el
 WebSocket contra ElevenLabs con una dirección que el servidor firmó, así que la
 clave no viaja al navegador y no hace falta que Vercel sostenga la conexión.
 
-Lo que **no** funciona en un despliegue: guardar la configuración desde el panel
-—el disco es de sólo lectura— y las llamadas telefónicas, que necesitan una
-conexión sostenida.
+Lo que **no** funciona en un despliegue: guardar la configuración desde el panel,
+porque el disco es de sólo lectura. Las llamadas telefónicas sí funcionan: las
+hace otro servicio y aquí sólo se programan y se consultan.
 
 ## Continuar en otro equipo
 
@@ -418,6 +418,57 @@ Tres detalles de la búsqueda que cuestan de adivinar:
   siguientes se rechazan sin más, que desde fuera parece «no hay imagen».
 
 Ni Commons ni PubMed necesitan clave.
+
+## Llamadas telefónicas
+
+Catalina no habla por teléfono. Quien llama es el **agente telefónico Catalina
+AI**, el servicio del repositorio
+[agente-telefonico-falp](https://github.com/drintiparedes-svg/agente-telefonico-falp):
+verifica con un paciente su preparación antes de un procedimiento —ayuno,
+medicamentos que suspender, exámenes, acompañante y hora de llegada— con un
+guion cerrado, verificación de identidad por dos datos no clínicos y
+transferencia a una persona ante cualquier síntoma de alarma. No sirve para
+otras gestiones, y eso es deliberado: un modelo que improvisa por teléfono con
+un tercero no es auditable.
+
+Lo que se fue con esta versión: el puente Twilio+OpenAI y la llamada directa a
+ElevenLabs con un prompt generativo. Ambos hacían hablar a un modelo sin guion.
+
+**Cómo se usa.** Se le dicta a Catalina la indicación —número, paciente, últimos
+cuatro dígitos del RUT, fecha, hora de ayuno, fármacos con su instrucción,
+exámenes, acompañante y hora de llegada—; ella la repite entera y, con el sí,
+la programa con `programar_llamada_preparacion`. Quien emite la indicación es
+el profesional configurado en `telefono.emitidaPor`, no el modelo.
+
+**Por qué no se queda pegada.** Programar devuelve en cuanto el agente acepta
+la llamada. Desde ese momento la llamada vive en el otro servicio y Catalina
+sigue con lo que le pidan. El navegador la vigila en segundo plano cada diez
+segundos (`vigilarLlamada` en `public/app.js`) y, cuando hay un desenlace, se
+lo entrega a Catalina como un aviso del sistema en el primer hueco en que no
+esté hablando. Entonces informa: estado, paciente, resumen y próximo paso. Varias
+llamadas pueden estar en curso a la vez, cada una con su vigía; el panel de la
+derecha las lista. Mientras haya una llamada en curso, la sesión no se cierra
+por inactividad, para que el aviso llegue.
+
+`consultar_llamada` existe sólo para cuando la persona pregunta cómo va; Catalina
+tiene instrucción de no sondear por su cuenta.
+
+**Configuración.** `AGENTE_TELEFONICO_URL` y `AGENTE_TELEFONICO_TOKEN` en el
+entorno (el token es el `INTEGRACION_TOKEN` de ese servicio), y
+`TELEFONO_PERMITIDOS` con los números a los que se puede llamar. En producción
+la lista es obligatoria (`*` la abre a cualquier número, a sabiendas): las
+rutas de esta aplicación no llevan autenticación, solo se atienden desde la
+propia página, y sin lista cualquiera con la URL podría hacer que se llame a un
+paciente. Después de definirlas, volver a registrar las herramientas
+(`POST /elevenlabs/registrar-herramientas`) para que el agente de ElevenLabs
+reciba `programar_llamada_preparacion`. La página **`/telefonia.html`** comprueba
+la conexión y permite programar una llamada de prueba.
+
+**Datos.** La indicación es contenido clínico: viaja del navegador a este
+servidor y de aquí al agente telefónico, siempre por HTTPS y con token, y no se
+guarda en este servidor. El resumen que vuelve no incluye lo que dijo el
+paciente; eso queda en la auditoría del otro servicio, con su propio control de
+acceso.
 
 ## En el teléfono
 

@@ -16,7 +16,8 @@
   .detalle { margin:.35rem 0 0; color:#A8B0BE; font-size:.93rem; }
   code { font-family:ui-monospace,"SF Mono",Menlo,monospace; font-size:.84em; background:#22262F; padding:.12em .4em; border-radius:4px; color:#D6DBE4; white-space:pre-wrap; word-break:break-word; }
   label { display:block; font-size:.85rem; color:#8B93A3; margin:.7rem 0 .2rem; }
-  input { width:100%; box-sizing:border-box; padding:.55rem .7rem; border-radius:8px; border:1px solid #2B303A; background:#0F1116; color:#E4E7ED; font:inherit; }
+  input, textarea { width:100%; box-sizing:border-box; padding:.55rem .7rem; border-radius:8px; border:1px solid #2B303A; background:#0F1116; color:#E4E7ED; font:inherit; }
+  .fila { display:grid; grid-template-columns:1fr 1fr; gap:.6rem; }
   button { font:inherit; font-weight:600; margin-top:1rem; background:#2C6E72; color:#fff; border:0; border-radius:8px; padding:.6rem 1.1rem; cursor:pointer; }
   button:disabled { opacity:.5; cursor:default; }
   .aviso { font-size:.82rem; color:#F5BD4F; margin-top:.6rem; }
@@ -26,19 +27,27 @@
 <body>
 <main>
   <h1>Telefonía de Catalina</h1>
-  <p class="sub">Comprueba que ElevenLabs reconoce tu número —sin gastar una llamada— y deja hacer una llamada de prueba a tu propio teléfono.</p>
-  <p class="sub" style="font-size:.85rem;opacity:.7">Página del <b>2026-08-24.24</b>.</p>
+  <p class="sub">Las llamadas las hace el agente telefónico <b>Catalina AI</b>, un servicio aparte con guion cerrado de preparación pre‑procedimiento. Aquí se comprueba la conexión con ese servicio y se puede programar una llamada de prueba a tu propio teléfono.</p>
 
-  <section class="paso" id="p0"><h2><span class="marca espera">•</span> 1. Configuración y número</h2><p class="detalle">Comprobando…</p></section>
+  <section class="paso" id="p0"><h2><span class="marca espera">•</span> 1. Conexión con el agente telefónico</h2><p class="detalle">Comprobando…</p></section>
 
   <section class="paso">
     <h2>2. Llamada de prueba (llamada real)</h2>
-    <p class="detalle">Marca a un número de tu lista blanca. Suena de verdad y consume saldo de Twilio.</p>
-    <label for="numero">Número (formato internacional)</label>
-    <input id="numero" placeholder="+56912345678" autocomplete="off">
-    <label for="objetivo">Objetivo de la llamada</label>
-    <input id="objetivo" placeholder="Confirmar que la llamada funciona" value="Llamada de prueba de Catalina">
-    <button id="llamar">Llamar ahora</button>
+    <p class="detalle">Programa una llamada a un número de tu lista blanca con una indicación de ejemplo. Suena de verdad. La llamada sale en cuanto haya ventana horaria (9 a 20 h de Chile, salvo domingo) y un número libre; si no, queda en cola.</p>
+    <div class="fila">
+      <div><label for="numero">Número (formato internacional)</label><input id="numero" placeholder="+56912345678" autocomplete="off"></div>
+      <div><label for="nombre">Nombre del paciente</label><input id="nombre" value="María"></div>
+      <div><label for="rut">Últimos cuatro dígitos del RUT</label><input id="rut" value="4821" maxlength="4"></div>
+      <div><label for="fecha">Fecha del procedimiento</label><input id="fecha" type="date"></div>
+      <div><label for="ayuno">Hora de inicio del ayuno</label><input id="ayuno" value="22:00"></div>
+      <div><label for="llegada">Hora de llegada</label><input id="llegada" value="07:30"></div>
+    </div>
+    <label for="farmacos">Fármacos a suspender, uno por línea: <code>nombre: instrucción</code></label>
+    <textarea id="farmacos" rows="2">acenocumarol: Debe suspender el acenocumarol desde el lunes en la mañana, es decir, tres días antes.</textarea>
+    <label for="examenes">Exámenes que debe traer, separados por comas</label>
+    <input id="examenes" value="hemograma, perfil de coagulación">
+    <label><input type="checkbox" id="acompanante" checked style="width:auto"> Requiere acompañante</label>
+    <button id="llamar">Programar la llamada</button>
     <p class="detalle" id="resultado"></p>
     <p class="aviso" id="aviso"></p>
   </section>
@@ -54,34 +63,29 @@ function marcar(estado, ...lineas) {
   m.className = "marca " + (estado === "bien" ? "bien" : estado === "mal" ? "mal" : "espera");
   m.textContent = estado === "bien" ? "✓" : estado === "mal" ? "✕" : "•";
   caja.querySelectorAll(".detalle").forEach(n => n.remove());
-  for (const l of lineas) { const p = document.createElement("p"); p.className = "detalle"; p.innerHTML = l; caja.append(p); }
+  for (const l of lineas) { if (!l) continue; const p = document.createElement("p"); p.className = "detalle"; p.innerHTML = l; caja.append(p); }
 }
 
-// 1. Diagnóstico de configuración.
+// Fecha por defecto: pasado mañana, para que el segundo factor sea creíble.
+const f = new Date(Date.now() + 2 * 86400000);
+document.querySelector("#fecha").value = f.toISOString().slice(0, 10);
+
+// 1. Diagnóstico de conexión.
 try {
   const d = await (await fetch("/telefonia/diagnostico")).json();
   if (!d.configurado) {
     marcar("mal", `Faltan variables en el servidor: <code>${esc((d.faltan || []).join(", "))}</code>`,
-      "En Vercel: Settings → Environment Variables, añádelas y haz Redeploy.");
+      "Define <code>AGENTE_TELEFONICO_URL</code> (y <code>AGENTE_TELEFONICO_TOKEN</code>) en el .env o en Vercel → Environment Variables, y reinicia.");
   } else if (!d.ok) {
-    marcar("mal", "La configuración está, pero ElevenLabs rechazó la consulta:", `<code>${esc(d.error)}</code>`);
-  } else if (!d.numeroReconocido) {
-    const reales = (d.numeros || []).filter(n => n.id).map(n =>
-      `<code>${esc(n.id)}</code>${n.numero ? " (" + esc(n.numero) + ")" : ""}`).join("<br>");
-    marcar("mal",
-      `ElevenLabs ve ${d.cuantosNumeros} número(s), pero el id que pusiste (<code>${esc(d.idConfigurado)}</code>) no coincide con ninguno.`,
-      reales ? `El id que <b>sí</b> debes poner en <code>ELEVENLABS_PHONE_NUMBER_ID</code> es:<br>${reales}` : "No pude leer el id real del número; mándame la respuesta del diagnóstico.",
-      "Cámbialo en Vercel → Environment Variables, haz Redeploy, y vuelve a probar aquí.");
+    marcar("mal", `Servicio: <code>${esc(d.url)}</code>`, `No responde bien: <code>${esc(d.error || JSON.stringify(d.salud))}</code>`,
+      d.token === "rechazado" ? "El token no coincide con <code>INTEGRACION_TOKEN</code> del agente telefónico." : "");
   } else {
-    const lineas = [
-      `Número reconocido por ElevenLabs: <b class="bien">${esc(d.numero || "sí")}</b>.`,
-      d.agenteCoincide === true ? `Asignado a tu agente: <b class="bien">correcto</b>.`
-        : d.agenteCoincide === false ? `<b class="mal">Ojo:</b> el número está asignado a OTRO agente (<code>${esc(d.agenteAsignado)}</code>). Asígnalo a tu agente en el panel.`
-        : `<b class="espera">El número no tiene agente asignado.</b> Asígnale tu agente en el panel de ElevenLabs.`,
-      d.listaBlanca.length ? `Lista blanca activa: sólo se puede llamar a <code>${esc(d.listaBlanca.join(", "))}</code>.`
-        : `<b class="espera">Sin lista blanca</b> (TELEFONO_PERMITIDOS vacío): puede marcar a cualquier número. Pon tu móvil para las pruebas.`
-    ];
-    marcar(d.agenteCoincide === true ? "bien" : "espera", ...lineas);
+    marcar("bien",
+      `Agente telefónico en <code>${esc(d.url)}</code>: <b class="bien">responde</b>. Token: ${esc(d.token)}.`,
+      `Eventos pendientes en su cola: ${esc(d.salud?.eventosPendientes ?? "?")} · Llamadas por revisar: ${esc(d.pendientesDeRevision ?? "?")}.`,
+      d.listaBlanca?.length ? `Lista blanca activa: sólo se puede llamar a <code>${esc(d.listaBlanca.join(", "))}</code>.`
+        : d.listaBlancaFalta ? `<b class="mal">Sin lista blanca en producción:</b> no se programará ninguna llamada hasta definir <code>TELEFONO_PERMITIDOS</code> (o <code>*</code>).`
+        : `<b class="espera">Sin lista blanca</b> (TELEFONO_PERMITIDOS vacío): puede marcar a cualquier número. Pon tu móvil para las pruebas.`);
   }
 } catch (e) {
   marcar("mal", "No se pudo leer el diagnóstico.", `<code>${esc(e.message)}</code>`);
@@ -91,23 +95,28 @@ try {
 const btn = document.querySelector("#llamar");
 const salida = document.querySelector("#resultado");
 const aviso = document.querySelector("#aviso");
+const v = id => document.querySelector("#" + id).value.trim();
 btn.addEventListener("click", async () => {
-  const numero = document.querySelector("#numero").value.trim();
-  const objetivo = document.querySelector("#objetivo").value.trim();
-  if (!numero) { aviso.textContent = "Escribe un número primero."; return; }
-  btn.disabled = true; salida.textContent = "Lanzando la llamada…"; aviso.textContent = "";
+  if (!v("numero")) { aviso.textContent = "Escribe un número primero."; return; }
+  btn.disabled = true; salida.textContent = "Programando la llamada…"; aviso.textContent = "";
+  const cuerpo = {
+    numero: v("numero"), nombre_paciente: v("nombre"), rut_ultimos_cuatro: v("rut"),
+    fecha_procedimiento: v("fecha"), hora_inicio_ayuno: v("ayuno"), hora_llegada: v("llegada"),
+    farmacos: v("farmacos").split("\n").map(s => s.trim()).filter(Boolean),
+    examenes: v("examenes").split(",").map(s => s.trim()).filter(Boolean),
+    requiere_acompanante: document.querySelector("#acompanante").checked,
+    confirmado: true
+  };
   try {
-    const r = await fetch("/llamada", { method:"POST", headers:{ "Content-Type":"application/json" },
-      body: JSON.stringify({ numero, objetivo, confirmado: true }) });
+    const r = await fetch("/llamada", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify(cuerpo) });
     const d = await r.json();
-    if (!d.ok) { salida.innerHTML = `<b class="mal">No se lanzó:</b> <code>${esc(d.error)}</code>`; btn.disabled = false; return; }
-    salida.innerHTML = `<b class="bien">Llamada lanzada.</b> Debería sonar en ${esc(numero)}. Siguiendo el estado…`;
-    // Seguir el estado unas cuantas veces.
-    for (let i = 0; i < 20; i++) {
-      await new Promise(r => setTimeout(r, 3000));
+    if (!d.ok) { salida.innerHTML = `<b class="mal">No se programó:</b> <code>${esc(d.error)}</code>`; btn.disabled = false; return; }
+    salida.innerHTML = `<b class="bien">Programada.</b> ${esc(d.detalle)} Siguiendo el estado…`;
+    for (let i = 0; i < 90; i++) {
+      await new Promise(r => setTimeout(r, 5000));
       const e = await (await fetch(`/llamada/${encodeURIComponent(d.id)}`)).json().catch(() => ({}));
-      if (e.estado) salida.innerHTML = `Estado: <b>${esc(e.estado)}</b>${e.resumen ? " — " + esc(e.resumen) : ""}`;
-      if (e.estado === "terminada" || e.estado === "fallo") break;
+      if (e.estado) salida.innerHTML = `Estado: <b>${esc(e.estado)}</b> — ${esc(e.detalle || "")}${e.resultado?.resumen ? "<br>Resumen: " + esc(e.resultado.resumen) : ""}`;
+      if (e.terminal) break;
     }
   } catch (e) {
     salida.innerHTML = `<b class="mal">Falló:</b> <code>${esc(e.message)}</code>`;

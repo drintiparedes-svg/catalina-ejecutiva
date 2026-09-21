@@ -75,6 +75,10 @@ const manejadores = {
     hayActividad();
     calentarUbicacion();   // deja lista la zona antes de que nadie pregunte
     mostrarAviso("");   // si el intento anterior falló, su aviso ya no aplica
+    // Si una llamada terminó mientras la sesión estaba cerrada, el aviso
+    // esperaba aquí: se entrega en cuanto haya un hueco. Va después de limpiar
+    // la pantalla para que su propio aviso no se borre.
+    entregarAvisos();
     ui.signal.classList.add("online");
     ui.connect.textContent = "Finalizar";
     ui.connect.disabled = false;
@@ -110,6 +114,7 @@ const manejadores = {
       señalar("Respondiendo…", "respondiendo");
     }
     if (phase !== "speaking") faseDeSesion = phase;
+    faseDesde = Date.now();
     director.setState(phase);
     // La expresión sigue al turno: se concentra mientras piensa y se recompone
     // al escuchar. Es lo que hace que la cara acompañe a la conversación en vez
@@ -452,15 +457,19 @@ let referenciasAmpliable = false;
 let referenciasExpandido = false;
 const REFERENCIAS_COLAPSADAS = 8;
 
+let herramientasEnCurso = 0;   // mientras haya una, no es momento de avisos
+
 async function atenderHerramienta(nombre, argumentos) {
   // Gesto de espera: mientras la herramienta corre —una búsqueda tarda unos
   // segundos— la cara pasa a pensar en vez de quedarse congelada. La voz de la
   // espera la pone el agente (pre_tool_speech en el registro); esto es el gesto.
   director.setState("thinking");
   director.setExpression("concentracion", .6);
+  herramientasEnCurso++;
   try {
     return await despacharHerramienta(nombre, argumentos);
   } finally {
+    herramientasEnCurso--;
     // Si tras la herramienta no llegó a hablar, se vuelve a escuchar en vez de
     // quedarse pensando para siempre. Si sí habla, su audio ya puso "speaking".
     setTimeout(() => {
@@ -477,7 +486,7 @@ async function despacharHerramienta(nombre, argumentos) {
   if (nombre === "buscar_referencias") return await pedirReferencias(argumentos);
   if (nombre === "enviar_resumen") return await enviarResumen(argumentos);
   if (nombre === "buscar_salud_cerca") return await buscarSaludCerca(argumentos);
-  if (nombre === "llamar_por_telefono") return await llamarPorTelefono(argumentos);
+  if (nombre === "programar_llamada_preparacion") return await programarLlamadaPreparacion(argumentos);
   if (nombre === "consultar_llamada") return await consultarLlamada(argumentos);
   if (nombre === "como_llegar") return await comoLlegar(argumentos);
   if (nombre === "buscar_en_la_web") return await buscarWeb(argumentos);
@@ -737,92 +746,234 @@ function mostrarLugares(datos) {
   referenciasEnPantalla = [];   // esto no son referencias: no debe viajar en el correo
 }
 
-// Llamadas telefónicas. El servidor hace el trabajo; aquí sólo se pide y se
-// consulta, y se refleja en pantalla en qué va.
-async function llamarPorTelefono(argumentos) {
-  setStatus("Llamando…");
+// Llamadas telefónicas.
+//
+// Las hace el agente telefónico «Catalina AI», un servicio aparte con guion
+// cerrado. Aquí se programa, y desde ese momento la llamada vive en otro
+// sitio: la conversación sigue con normalidad y este navegador la vigila en
+// segundo plano. Cuando hay un desenlace se lo cuenta a Catalina como un
+// aviso del sistema, en cuanto ella no esté hablando. Catalina no sondea, y
+// por eso no se queda pegada mientras la llamada dura minutos.
+//
+// Varias llamadas pueden estar en curso a la vez; cada una lleva su vigía.
+const llamadas = new Map();
+const VIGILIA_CADA_MS = 10_000;          // consulta el estado cada diez segundos
+const VIGILIA_PRIMERA_MS = 6_000;        // la primera algo antes: suele ya estar sonando
+const VIGILIA_MAX_MS = 45 * 60 * 1000;   // pasado esto se deja de vigilar y se dice
+
+async function programarLlamadaPreparacion(argumentos) {
+  setStatus("Programando la llamada…");
   try {
     const respuesta = await fetch("/llamada", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        numero: argumentos.numero,
-        objetivo: argumentos.objetivo,
-        a_quien: argumentos.a_quien,
-        restricciones: argumentos.restricciones,
-        confirmado: argumentos.confirmado === true
-      })
+      body: JSON.stringify({ ...argumentos, confirmado: argumentos.confirmado === true })
     });
     const datos = await respuesta.json().catch(() => ({}));
-    if (!datos.ok) {
-      setStatus("Te escucho");
-      return datos;
-    }
-    mostrarLlamada({ estado: "marcando", numero: argumentos.numero, objetivo: argumentos.objetivo });
-    return datos;
+    setStatus(connected ? "Te escucho" : "Lista para comenzar");
+    // Una respuesta que no es JSON (un corte del servidor, una página de error)
+    // tiene que llegar al modelo como fallo explícito, no como objeto vacío.
+    if (!datos.ok) return { ok: false, error: datos.error || `El servidor respondió ${respuesta.status} y no se sabe si la llamada quedó programada.`, code: datos.code || "SERVIDOR" };
+
+    llamadas.set(datos.id, {
+      id: datos.id, numero: datos.numero, paciente: datos.paciente,
+      estado: datos.estado, detalle: datos.detalle, resultado: null, desde: Date.now()
+    });
+    pintarLlamadas(true);
+    vigilarLlamada(datos.id);
+    // Al modelo se le devuelve lo justo para que lo diga en una frase y siga.
+    return { ok: true, id: datos.id, paciente: datos.paciente, estado: datos.estado, queHacer: datos.queHacer };
   } catch (error) {
     console.error(error);
-    setStatus("Te escucho");
-    return { ok: false, error: "No se pudo iniciar la llamada" };
+    setStatus(connected ? "Te escucho" : "Lista para comenzar");
+    return { ok: false, error: "No se pudo programar la llamada" };
   }
 }
 
+// Sólo cuando la persona pregunta. No es el mecanismo de seguimiento: ése es
+// vigilarLlamada, que corre solo.
 async function consultarLlamada(argumentos) {
   const id = String(argumentos.id || "").trim();
   if (!id) return { ok: false, error: "Falta el identificador de la llamada" };
+  const datos = await leerLlamada(id);
+  if (!datos.ok) return datos;
+  return {
+    ok: true,
+    estado: datos.estado,
+    detalle: datos.detalle,
+    resumen: datos.resultado?.resumen,
+    requiereRevisionHumana: datos.resultado?.requiereRevisionHumana === true,
+    enCurso: !datos.terminal
+  };
+}
+
+async function leerLlamada(id) {
   try {
     const respuesta = await fetch(`/llamada/${encodeURIComponent(id)}`);
-    const datos = await respuesta.json().catch(() => ({}));
-    if (!datos.ok) return datos;
-    mostrarLlamada(datos);
-    // La transcripción completa no se le devuelve al modelo: son minutos de
-    // conversación y lo que necesita para contarlo es el desenlace.
-    return {
-      ok: true,
-      estado: datos.estado,
-      resultado: datos.resultado,
-      enCurso: ["marcando", "sonando", "contestada", "hablando"].includes(datos.estado)
-    };
+    const datos = await respuesta.json().catch(() => ({ ok: false, error: `El servidor respondió ${respuesta.status}`, code: "SERVIDOR" }));
+    if (datos.ok) {
+      const previa = llamadas.get(id) || { id };
+      // El panel sólo se vuelve a abrir cuando algo cambió: si la persona lo
+      // cerró, un sondeo sin novedades no tiene por qué reabrirlo.
+      const cambio = previa.estado !== datos.estado || Boolean(datos.resultado) !== Boolean(previa.resultado);
+      llamadas.set(id, { ...previa, estado: datos.estado, detalle: datos.detalle, resultado: datos.resultado, numero: datos.numero || previa.numero });
+      // Sin novedades no se toca el panel: puede estar mostrando referencias
+      // o lugares que la persona pidió mientras la llamada dura.
+      if (cambio) pintarLlamadas(true);
+    }
+    return datos;
   } catch (error) {
     console.error(error);
     return { ok: false, error: "No se pudo consultar la llamada" };
   }
 }
 
+// El vigía. Consulta en segundo plano hasta que la llamada termina, y sólo
+// entonces habla con Catalina. Mientras haya una llamada en curso, la sesión
+// cuenta como activa: cerrarla por inactividad dejaría el aviso sin entregar.
+function vigilarLlamada(id) {
+  const inicio = Date.now();
+  const paso = async () => {
+    const registro = llamadas.get(id);
+    if (!registro) return;
+    if (Date.now() - inicio > VIGILIA_MAX_MS) {
+      if (registro.estado === "programada") {
+        // Sigue en cola (fuera de ventana horaria, o sin número libre): no
+        // terminó ni falló. Se deja de vigilar y se dice tal cual.
+        llamadas.set(id, { ...registro, detalle: "Sigue en cola. Se dejó de vigilar; consúltela si hace falta." });
+        pintarLlamadas(true);
+        avisarAlAgente(avisoDeLlamadaEnCola(llamadas.get(id)));
+        return;
+      }
+      llamadas.set(id, { ...registro, estado: "sin_resultado", detalle: "Se dejó de vigilar tras 45 minutos sin desenlace." });
+      pintarLlamadas(true);
+      avisarAlAgente(avisoDeLlamada(llamadas.get(id)));
+      return;
+    }
+    const datos = await leerLlamada(id);
+    if (datos.ok && datos.terminal) {
+      avisarAlAgente(avisoDeLlamada(llamadas.get(id)));
+      return;
+    }
+    if (!datos.ok && datos.code === "NO_ENCONTRADA") {
+      // El agente telefónico ya no conoce la llamada (por ejemplo, se reinició
+      // con una base efímera). Seguir preguntando no la va a traer de vuelta.
+      llamadas.set(id, { ...registro, estado: "sin_resultado", detalle: "El agente telefónico ya no tiene registro de esta llamada. Hay que verificar con el paciente." });
+      pintarLlamadas(true);
+      avisarAlAgente(avisoDeLlamada(llamadas.get(id)));
+      return;
+    }
+    // Una llamada en curso mantiene viva la sesión; una que sigue en cola, no.
+    if (connected && llamadas.get(id)?.estado === "en_curso") hayActividad();
+    setTimeout(paso, VIGILIA_CADA_MS);
+  };
+  setTimeout(paso, VIGILIA_PRIMERA_MS);
+}
+
+function avisoDeLlamadaEnCola(l) {
+  const quien = [l.paciente, l.numero].filter(Boolean).join(", ");
+  return "[Aviso del sistema, no lo dijo la persona] La llamada de preparación" + (quien ? ` a ${quien}` : "")
+    + " sigue en cola después de 45 minutos, seguramente fuera del horario de llamadas (9 a 20 h, lunes a sábado). "
+    + "Saldrá sola cuando haya ventana; dejé de vigilarla. Dilo en una frase y, si la persona pregunta más tarde, usa consultar_llamada.";
+}
+
+// Texto que recibe Catalina cuando la llamada termina. Va marcado como aviso
+// del sistema para que no lo tome por algo que dijo la persona, y lleva sólo
+// el resumen: lo que se dijo en la llamada no viaja hasta aquí.
+function avisoDeLlamada(l) {
+  const quien = [l.paciente, l.numero].filter(Boolean).join(", ");
+  const lineas = [
+    "[Aviso del sistema, no lo dijo la persona] Terminó la llamada de preparación" + (quien ? ` a ${quien}` : "") + ".",
+    `Estado: ${ESTADOS_LLAMADA[l.estado] || l.estado}.`,
+    l.resultado?.resumen ? `Resumen: ${l.resultado.resumen}` : (l.detalle ? `Detalle: ${l.detalle}` : ""),
+    l.resultado?.requiereRevisionHumana ? "Requiere revisión humana." : "",
+    "Informa esto ahora, breve, en el formato acordado, y sigue con lo que estabas."
+  ].filter(Boolean);
+  return lineas.join(" ");
+}
+
+// Espera a que Catalina no esté hablando para entregarle el aviso: si se le
+// mete un mensaje en mitad de una frase, la corta. Si la sesión está cerrada,
+// el aviso queda en pantalla y se le da al conectar de nuevo.
+const avisosPendientes = [];
+let entregandoAvisos = false;
+
+function avisarAlAgente(texto) {
+  avisosPendientes.push(texto);
+  mostrarAviso("Terminó una llamada. Mira el panel de llamadas.");
+  entregarAvisos();
+}
+
+async function entregarAvisos() {
+  if (entregandoAvisos) return;
+  entregandoAvisos = true;
+  try {
+    while (avisosPendientes.length) {
+      // Hasta noventa segundos esperando un hueco; más no, porque el aviso
+      // envejece. Si no lo hay, queda en pantalla y se reintenta al conectar.
+      const hueco = await esperarHueco(90_000);
+      if (!hueco) {
+        mostrarAviso("Terminó una llamada y no encontré un momento para contarlo. Mira el panel de llamadas.");
+        return;
+      }
+      const texto = avisosPendientes.shift();
+      if (!sesion?.enviarTexto(texto)) { avisosPendientes.unshift(texto); return; }
+      hayActividad();
+      mostrarAviso("");
+    }
+  } finally {
+    entregandoAvisos = false;
+  }
+}
+
+// Hueco: conectada, sin herramienta corriendo, sin hablar. Con OpenAI la fase
+// se queda en «thinking» después de cada respuesta hasta que la persona vuelve
+// a hablar, así que «pensando» sólo cuenta como ocupada durante unos segundos;
+// pasado ese margen, en silencio, es un hueco.
+const PENSANDO_COMO_OCUPADA_MS = 4000;
+function esperarHueco(maxMs) {
+  return new Promise(resolver => {
+    const desde = Date.now();
+    const mirar = () => {
+      const pensandoReciente = director.state === "thinking" && Date.now() - faseDesde < PENSANDO_COMO_OCUPADA_MS;
+      const libre = connected && sesion && herramientasEnCurso === 0 && director.state !== "speaking" && !pensandoReciente;
+      if (libre) return resolver(true);
+      if (Date.now() - desde > maxMs) return resolver(false);
+      setTimeout(mirar, 500);
+    };
+    mirar();
+  });
+}
+
 const ESTADOS_LLAMADA = {
-  marcando: "Marcando…", sonando: "Sonando…", contestada: "Contestaron",
-  hablando: "Catalina está hablando", terminada: "Llamada terminada",
-  ocupado: "Comunica", "sin respuesta": "No contestaron",
-  fallida: "La llamada falló", cancelada: "Llamada cancelada"
+  programada: "En cola", en_curso: "Catalina AI está llamando",
+  terminada: "Terminada", fallida: "No se pudo llamar",
+  sin_resultado: "Sin resultado: hay que verificar"
 };
 
-function mostrarLlamada(datos) {
-  ui.referenciasTitulo.textContent = "Llamada";
+// El panel lateral con las llamadas del día: una línea por llamada, con su
+// estado, y el resumen cuando lo hay. No toca el estado principal de la
+// interfaz, que es el de la conversación: una llamada en curso no es un
+// motivo para que la pantalla deje de decir «Te escucho».
+function pintarLlamadas(mostrar = false) {
+  ui.referenciasTitulo.textContent = llamadas.size === 1 ? "Llamada" : "Llamadas";
   ui.referenciasLista.replaceChildren();
+  const orden = [...llamadas.values()].sort((a, b) => (b.desde || 0) - (a.desde || 0));
+  for (const l of orden) {
+    const cabecera = document.createElement("li");
+    cabecera.className = "referencia-nota";
+    cabecera.textContent = [ESTADOS_LLAMADA[l.estado] || l.estado, l.paciente, l.numero].filter(Boolean).join(" · ");
+    ui.referenciasLista.append(cabecera);
 
-  const cabecera = document.createElement("li");
-  cabecera.className = "referencia-nota";
-  cabecera.textContent = [ESTADOS_LLAMADA[datos.estado] || datos.estado, datos.numero]
-    .filter(Boolean).join(" · ");
-  ui.referenciasLista.append(cabecera);
-
-  if (datos.objetivo) {
-    const objetivo = document.createElement("li");
-    objetivo.className = "referencia-nota";
-    objetivo.textContent = datos.objetivo;
-    ui.referenciasLista.append(objetivo);
+    const detalle = document.createElement("li");
+    detalle.className = "referencia-nota";
+    detalle.textContent = l.resultado?.resumen
+      ? (l.resultado.requiereRevisionHumana ? "⚠ " : "✓ ") + l.resultado.resumen
+      : (l.detalle || "");
+    if (detalle.textContent) ui.referenciasLista.append(detalle);
   }
-
-  if (datos.resultado) {
-    const resultado = document.createElement("li");
-    resultado.className = "referencia-nota";
-    resultado.textContent = (datos.resultado.logrado ? "✓ " : "· ") + datos.resultado.detalle;
-    ui.referenciasLista.append(resultado);
-  }
-
-  ui.referencias.dataset.estado = "visible";
+  if (mostrar) ui.referencias.dataset.estado = "visible";
   referenciasEnPantalla = [];
-  setStatus(ESTADOS_LLAMADA[datos.estado] || "Te escucho");
 }
 
 async function usarConector(nombre, argumentos) {
@@ -1494,6 +1645,7 @@ if (location.protocol === "file:") {
 // sonando unos segundos después, porque va por delante. Quien decide que
 // Catalina dejó de hablar es el silencio real de la pista, no el evento.
 let faseDeSesion = "idle";
+let faseDesde = 0;
 let respuestaCerrada = false;
 let silencioDesde = 0;
 
