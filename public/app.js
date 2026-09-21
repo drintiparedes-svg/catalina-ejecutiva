@@ -771,7 +771,7 @@ async function programarLlamadaPreparacion(argumentos) {
       id: datos.id, numero: datos.numero, paciente: datos.paciente,
       estado: datos.estado, detalle: datos.detalle, resultado: null, desde: Date.now()
     });
-    pintarLlamadas();
+    pintarLlamadas(true);
     vigilarLlamada(datos.id);
     // Al modelo se le devuelve lo justo para que lo diga en una frase y siga.
     return { ok: true, id: datos.id, paciente: datos.paciente, estado: datos.estado, queHacer: datos.queHacer };
@@ -805,8 +805,11 @@ async function leerLlamada(id) {
     const datos = await respuesta.json().catch(() => ({}));
     if (datos.ok) {
       const previa = llamadas.get(id) || { id };
+      // El panel sólo se vuelve a abrir cuando algo cambió: si la persona lo
+      // cerró, un sondeo sin novedades no tiene por qué reabrirlo.
+      const cambio = previa.estado !== datos.estado || Boolean(datos.resultado) !== Boolean(previa.resultado);
       llamadas.set(id, { ...previa, estado: datos.estado, detalle: datos.detalle, resultado: datos.resultado, numero: datos.numero || previa.numero });
-      pintarLlamadas();
+      pintarLlamadas(cambio);
     }
     return datos;
   } catch (error) {
@@ -825,12 +828,20 @@ function vigilarLlamada(id) {
     if (!registro) return;
     if (Date.now() - inicio > VIGILIA_MAX_MS) {
       llamadas.set(id, { ...registro, estado: "sin_resultado", detalle: "Se dejó de vigilar tras 45 minutos sin desenlace." });
-      pintarLlamadas();
+      pintarLlamadas(true);
       avisarAlAgente(avisoDeLlamada(llamadas.get(id)));
       return;
     }
     const datos = await leerLlamada(id);
     if (datos.ok && datos.terminal) {
+      avisarAlAgente(avisoDeLlamada(llamadas.get(id)));
+      return;
+    }
+    if (!datos.ok && datos.code === "NO_ENCONTRADA") {
+      // El agente telefónico ya no conoce la llamada (por ejemplo, se reinició
+      // con una base efímera). Seguir preguntando no la va a traer de vuelta.
+      llamadas.set(id, { ...registro, estado: "sin_resultado", detalle: "El agente telefónico ya no tiene registro de esta llamada. Hay que verificar con el paciente." });
+      pintarLlamadas(true);
       avisarAlAgente(avisoDeLlamada(llamadas.get(id)));
       return;
     }
@@ -909,7 +920,7 @@ const ESTADOS_LLAMADA = {
 // estado, y el resumen cuando lo hay. No toca el estado principal de la
 // interfaz, que es el de la conversación: una llamada en curso no es un
 // motivo para que la pantalla deje de decir «Te escucho».
-function pintarLlamadas() {
+function pintarLlamadas(mostrar = false) {
   ui.referenciasTitulo.textContent = llamadas.size === 1 ? "Llamada" : "Llamadas";
   ui.referenciasLista.replaceChildren();
   const orden = [...llamadas.values()].sort((a, b) => (b.desde || 0) - (a.desde || 0));
@@ -926,7 +937,7 @@ function pintarLlamadas() {
       : (l.detalle || "");
     if (detalle.textContent) ui.referenciasLista.append(detalle);
   }
-  ui.referencias.dataset.estado = "visible";
+  if (mostrar) ui.referencias.dataset.estado = "visible";
   referenciasEnPantalla = [];
 }
 

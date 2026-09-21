@@ -106,9 +106,10 @@ export function armarIndicacion(p, emitidaPor) {
       if (n && i) farmacos.push({ nombre: n, instruccion: i });
       else faltan.push(`la instrucción del fármaco «${n || "?"}»`);
     } else if (typeof f === "string" && f.trim()) {
-      const [n, ...resto] = f.split(/[:—–-]/);
-      const i = resto.join(":").trim();
-      if (n?.trim() && i) farmacos.push({ nombre: n.trim(), instruccion: i });
+      // Se parte por el PRIMER separador (dos puntos, raya, o guion entre
+      // espacios). Un guion pegado («3-4 días») es parte de la instrucción.
+      const m = f.match(/^\s*([^:—–]+?)\s*(?::|—|–|\s-\s)\s*(.+)$/s);
+      if (m) farmacos.push({ nombre: m[1].trim(), instruccion: m[2].trim() });
       else faltan.push(`la instrucción del fármaco «${f.trim()}»`);
     }
   }
