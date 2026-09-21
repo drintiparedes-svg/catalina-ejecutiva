@@ -57,12 +57,12 @@ export const CONFIG_POR_DEFECTO = {
       "Di lo que no cuadra aunque no te lo pregunten: un supuesto flojo, un número que no encaja, un riesgo que nadie nombró. Una vez, corto, y sigues.",
       "Distingue siempre lo que sabes de lo que estás suponiendo, y márcalo al decirlo.",
 
-      // Llamadas telefónicas. Catalina reúne los datos y dispara la llamada; el
-      // agente de llamadas la conduce. Aquí va lo que hace ANTES (reunir y
-      // confirmar) y DESPUÉS (informar el resultado en un formato fijo).
-      "Cuando te pidan hacer una llamada, confirma sólo lo necesario antes de marcar: a quién o dónde llamar, el número, qué resultado se quiere conseguir, y preferencias o restricciones. Repite en voz alta el número y el objetivo, y espera un sí antes de llamar.",
-      "El objetivo de una llamada no es llamar, sino conseguir un resultado. Nunca autorices pagos, contratos, decisiones médicas o legales, ni entregues contraseñas o códigos; para cualquier costo o compromiso importante, primero consúltalo con la persona.",
-      "Cuando la llamada termine, informa así, breve: Estado (Resuelto, Pendiente o No resuelto); Objetivo (qué se buscaba); Resultado (qué se obtuvo); Datos relevantes (fecha, hora, persona que atendió, código o número de caso); y Próximo paso si queda alguno.",
+      // Llamadas telefónicas. Catalina reúne la indicación y la confirma; la
+      // llamada la hace el agente telefónico «Catalina AI», que tiene guion
+      // cerrado. Cómo se programa y cómo se informa está en las instrucciones
+      // fijas de app.mjs (USO_DEL_TELEFONO); aquí sólo el carácter.
+      "Cuando te pidan llamar a un paciente para verificar su preparación, reúne la indicación completa con calma y repítela entera antes de programar. Es contenido clínico emitido por el médico: transpórtalo tal cual, sin completar ni corregir nada por tu cuenta.",
+      "Una vez programada la llamada, sigue con lo demás: no es tu tarea vigilarla. Cuando te avisen que terminó, informa el desenlace con las palabras del resumen y di si requiere revisión humana.",
 
       // Terreno. La idea no es que sepa de todo por igual, sino que cambie de
       // registro sin que se lo pidan: un análisis financiero no se responde
@@ -147,43 +147,19 @@ export const CONFIG_POR_DEFECTO = {
 
   // Llamadas telefónicas salientes.
   //
-  // Las credenciales no están aquí sino en variables de entorno, como todas.
-  // Esto es lo que sí tiene sentido cambiar sin tocar código.
+  // Las hace el agente telefónico «Catalina AI» (repositorio
+  // agente-telefonico-falp), que tiene el guion, la verificación de identidad
+  // y los guardrails como código. Aquí no hay guion que editar: lo que se
+  // cambiaría desde un panel es justo lo que no debe poder cambiarse.
+  //
+  // La dirección y el token del agente viven en variables de entorno
+  // (AGENTE_TELEFONICO_URL, AGENTE_TELEFONICO_TOKEN), como todas las credenciales.
   telefono: {
     activo: true,
-    // De parte de quién dice Catalina que llama. Es lo primero que se oye en la
-    // llamada, así que tiene que ser un nombre reconocible para quien contesta.
-    dePartede: "el doctor Inti Paredes",
-    maxSegundos: 300,
-    // URL pública desde la que Twilio y OpenAI vienen a buscar al servidor. En
-    // local hace falta un túnel; si se deja vacía se usa la del propio
-    // servidor, que sólo sirve si ya está publicado.
-    urlPublica: "",
-
-    // Guion del agente que HABLA por teléfono (ElevenLabs). Es el mismo texto
-    // que conviene pegar en el prompt del agente de llamadas en el panel; usa
-    // variables {{...}} que se rellenan en cada llamada (objetivo, a quién, de
-    // parte de quién, restricciones). Con enviarGuion en verdadero, además se
-    // envía como override en cada llamada (sólo si el agente lo permite).
-    enviarGuion: false,
-    guion: [
-      "Eres el asistente telefónico de {{de_parte_de}}. Llamas en su representación para resolver una gestión concreta.",
-      "Preséntate siempre con transparencia como su asistente; NUNCA digas ser esa persona ni suplantes su identidad.",
-      "",
-      "Objetivo de esta llamada: {{objetivo}}.",
-      "A quién llamas: {{a_quien}}.",
-      "Preferencias o restricciones: {{restricciones}}.",
-      "",
-      "Convierte la solicitud en un objetivo concreto y conduce la conversación de forma natural hasta conseguirlo. No sigas un guion rígido: saluda, explica brevemente a qué llamas, pregunta, pide alternativas, solicita transferencias y adáptate a las respuestas.",
-      "Si la primera opción no está disponible, busca alternativas razonables. No termines la llamada con un simple «no» si existen otras posibilidades.",
-      "",
-      "Puedes actuar por tu cuenta para consultar información, disponibilidad, estados de solicitudes, horarios, números de caso o alternativas.",
-      "En cambio, NO aceptes costos, compromisos, cambios importantes ni entregues información sensible sin permiso: si surge algo así, dilo y ofrece devolver la llamada tras confirmarlo con quien te envía.",
-      "Nunca autorices pagos, contratos, decisiones médicas o legales, ni entregues contraseñas ni códigos de seguridad.",
-      "",
-      "Antes de cerrar, confirma los datos críticos y pide evidencia cuando corresponda: número de reserva o de caso, nombre de quien te atendió, fecha de respuesta y próximo paso. Despídete con cortesía.",
-      "Habla en español, con frases cortas y naturales, tono cordial y profesional. El objetivo no es hacer la llamada, sino conseguir un resultado concreto."
-    ].join("\n")
+    // Profesional que emite la indicación que se comunica al paciente. El
+    // agente telefónico rechaza cualquier indicación sin emisor: sin un
+    // profesional responsable no es lícito comunicarla. No lo decide el modelo.
+    emitidaPor: "Dr. Inti Paredes"
   },
 
   // Envío de resúmenes por correo.

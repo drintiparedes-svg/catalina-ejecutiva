@@ -9,17 +9,13 @@ import { buscarEnLaWeb, leerPagina, generarImagen, buscarVideos, hayWeb, hayVide
 import { buscarImagenes, buscarImagenesWebAbierta, fuentesClinicas, proxearImagen, hayImagenesWeb, hayImagenesWebAbierta, hayBuscadorWebCompleto } from "./medios.mjs";
 import { buscarLiteratura } from "./literatura.mjs";
 import {
-  telefoniaLista, originarLlamada, estadoLlamada, twimlPuente,
-  firmaValida, atenderLlamadaEntrante, anotarEstadoTwilio
-} from "./telefonia.mjs";
-import {
-  telefoniaElevenLabsLista, originarLlamadaElevenLabs, estadoLlamadaElevenLabs, diagnosticoElevenLabs
-} from "./llamadas.mjs";
+  agenteTelefonicoListo, programarLlamada, estadoLlamada, diagnostico as diagnosticoTelefonico
+} from "./agente-telefonico.mjs";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // Se sube a mano con cada arreglo que el usuario tiene que descargar.
-export const VERSION = "2026-08-24.24";
+export const VERSION = "2026-09-21.25";
 
 const root = fileURLToPath(new URL("./public", import.meta.url));
 // El .env se lee de forma síncrona a propósito. Con `await` aquí arriba, en el
@@ -79,8 +75,9 @@ export async function atender(req, res) {
         // clave). "completo" indica si además hay Google CSE o SerpAPI.
         imagenesWebAbierta: hayImagenesWebAbierta(),
         buscadorWebCompleto: hayBuscadorWebCompleto(),
-        // Llamadas salientes: por ElevenLabs (preferido) o por el puente Twilio.
-        telefonia: telefoniaElevenLabsLista() ? "elevenlabs" : telefoniaLista() ? "twilio" : false
+        // Llamadas salientes: las hace el agente telefónico «Catalina AI», un
+        // servicio aparte. Aquí sólo se programan y se consultan.
+        telefonia: agenteTelefonicoListo() ? "catalina-ai" : false
       });
     }
 
@@ -194,54 +191,19 @@ export async function atender(req, res) {
     }
 
     if (req.method === "GET" && req.url === "/telefonia/diagnostico") {
-      return json(res, 200, await diagnosticoElevenLabs());
+      return json(res, 200, await diagnosticoTelefonico());
     }
 
     if (req.method === "POST" && req.url === "/llamada") {
       return await pedirLlamada(req, res);
     }
 
+    // Estado de una llamada. Lo consulta el navegador en segundo plano, no el
+    // modelo: la conversación sigue mientras la llamada ocurre en otro sitio.
     if (req.method === "GET" && req.url.startsWith("/llamada/")) {
       const id = decodeURIComponent(req.url.slice("/llamada/".length));
-      // Si la telefonía es de ElevenLabs, el estado se consulta en vivo allí.
-      if (telefoniaElevenLabsLista()) {
-        return json(res, 200, await estadoLlamadaElevenLabs(id));
-      }
-      const estado = estadoLlamada(id);
-      return estado
-        ? json(res, 200, { ok: true, ...estado })
-        : json(res, 404, { ok: false, error: "No hay ninguna llamada con ese identificador." });
-    }
-
-    // Twilio viene a buscar aquí qué hacer cuando la persona contesta.
-    if (req.method === "POST" && req.url === "/telefonia/twiml") {
-      res.writeHead(200, { "Content-Type": "text/xml; charset=utf-8" });
-      return res.end(twimlPuente());
-    }
-
-    // Avisos de Twilio sobre el ciclo de vida de la llamada.
-    if (req.method === "POST" && req.url === "/telefonia/estado") {
-      anotarEstadoTwilio(new URLSearchParams(await readBody(req)));
-      res.writeHead(204);
-      return res.end();
-    }
-
-    // Webhook de OpenAI: la llamada acaba de entrarle por SIP.
-    if (req.method === "POST" && req.url === "/telefonia/webhook") {
-      const crudo = await readBody(req);
-      // Sin firma válida no se atiende: este webhook abre una llamada y
-      // configura una sesión de modelo.
-      if (!firmaValida(req.headers, crudo)) {
-        return json(res, 401, { error: "Firma no válida." });
-      }
-      let evento = {};
-      try { evento = JSON.parse(crudo); } catch {}
-      if (evento.type === "realtime.call.incoming") {
-        const config = await cargarConfig();
-        atenderLlamadaEntrante(evento, config.telefono?.dePartede || "una persona");
-      }
-      res.writeHead(200);
-      return res.end();
+      const estado = await estadoLlamada(id);
+      return json(res, estado.ok ? 200 : estado.code === "NO_ENCONTRADA" ? 404 : 502, estado);
     }
 
     if (req.method === "POST" && req.url === "/correo") {
@@ -336,23 +298,29 @@ const USO_DE_HERRAMIENTAS = [
 // Sólo se añade cuando las herramientas de llamada están disponibles: si no,
 // sería describirle a Catalina algo que no puede hacer.
 const USO_DEL_TELEFONO = [
+  // Quien llama no es Catalina Ejecutiva sino el agente telefónico «Catalina
+  // AI», con guion cerrado de preparación pre-procedimiento. Aquí se reúne la
+  // indicación, se confirma y se programa; el desenlace llega solo.
+  "Las llamadas telefónicas las hace el agente telefónico Catalina AI, que verifica con un paciente su preparación para un procedimiento: ayuno, medicamentos que suspender, exámenes, acompañante y hora de llegada. No sirve para otras gestiones.",
   // Marcar es irreversible y la llamada la recibe un tercero. La confirmación
   // no puede quedar al criterio del modelo, así que se dice aquí y además la
   // herramienta la exige.
-  "Antes de llamar por teléfono, repite en voz alta a qué número vas a llamar y para qué, y espera a que te lo confirmen. Nunca marques sin ese sí.",
-  "Mientras la llamada esté en curso, consulta su estado cada pocos segundos con consultar_llamada y ve contando lo que pasa.",
-  "Cuando termine, cuenta el desenlace con las palabras del resultado. No te inventes lo que se dijo en la llamada."
+  "Antes de programar una llamada, repite en voz alta el número, el nombre del paciente, la fecha del procedimiento, la hora del ayuno, los medicamentos con su instrucción, los exámenes y la hora de llegada, y espera a que te lo confirmen. Nunca programes sin ese sí.",
+  // Esto es lo que evita que se quede pegada: la llamada ocurre en otro
+  // servicio y el navegador la vigila. El modelo no debe sondear.
+  "Cuando programes la llamada, di en una sola frase que ya está en marcha y sigue con lo que la persona necesite. No consultes su estado por tu cuenta ni te quedes esperando: te llegará un aviso del sistema cuando termine, y entonces informas.",
+  "Sólo usa consultar_llamada si la persona te pregunta expresamente cómo va, y una sola vez por pregunta.",
+  "Cuando llegue el aviso de que terminó, informa así, breve: Estado (Resuelto, Requiere revisión o No se pudo); Paciente; Resultado (lo que dice el resumen); y Próximo paso si queda alguno. No te inventes lo que se dijo en la llamada: eso no viaja en el resumen."
 ].join(" ");
 
 // Las instrucciones completas se arman en cada sesión: lo editable viene del
 // panel, lo de arriba es fijo. Los dos proveedores reciben exactamente lo mismo,
 // para que Catalina no cambie de carácter al pasar de uno a otro.
 async function instruccionesDeSesion(config) {
-  const puedeLlamar = (telefoniaElevenLabsLista() || telefoniaLista()) && config.telefono?.activo !== false;
   return [
     componerInstrucciones(config),
     USO_DE_HERRAMIENTAS,
-    puedeLlamar ? USO_DEL_TELEFONO : ""
+    puedeLlamar(config) ? USO_DEL_TELEFONO : ""
   ].filter(Boolean).join(" ");
 }
 
@@ -582,46 +550,58 @@ const PARAMETROS_LLAMADA = {
   properties: {
     numero: {
       type: "string",
-      description: "Número en formato internacional, por ejemplo +56912345678."
+      description: "Teléfono del paciente en formato internacional, por ejemplo +56912345678."
     },
-    objetivo: {
+    nombre_paciente: { type: "string", description: "Nombre de pila con el que el agente saludará al paciente." },
+    rut_ultimos_cuatro: {
       type: "string",
-      description: "Qué debe conseguir en la llamada, concreto y en una frase: "
-        + "«pedir hora con el traumatólogo para la próxima semana», "
-        + "«preguntar si tienen metformina de 850 miligramos»."
+      description: "Los últimos cuatro dígitos del RUT del paciente, sin el dígito verificador. Sirven para verificar identidad."
     },
-    a_quien: {
-      type: "string",
-      description: "A quién o dónde se llama: «la clínica Dávila», «la farmacia Cruz Verde de Ñuñoa». Opcional pero útil."
+    fecha_procedimiento: { type: "string", description: "Fecha del procedimiento en formato año-mes-día, por ejemplo 2026-04-15." },
+    hora_inicio_ayuno: { type: "string", description: "Hora desde la que el paciente no debe comer ni beber, en 24 horas, por ejemplo 22:00." },
+    hora_llegada: { type: "string", description: "Hora a la que debe llegar, en 24 horas, por ejemplo 07:30." },
+    farmacos: {
+      type: "array",
+      description: "Medicamentos que debe suspender, cada uno con la instrucción exacta que el agente leerá, sin parafrasear.",
+      items: {
+        type: "object",
+        properties: {
+          nombre: { type: "string", description: "Nombre del medicamento." },
+          instruccion: { type: "string", description: "Instrucción textual: «Debe suspender el acenocumarol desde el lunes en la mañana.»" }
+        },
+        required: ["nombre", "instruccion"]
+      }
     },
-    restricciones: {
-      type: "string",
-      description: "Preferencias o restricciones relevantes: «sólo por la mañana», «que sea con la doctora Soto», «presupuesto máximo 30 mil». Opcional."
+    examenes: {
+      type: "array",
+      description: "Exámenes que debe traer, por su nombre. Vacío si no necesita traer ninguno.",
+      items: { type: "string" }
     },
+    requiere_acompanante: { type: "boolean", description: "Si debe venir con alguien que lo lleve de vuelta." },
+    servicio: { type: "string", description: "Unidad que realiza el procedimiento, por ejemplo «endoscopia». Opcional; enruta las transferencias." },
     confirmado: {
       type: "boolean",
-      description: "Verdadero sólo después de haber repetido en voz alta el número y el objetivo "
+      description: "Verdadero sólo después de haber repetido en voz alta el número, el paciente y toda la indicación, "
         + "y de que la persona haya dicho que sí. Nunca lo pongas en verdadero por tu cuenta."
     }
   },
-  required: ["numero", "objetivo", "confirmado"]
+  required: ["numero", "nombre_paciente", "rut_ultimos_cuatro", "fecha_procedimiento", "hora_inicio_ayuno", "hora_llegada", "requiere_acompanante", "confirmado"]
 };
 
-const DESCRIPCION_LLAMADA = "Llama por teléfono en representación de la persona para resolver una gestión concreta "
-  + "—agendar, pedir información, hacer seguimiento, coordinar o resolver un trámite—. "
-  + "Antes de usarla reúne y confirma lo necesario: a quién o dónde llamar, el número, qué resultado se busca y las restricciones; "
-  + "repite en voz alta el número y el objetivo y espera un sí. El agente que llama se presenta como asistente, nunca suplanta a la persona, "
-  + "y no autoriza pagos, contratos ni entrega datos sensibles. Devuelve un identificador; consulta después consultar_llamada, "
-  + "y al terminar informa el resultado (estado, objetivo, resultado, datos y próximo paso).";
+const DESCRIPCION_LLAMADA = "Programa una llamada del agente telefónico Catalina AI a un paciente para verificar su preparación "
+  + "antes de un procedimiento: ayuno, medicamentos que suspender, exámenes, acompañante y hora de llegada. El agente verifica la identidad "
+  + "con dos datos, lee la indicación tal cual y transfiere a una persona ante cualquier síntoma de alarma o consulta. "
+  + "Antes de usarla reúne y confirma en voz alta todos los datos y espera un sí. Devuelve de inmediato: la llamada ocurre en otro servicio "
+  + "y te avisarán cuando termine. No consultes su estado por tu cuenta.";
 
 const PARAMETROS_ESTADO_LLAMADA = {
   type: "object",
-  properties: { id: { type: "string", description: "El identificador que devolvió llamar_por_telefono." } },
+  properties: { id: { type: "string", description: "El identificador que devolvió programar_llamada_preparacion." } },
   required: ["id"]
 };
 
-const DESCRIPCION_ESTADO_LLAMADA = "Dice cómo va o cómo terminó una llamada. Consúltala cada pocos segundos "
-  + "mientras la llamada esté en curso, y cuenta el desenlace cuando lo haya.";
+const DESCRIPCION_ESTADO_LLAMADA = "Dice cómo va o cómo terminó una llamada programada. Úsala sólo si la persona pregunta "
+  + "expresamente cómo va, una vez por pregunta. El desenlace te llega solo como aviso del sistema; no hace falta sondear.";
 
 const HERRAMIENTAS = [
   { nombre: "buscar_imagen_medica", descripcion: DESCRIPCION_IMAGEN, parametros: PARAMETROS_IMAGEN },
@@ -638,20 +618,23 @@ const HERRAMIENTAS = [
   { nombre: "enviar_resumen", descripcion: DESCRIPCION_CORREO, parametros: PARAMETROS_CORREO }
 ];
 
-// Las de llamada sólo se le ofrecen al modelo si la telefonía está de verdad
-// configurada. Declararlas siempre hacía que Catalina se ofreciera a llamar en
-// un despliegue donde no puede —Vercel no sostiene la conexión que hace falta—,
-// y prometer algo que luego falla es peor que no ofrecerlo.
+// Las de llamada sólo se le ofrecen al modelo si el agente telefónico está
+// configurado. Declararlas siempre hacía que Catalina se ofreciera a llamar
+// donde no puede, y prometer algo que luego falla es peor que no ofrecerlo.
 const HERRAMIENTAS_TELEFONO = [
-  { nombre: "llamar_por_telefono", descripcion: DESCRIPCION_LLAMADA, parametros: PARAMETROS_LLAMADA },
+  { nombre: "programar_llamada_preparacion", descripcion: DESCRIPCION_LLAMADA, parametros: PARAMETROS_LLAMADA },
   { nombre: "consultar_llamada", descripcion: DESCRIPCION_ESTADO_LLAMADA, parametros: PARAMETROS_ESTADO_LLAMADA }
 ];
+
+function puedeLlamar(config) {
+  return agenteTelefonicoListo() && config.telefono?.activo !== false;
+}
 
 // Las internas, las de teléfono si procede, y las que haya añadido el panel.
 function todasLasHerramientas(config) {
   return [
     ...HERRAMIENTAS,
-    ...((telefoniaElevenLabsLista() || telefoniaLista()) && config.telefono?.activo !== false ? HERRAMIENTAS_TELEFONO : []),
+    ...(puedeLlamar(config) ? HERRAMIENTAS_TELEFONO : []),
     ...herramientasDeConectores(config)
   ];
 }
@@ -932,12 +915,10 @@ async function registrarHerramientas(res) {
   const clave = process.env.ELEVENLABS_API_KEY.trim();
   const cabeceras = { "xi-api-key": clave, "Content-Type": "application/json" };
 
-  // Las que se registran. El teléfono se INCLUYE si hay telefonía por ElevenLabs
-  // (que sí funciona en serverless); con el puente antiguo Twilio+OpenAI se
-  // dejaba fuera porque necesitaba una conexión sostenida. Sin esto el agente
-  // no tenía la herramienta de llamar y por voz no pasaba nada.
-  const conTelefono = telefoniaElevenLabsLista() || telefoniaLista();
-  const aRegistrar = [...HERRAMIENTAS, ...(conTelefono ? HERRAMIENTAS_TELEFONO : [])];
+  // Las que se registran. El teléfono se incluye si el agente telefónico está
+  // configurado: programar y consultar son peticiones cortas, sin conexión
+  // sostenida, así que funcionan igual en serverless.
+  const aRegistrar = [...HERRAMIENTAS, ...(puedeLlamar(await cargarConfig()) ? HERRAMIENTAS_TELEFONO : [])];
   const nuestras = aRegistrar.map(h => ({
     type: "client",
     name: h.nombre,
@@ -1585,16 +1566,14 @@ async function buscarSalud(req, res) {
 }
 
 // Llamada telefónica. `confirmado` no es una formalidad: marcar es
-// irreversible, así que Catalina tiene que haber repetido número y objetivo y
-// haber recibido un sí antes de que esto haga nada.
+// irreversible y la indicación es contenido clínico, así que Catalina tiene
+// que haber repetido número, paciente e indicación y haber recibido un sí
+// antes de que esto haga nada.
 async function pedirLlamada(req, res) {
-  // Dos caminos posibles: el nativo de ElevenLabs (preferido, funciona en Vercel)
-  // y el puente Twilio+OpenAI. Basta con que uno esté configurado.
-  const porElevenLabs = telefoniaElevenLabsLista();
-  if (!porElevenLabs && !telefoniaLista()) {
+  if (!agenteTelefonicoListo()) {
     return json(res, 503, {
       ok: false,
-      error: "Falta configurar la telefonía: importa un número en ElevenLabs y pon ELEVENLABS_PHONE_NUMBER_ID, o configura el puente de Twilio.",
+      error: "Falta configurar el agente telefónico: define AGENTE_TELEFONICO_URL y AGENTE_TELEFONICO_TOKEN.",
       code: "TELEFONIA_SIN_CONFIGURAR"
     });
   }
@@ -1607,7 +1586,7 @@ async function pedirLlamada(req, res) {
       ok: false,
       error: "Falta la confirmación de la persona.",
       code: "SIN_CONFIRMAR",
-      queHacer: "Repite el número y el objetivo en voz alta, espera un sí, y vuelve a llamar a la herramienta con confirmado en verdadero."
+      queHacer: "Repite en voz alta el número, el paciente y la indicación completa, espera un sí, y vuelve a llamar a la herramienta con confirmado en verdadero."
     });
   }
 
@@ -1617,31 +1596,14 @@ async function pedirLlamada(req, res) {
     return json(res, 403, { ok: false, error: "Las llamadas están desactivadas.", code: "TELEFONIA_APAGADA" });
   }
 
-  // Preferimos ElevenLabs: no necesita puente ni URL pública, y va en Vercel.
-  if (porElevenLabs) {
-    return json(res, 200, await originarLlamadaElevenLabs({
-      numero: peticion.numero,
-      objetivo: peticion.objetivo,
-      aQuien: peticion.a_quien,
-      restricciones: peticion.restricciones,
-      // El contexto de la persona y el guion salen de la configuración, no del
-      // modelo: es lo que separa una herramienta que ejecuta de una que decide.
-      dePartede: telefono.dePartede,
-      guion: telefono.guion,
-      enviarGuion: telefono.enviarGuion === true
-    }));
-  }
-
-  // La URL pública desde la que Twilio y OpenAI vendrán a buscarnos.
-  const base = (telefono.urlPublica || "").replace(/\/$/, "")
-    || `https://${req.headers.host}`;
-
-  return json(res, 200, await originarLlamada({
+  // Quién emite la indicación sale de la configuración, no del modelo: es el
+  // profesional responsable, y sin él el agente telefónico rechaza la llamada.
+  const r = await programarLlamada({
     numero: peticion.numero,
-    objetivo: peticion.objetivo,
-    base,
-    maxSegundos: telefono.maxSegundos ?? 300
-  }));
+    indicacion: peticion,
+    emitidaPor: telefono.emitidaPor
+  });
+  return json(res, r.ok ? 200 : r.code === "TELEFONIA_SIN_CONFIGURAR" ? 503 : 200, r);
 }
 
 // Envío del resumen por correo.
