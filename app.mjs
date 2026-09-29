@@ -368,7 +368,7 @@ const USO_DE_REUNIONES = [
   "Las reuniones que escuchas en modo Meet quedan transcritas y guardadas. Durante la reunión recibirás fragmentos de la transcripción como contexto: no los comentes ni respondas a ellos salvo que te hablen.",
   "Cuando te pregunten por lo que se dijo en una reunión —la actual o una anterior—, usa consultar_reunion antes de contestar, aunque creas recordarlo. Nunca digas que no tienes esa información sin haberla consultado.",
   "Al responder sobre una reunión, di qué se dijo y, si importa, en qué minuto; distingue lo acordado de lo que sólo se planteó, y avisa si la transcripción tenía huecos en ese tramo.",
-  "Si te piden la minuta o el acta, usa generar_minuta; por defecto en nivel detallado. Avisa que tarda un par de minutos y sigue disponible mientras tanto."
+  "Si te piden el acta o la minuta, usa generar_minuta; por defecto en nivel detallado. Avisa que tarda un par de minutos y sigue disponible mientras tanto."
 ].join(" ");
 
 // Sólo se añade cuando las herramientas de llamada están disponibles: si no,
@@ -698,9 +698,9 @@ const PARAMETROS_GENERAR_MINUTA = {
   required: []
 };
 
-const DESCRIPCION_GENERAR_MINUTA = "Genera la minuta de una reunión transcrita en dos formatos —extensa con detalle, diagramas y gráficos, y one pager— "
-  + "y la deja abierta en pantalla para revisarla. Tarda uno o dos minutos: devuelve enseguida y avisa cuando esté lista. "
-  + "Úsala cuando te pidan la minuta, el acta o el resumen formal de una reunión.";
+const DESCRIPCION_GENERAR_MINUTA = "Genera el acta de una reunión transcrita en formato minuta lean —one pager y documento completo con A3, flujos, causa raíz, evidencia y trazabilidad— "
+  + "y la deja lista en la página de actas para revisarla y exportarla. Tarda uno o dos minutos: devuelve enseguida y avisa cuando esté lista. "
+  + "Úsala cuando te pidan el acta, la minuta o el resumen formal de una reunión.";
 
 const HERRAMIENTAS = [
   { nombre: "buscar_imagen_medica", descripcion: DESCRIPCION_IMAGEN, parametros: PARAMETROS_IMAGEN },

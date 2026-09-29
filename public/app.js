@@ -470,7 +470,7 @@ function abrirDialogoDeReunion() {
       ui.reunionAlta.disabled = true;
       ui.reunionPestana.checked = false;
       ui.reunionPestana.disabled = true;
-      ui.reunionAlta.title = "Falta una clave de OpenAI o Gemini en el servidor (o una clave propia en la página de Minutas).";
+      ui.reunionAlta.title = "Falta una clave de OpenAI o Gemini en el servidor (o una clave propia en la página de Actas).";
     }
   }).catch(() => {});
   ui.reunionPestana.disabled = !audioDePestanaDisponible();
@@ -602,7 +602,7 @@ async function salirDeModoMeet() {
   }
   if (connected) {
     sesion?.anadirContexto?.(`[Sistema] La reunión «${reunion.meta.titulo}» terminó: ${Math.round(duracion(reunion) / 60000)} minutos, `
-      + `${palabras(reunion)} palabras transcritas. Para responder sobre su contenido usa consultar_reunion; para la minuta, generar_minuta.`);
+      + `${palabras(reunion)} palabras transcritas. Para responder sobre su contenido usa consultar_reunion; para el acta, generar_minuta.`);
   }
 }
 
@@ -686,6 +686,7 @@ function mostrarAvisoDeReunion(reunion, estado = "") {
     q.huecos ? `${q.huecos} hueco(s) sin audio` : "sin huecos detectados"
   ].join(" · ");
   ui.reunionAvisoAbrir.href = `minuta.html?id=${encodeURIComponent(reunion.id)}`;
+  ui.reunionAvisoAbrir.textContent = reunion.minuta ? "Ver acta" : "Generar acta";
   ui.reunionAviso.hidden = false;
 }
 function ocultarAvisoDeReunion() { ui.reunionAviso.hidden = true; }
@@ -705,7 +706,7 @@ function generarMinutaHerramienta(argumentos) {
   const reunion = elegirReunion(argumentos.reunion || "ultima", reunionActual?.id);
   if (!reunion) return { ok: false, error: "No hay ninguna reunión guardada en este navegador." };
   const fuente = reunion.id === reunionActual?.id ? reunionActual : reunion;
-  if (palabras(fuente) < 15) return { ok: false, error: "La reunión casi no tiene transcripción: no hay material para una minuta." };
+  if (palabras(fuente) < 15) return { ok: false, error: "La reunión casi no tiene transcripción: no hay material para un acta." };
   if (minutaEnCurso) return { ok: false, error: "Ya estoy redactando una minuta; espera a que termine." };
   const nivel = argumentos.nivel === "estandar" ? "estandar" : "detallado";
 
@@ -714,25 +715,25 @@ function generarMinutaHerramienta(argumentos) {
   minutaEnCurso = pedirMinuta(fuente, { nivel }).then(async r => {
     minutaEnCurso = null;
     if (!r.ok) {
-      sesion?.anadirContexto?.(`[Sistema] No se pudo generar la minuta de «${fuente.meta.titulo}»: ${r.error}. Díselo a la persona.`);
-      mostrarAviso(`No se pudo generar la minuta: ${r.error}`);
+      sesion?.anadirContexto?.(`[Sistema] No se pudo generar el acta de «${fuente.meta.titulo}»: ${r.error}. Díselo a la persona.`);
+      mostrarAviso(`No se pudo generar el acta: ${r.error}`);
       return;
     }
     fuente.minuta = r.minuta;
     fuente.trazabilidad = r.trazabilidad;
     guardarReunion(fuente);
-    mostrarAvisoDeReunion(fuente, "Minuta lista · ábrela para revisarla, exportarla o enviarla");
+    mostrarAvisoDeReunion(fuente, "Acta lista · ábrela para revisarla y exportarla a PDF, HTML o correo");
     let enviado = "";
     if (argumentos.enviar_por_correo) {
       const e = await enviarMinutaPorCorreo(fuente);
-      enviado = e.ok ? ` Se envió por correo a ${e.destinatario} (sin diagramas dibujados: para el adjunto completo, envíala desde la página de la minuta).` : ` El correo falló: ${e.error}.`;
+      enviado = e.ok ? ` Se envió por correo a ${e.destinatario} (one pager y Markdown; para adjuntar el acta completa con su formato, envíala desde la página de actas).` : ` El correo falló: ${e.error}.`;
     }
-    sesion?.anadirContexto?.(`[Sistema] La minuta de «${fuente.meta.titulo}» está lista y abierta en pantalla. `
+    sesion?.anadirContexto?.(`[Sistema] El acta de «${fuente.meta.titulo}» está lista; se abre con el botón «Ver acta» en pantalla. `
       + `Mensaje clave: ${r.minuta.onePager.mensajeClave} Decisiones: ${r.minuta.onePager.decisiones.join("; ") || "ninguna registrada"}.${enviado} `
       + "Avísale a la persona de forma breve.");
-    if (connected && !enModoMeet) sesion?.enviarTexto?.("[Sistema] La minuta terminó. Avísalo en una frase.");
+    if (connected && !enModoMeet) sesion?.enviarTexto?.("[Sistema] El acta terminó. Avísalo en una frase.");
   });
-  mostrarAvisoDeReunion(fuente, `Redactando la minuta (${nivel})… tarda uno o dos minutos`);
+  mostrarAvisoDeReunion(fuente, `Redactando el acta (${nivel})… tarda uno o dos minutos`);
   return { ok: true, estado: "generando", reunion: fuente.meta.titulo, nivel, mensaje: "Tardará uno o dos minutos; te avisaré cuando esté lista." };
 }
 

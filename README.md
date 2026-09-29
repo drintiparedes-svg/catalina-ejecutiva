@@ -463,13 +463,20 @@ objetivo, participantes, agenda, enlaces). Todo va a la minuta.
   le permite buscar en reuniones actuales o anteriores. Con ElevenLabs hay que
   volver a registrar las herramientas (abrir `/registrar.html`)
   para que el agente reciba `consultar_reunion` y `generar_minuta`.
-- **Minutas** (`/minuta.html`): one pager + minuta extensa con desarrollo por
-  tema, citas con marca de tiempo, decisiones, plan de acción, riesgos,
-  diagramas Mermaid y gráficos SVG cuando hay datos. Nivel *estándar* (Gemini
-  Flash) o *detallado* (Claude Opus 5.5 si hay `ANTHROPIC_API_KEY`; si no,
-  Gemini Pro u OpenAI). Proveedores y modelos se cambian en `config.mjs →
-  reuniones`. Exporta a PDF, HTML autónomo y Markdown (para Google Docs) y se
-  envía por correo con la extensa adjunta.
+- **Actas** (botón «Actas», página `/minuta.html`, con la gráfica de
+  Catalina): cada reunión guardada se abre ahí y se sigue en tres pasos
+  —revisar datos, generar el acta, exportar—. El acta usa el formato estándar
+  **minuta lean ejecutiva**: portada, 00 cómo leer, 01 A3 (antecedentes,
+  situación, meta, causas, contramedidas, plan, muda, inconsistencias),
+  02 flujo AS-IS por carriles con puntos de dolor, Ishikawa y TO-BE,
+  03 actores y señales, 04 evidencia, 05 beneficios y riesgos, 06 espacio de
+  soluciones, 07 próxima reunión y 08 trazabilidad, con niveles N1/N2/N3.
+  La evidencia no la escribe el modelo: formula preguntas y la app las busca en
+  las nueve bases bibliográficas de Catalina, marcadas «por evaluar».
+  Nivel *estándar* (Gemini Flash) o *detallado* (Claude Opus 5.5 si hay
+  `ANTHROPIC_API_KEY`; si no, Gemini Pro u OpenAI), configurable en
+  `config.mjs → reuniones`. Exporta a PDF (A4, flujos en apaisado), HTML
+  autónomo, Markdown para Google Docs y correo con el acta adjunta.
 - **Cuenta propia.** Clave de API propia (se guarda sólo en el navegador) o,
   sin coste, copiar instrucciones + transcripción para pegarlas en el chat de
   una suscripción. Evaluación completa en

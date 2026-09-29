@@ -372,79 +372,135 @@ export async function enviarMinutaPorCorreo(reunion, adjuntosExtra = []) {
 
 export const nombreDeArchivo = titulo => normalizar(titulo).replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60) || "reunion";
 
-// Markdown: el formato que se pega sin pérdida en Google Docs (Pegar desde
-// Markdown), Notion u Obsidian. Los diagramas van como bloques mermaid.
+// Markdown del acta: el formato que se pega sin pérdida en Google Docs (Pegar
+// desde Markdown), Notion u Obsidian. Sigue las secciones de la minuta lean;
+// flujos y diagramas van como bloques mermaid.
 export function minutaAMarkdown(reunion) {
   const m = reunion.minuta;
   if (!m) return "";
-  const op = m.onePager, ex = m.extensa;
-  const li = items => items.filter(Boolean).map(i => `- ${i}`).join("\n");
+  const op = m.onePager;
+  const li = items => (items || []).filter(Boolean).map(i => `- ${i}`).join("\n");
   const tabla = (cab, filas) => filas.length
     ? `| ${cab.join(" | ")} |\n| ${cab.map(() => "---").join(" | ")} |\n` + filas.map(f => `| ${f.map(c => String(c || "—").replace(/\|/g, "/").replace(/\n/g, " ")).join(" | ")} |`).join("\n")
     : "";
   const fecha = new Date(reunion.meta.inicio).toLocaleString("es-CL", { dateStyle: "full", timeStyle: "short" });
+  const min = Math.round(duracion(reunion) / 60000);
   const t = reunion.trazabilidad || {};
-  const partes = [
-    `# ${reunion.meta.titulo}`,
-    `*${fecha} · ${Math.round(duracion(reunion) / 60000)} min · ${m.tipoDeReunion || "Reunión"}*`,
+  const q = calidad(reunion);
+  const onePager = [
+    `# ${m.titulo || reunion.meta.titulo}`,
+    `*Acta · minuta lean · ${fecha} · ${min} min · Nivel N2 (pendiente de validación)*`,
     "",
     "## One pager",
     op.estado ? `**Estado:** ${op.estado}` : "",
     `> ${op.mensajeClave}`,
-    "",
     op.contexto,
-    op.indicadores.length ? "\n**Indicadores**\n" + li(op.indicadores.map(i => `${i.etiqueta}: **${i.valor}**`)) : "",
-    op.decisiones.length ? "\n**Decisiones**\n" + li(op.decisiones) : "",
-    op.acciones.length ? "\n**Acciones**\n\n" + tabla(["Acción", "Responsable", "Plazo"], op.acciones.map(a => [a.accion, a.responsable, a.plazo])) : "",
-    op.riesgos.length ? "\n**Riesgos**\n" + li(op.riesgos) : "",
-    op.proximosPasos.length ? "\n**Próximos pasos**\n" + li(op.proximosPasos) : "",
+    op.indicadores.length ? "**Indicadores**\n" + li(op.indicadores.map(i => `${i.etiqueta}: **${i.valor}**`)) : "",
+    op.decisiones.length ? "**Decisiones**\n" + li(op.decisiones) : "",
+    op.acciones.length ? "**Acciones**\n\n" + tabla(["Acción", "Responsable", "Plazo"], op.acciones.map(a => [a.accion, a.responsable, a.plazo])) : "",
+    op.riesgos.length ? "**Riesgos**\n" + li(op.riesgos) : "",
+    op.proximosPasos.length ? "**Próximos pasos**\n" + li(op.proximosPasos) : ""
+  ];
+  if (m.formato !== "lean-1") {
+    return [...onePager, "", "_Acta generada con el formato anterior: vuelve a generarla para obtener el formato de minuta lean._"]
+      .filter(p => p !== "" && p != null).join("\n\n");
+  }
+
+  // Flujo por carriles como diagrama Mermaid: cada carril es un subgrafo y
+  // los pasos se encadenan en orden de fase. Así el flujo sobrevive al pegar
+  // en herramientas que dibujan Mermaid.
+  const flujoMermaid = (flujo, prefijo) => {
+    if (!flujo.pasos.length) return "";
+    const id = (i) => `${prefijo}${i}`;
+    const pasos = flujo.pasos.map((p, i) => ({ ...p, i }));
+    const lineas = ["flowchart LR"];
+    for (const carril of flujo.carriles) {
+      const propios = pasos.filter(p => p.carril === carril);
+      if (!propios.length) continue;
+      lineas.push(`  subgraph ${prefijo}${flujo.carriles.indexOf(carril)}c["${carril.replace(/"/g, "'")}"]`);
+      for (const p of propios) lineas.push(`    ${id(p.i)}["${(p.marca ? `(${p.marca}) ` : "") + p.titulo.replace(/"/g, "'")}"]`);
+      lineas.push("  end");
+      const ordenados = propios.sort((a, b) => flujo.fases.indexOf(a.fase) - flujo.fases.indexOf(b.fase));
+      for (let k = 1; k < ordenados.length; k += 1) lineas.push(`  ${id(ordenados[k - 1].i)} --> ${id(ordenados[k].i)}`);
+    }
+    return "```mermaid\n" + lineas.join("\n") + "\n```";
+  };
+  const ishikawaMd = m.causaRaiz.familias.length
+    ? `**Efecto observado:** ${m.causaRaiz.efecto}\n\n` + tabla(["Familia", "Causas"], m.causaRaiz.familias.map(f => [f.nombre, f.causas.join("; ")]))
+    : "";
+  const referencias = [];
+  for (const e of reunion.evidencia || []) for (const r of e.refs || []) if (!referencias.some(x => x.enlace === r.enlace)) referencias.push(r);
+  const num = r => referencias.findIndex(x => x.enlace === r.enlace) + 1;
+
+  const partes = [
+    ...onePager,
     "",
     "---",
     "",
-    "## Minuta extensa",
-    "### Información de la reunión",
-    li([
-      `Fecha: ${fecha}`,
-      reunion.meta.lugar && `Lugar/plataforma: ${reunion.meta.lugar}`,
-      reunion.meta.participantes && `Participantes declarados: ${reunion.meta.participantes}`,
-      reunion.meta.objetivo && `Objetivo: ${reunion.meta.objetivo}`
+    `# Acta · ${m.titulo || reunion.meta.titulo}`,
+    m.lede ? `*${m.lede}*` : "",
+    tabla(["Reunión", "Área", "Participantes", "Hito siguiente"], [[`${fecha} · ${min} min · "${reunion.meta.titulo}"`, m.area, reunion.meta.participantes || "No declarados", m.hitoSiguiente || "Por definir"]]),
+    "## 00 · Cómo leer este documento",
+    `**Pregunta de trabajo.** ${m.comoLeer.preguntaTrabajo}`,
+    m.comoLeer.fuentesPrimarias ? `**Fuentes primarias:** ${m.comoLeer.fuentesPrimarias}` : "",
+    m.comoLeer.fuentesSecundarias ? `**Fuentes secundarias:** ${m.comoLeer.fuentesSecundarias}` : "",
+    tabla(["Nivel", "Qué significa"], [
+      ["N1", "Registro de lo dicho, ordenamiento de flujos y diagramas. Ejecutado."],
+      ["N2", "Causas, flujo futuro, indicadores y opciones. Listos para discusión; requieren validación."],
+      ["N3", "Decisiones que exceden al equipo. No se deciden aquí; se escalan."]
     ]),
-    reunion.meta.agenda ? `\n**Agenda**\n\n${reunion.meta.agenda}` : "",
-    "### Resumen ejecutivo",
-    ex.resumenEjecutivo,
-    ex.contexto ? `### Contexto\n${ex.contexto}` : "",
-    ex.participantes.length ? "### Participantes\n" + tabla(["Nombre", "Rol", "Aportes"], ex.participantes.map(p => [p.nombre, p.rol, p.aportes])) : "",
-    "### Desarrollo por tema",
-    ...ex.temas.map((tema, i) => [
-      `#### ${i + 1}. ${tema.titulo}${tema.marcaInicio ? ` · [${tema.marcaInicio}]` : ""}`,
-      tema.desarrollo,
-      tema.puntosClave.length ? "\n**Puntos clave**\n" + li(tema.puntosClave) : "",
-      tema.posiciones.length ? "\n**Posiciones**\n" + li(tema.posiciones.map(p => `**${p.quien}:** ${p.postura}`)) : "",
-      tema.datos.length ? "\n**Datos**\n" + li(tema.datos) : "",
-      tema.citas.length ? "\n" + tema.citas.map(c => `> «${c.texto}» — ${c.hablante || "No identificado"}${c.marca ? ` [${c.marca}]` : ""}`).join("\n>\n") : "",
-      tema.conclusion ? `\n**Conclusión:** ${tema.conclusion}` : ""
-    ].filter(Boolean).join("\n")),
-    ex.decisiones.length ? "### Decisiones\n" + tabla(["Decisión", "Fundamento", "Responsable", "Evidencia"], ex.decisiones.map(d => [d.decision, d.fundamento, d.responsable, d.evidencia])) : "",
-    ex.acciones.length ? "### Plan de acción\n" + tabla(["Acción", "Responsable", "Plazo", "Prioridad", "Evidencia"], ex.acciones.map(a => [a.accion, a.responsable, a.plazo, a.prioridad, a.evidencia])) : "",
-    ex.riesgos.length ? "### Riesgos\n" + tabla(["Riesgo", "Probabilidad", "Impacto", "Mitigación"], ex.riesgos.map(r => [r.riesgo, r.probabilidad, r.impacto, r.mitigacion])) : "",
-    ex.preguntasAbiertas.length ? "### Preguntas abiertas\n" + li(ex.preguntasAbiertas) : "",
-    ex.desacuerdos.length ? "### Desacuerdos\n" + li(ex.desacuerdos) : "",
-    ex.supuestos.length ? "### Supuestos\n" + li(ex.supuestos) : "",
-    ex.datosCuantitativos.length ? "### Datos cuantitativos\n" + tabla(["Indicador", "Valor", "Unidad", "Contexto", "Marca"], ex.datosCuantitativos.map(d => [d.indicador, d.valor, d.unidad, d.contexto, d.marca])) : "",
-    ex.diagramas.length ? "### Diagramas\n" + ex.diagramas.map(d => `**${d.titulo}** — ${d.proposito}\n\n\`\`\`mermaid\n${d.mermaid}\n\`\`\``).join("\n\n") : "",
-    ex.graficos.length ? "### Gráficos (datos)\n" + ex.graficos.map(g => `**${g.titulo}** (${g.unidad}; fuente ${g.fuente})\n\n` + tabla(["Serie", "Valor"], g.series.map(s => [s.etiqueta, s.valor]))).join("\n\n") : "",
-    (ex.referenciasMencionadas.length || reunion.meta.enlaces || reunion.materiales?.length) ? "### Referencias" : "",
-    reunion.meta.enlaces ? "**Aportadas por el organizador**\n" + li(reunion.meta.enlaces.split(/\n+/)) : "",
-    ex.referenciasMencionadas.length ? "\n**Mencionadas en la reunión (no verificadas)**\n" + li(ex.referenciasMencionadas.map(r => `${r.tipo ? `[${r.tipo}] ` : ""}${r.descripcion}${r.url ? ` — ${r.url}` : ""}${r.marca ? ` [${r.marca}]` : ""}`)) : "",
-    reunion.materiales?.length ? "\n**Material mostrado por Catalina**\n" + li([...new Set(reunion.materiales)]) : "",
-    ex.glosario.length ? "### Glosario\n" + li(ex.glosario.map(g => `**${g.termino}:** ${g.definicion}`)) : "",
-    "### Limitaciones y trazabilidad",
-    ex.limitaciones,
+    m.comoLeer.convenciones ? `> ${m.comoLeer.convenciones}` : "",
+    "## 01 · Minuta lean (A3)",
+    "### 1 · Antecedentes\n" + li(m.a3.antecedentes),
+    "### 2 · Situación actual\n" + li(m.a3.situacionActual),
+    "### 3 · Objetivo / condición meta\n" + li(m.a3.condicionMeta),
+    "### 4 · Análisis de causas\n" + li(m.a3.analisisCausas),
+    "### 5 · Contramedidas en discusión (N2)\n" + li(m.a3.contramedidas),
+    m.a3.plan.length ? "### 6 · Plan y seguimiento\n" + tabla(["Acción", "Responsable", "Cuándo"], m.a3.plan.map(p => [p.accion, p.responsable, p.cuando])) : "",
+    m.a3.muda.length ? "### 7 · Desperdicios (muda) identificados\n" + tabla(["Tipo de muda", "Dónde aparece", "Punto de dolor"], m.a3.muda.map(x => [x.tipo, x.donde, x.puntoDolor])) : "",
+    m.inconsistencias.length ? "**Inconsistencias detectadas (confirmar por escrito)**\n\n" + m.inconsistencias.map((x, i) => `${i + 1}. **${x.tema}:** ${x.detalle}`).join("\n") : "",
+    m.flujoActual.pasos.length ? "## 02 · Flujo actual (AS-IS) y puntos de dolor\n\n" + flujoMermaid(m.flujoActual, "a") + "\n\n" + m.flujoActual.puntosDolor.map(p => `${p.numero}. **${p.titulo}.** ${p.cita ? `"${p.cita}"` : ""}`).join("\n") : "",
+    ishikawaMd ? "## 02 · Causa raíz\n\n" + ishikawaMd : "",
+    (m.flujoFuturo.pasos.length || m.flujoFuturo.comparacion.length) ? "## 02 · Flujo futuro hipotético (TO-BE) · N2\n\n" + flujoMermaid(m.flujoFuturo, "b") + "\n\n"
+      + m.flujoFuturo.cambios.map(c => `- **${c.marcas} · ${c.titulo}.** ${c.texto}`).join("\n") + "\n\n"
+      + tabla(["Actividad", "Hoy (AS-IS)", "Hipótesis (TO-BE)"], m.flujoFuturo.comparacion.map(c => [c.actividad, c.hoy, c.propuesta])) : "",
+    m.diagramas.length ? m.diagramas.map(d => `**${d.titulo}** — ${d.proposito}\n\n\`\`\`mermaid\n${d.mermaid}\n\`\`\``).join("\n\n") : "",
+    m.graficos.length ? m.graficos.map(g => `**${g.titulo}** (${g.unidad}; fuente ${g.fuente})\n\n` + tabla(["Serie", "Valor"], g.series.map(s => [s.etiqueta, s.valor]))).join("\n\n") : "",
+    (m.actores.length || m.senales.length) ? "## 03 · Lectura de actores y señales" : "",
+    m.actores.length ? tabla(["Actor", "Rol en el flujo", "Implicancia"], m.actores.map(a => [a.actor, a.rol, a.implicancia])) : "",
+    m.senales.map(s => `> "${s.cita}"${s.fuente ? ` — ${s.fuente}` : ""}`).join("\n>\n"),
+    m.restricciones.length ? "**Restricciones para el diseño**\n" + li(m.restricciones) : "",
+    (m.preguntasEvidencia.length || m.referenciasMencionadas.length) ? "## 04 · Evidencia y literatura" : "",
+    m.preguntasEvidencia.length ? tabla(["Pregunta", "Referencias encontradas", "Aplicabilidad", "Certeza"], m.preguntasEvidencia.map(p => {
+      const e = (reunion.evidencia || []).find(x => x.pregunta === p.pregunta);
+      const refs = e?.refs?.length ? e.refs.map(r => `${r.titulo} [${num(r)}]`).join("; ") : (e ? e.error || "Sin resultados" : "Búsqueda pendiente");
+      return [p.pregunta, refs, p.aplicabilidad, "Por evaluar"];
+    })) : "",
+    m.preguntasEvidencia.length ? "_Referencias obtenidas por búsqueda automática en bases bibliográficas, sin lectura crítica: certeza por evaluar._" : "",
+    m.referenciasMencionadas.length ? "**Referencias mencionadas en la reunión (no verificadas)**\n" + li(m.referenciasMencionadas.map(r => `${r.tipo ? `[${r.tipo}] ` : ""}${r.descripcion}${r.url ? ` — ${r.url}` : ""}${r.marca ? ` [${r.marca}]` : ""}`)) : "",
+    (m.beneficios.length || m.riesgos.length) ? "## 05 · Beneficios, riesgos e indicadores" : "",
+    m.beneficios.length ? "**Beneficios esperados (hipótesis, no compromiso)**\n\n" + tabla(["Dimensión", "Beneficio esperado", "Indicador propuesto"], m.beneficios.map(b => [b.dimension, b.beneficio, b.indicador])) : "",
+    m.notaMagnitud ? `> ${m.notaMagnitud}` : "",
+    m.riesgos.length ? "**Matriz de riesgos**\n\n" + tabla(["Riesgo", "Prob.", "Impacto", "Mitigación"], m.riesgos.map(r => [r.riesgo, r.probabilidad, r.impacto, r.mitigacion])) : "",
+    m.riesgoN3 ? `> **N3** ${m.riesgoN3}` : "",
+    m.soluciones.length ? "## 06 · Espacio de soluciones\n\n" + tabla(["Nivel", "Opción", "Origen", "Dependencias"], m.soluciones.map(s => [s.nivel, s.opcion, s.origen, s.dependencias])) : "",
+    (m.proximaReunion.estructura.length || m.proximaReunion.preguntas.length) ? "## 07 · Preparación de la próxima reunión" : "",
+    m.proximaReunion.estructura.length ? "**Estructura sugerida**\n" + m.proximaReunion.estructura.map((e, i) => `${i + 1}. ${e.punto}${e.minutos ? ` (${e.minutos} min)` : ""}`).join("\n") : "",
+    m.proximaReunion.datosASolicitar.length ? "**Datos a solicitar**\n" + li(m.proximaReunion.datosASolicitar) : "",
+    m.proximaReunion.preguntas.length ? "**Preguntas que conviene hacer**\n" + li(m.proximaReunion.preguntas) : "",
+    m.proximaReunion.erroresAEvitar.length ? "**Errores a evitar**\n" + li(m.proximaReunion.erroresAEvitar) : "",
+    "## 08 · Trazabilidad",
     li([
-      `Transcripción: ${calidad(reunion).fuente}, cobertura estimada ${calidad(reunion).cobertura}%, ${calidad(reunion).palabras} palabras.`,
-      t.modelo && `Redactada con ${t.proveedor}/${t.modelo} (nivel ${t.nivel}) el ${new Date(t.generadaEn).toLocaleString("es-CL")}.`,
-      "Minuta generada automáticamente a partir de una transcripción automática. Requiere revisión humana antes de difundirse."
-    ])
+      `Transcripción ${q.fuente}: cobertura estimada ${q.cobertura}%, ${q.palabras} palabras${q.huecos ? `, ${q.huecos} tramo(s) sin audio` : ""}.`,
+      t.modelo && `Acta redactada con ${t.proveedor}/${t.modelo} (nivel ${t.nivel}) el ${new Date(t.generadaEn).toLocaleString("es-CL")}.`,
+      "Revisión humana pendiente antes de difundir."
+    ]),
+    m.trazabilidad.supuestos.length ? "**Supuestos**\n" + li(m.trazabilidad.supuestos) : "",
+    m.trazabilidad.limites ? `**Límites.** ${m.trazabilidad.limites}` : "",
+    referencias.length ? "**Referencias**\n" + referencias.map((r, i) => `${i + 1}. ${r.autores ? r.autores.replace(/\.+$/, "") + ". " : ""}${r.titulo}. ${r.revista ? `*${r.revista}*. ` : ""}${r.anio || ""}. ${r.enlace || ""}`).join("\n") : "",
+    reunion.meta.enlaces ? "**Aportadas por el organizador**\n" + li(reunion.meta.enlaces.split(/\n+/)) : "",
+    reunion.materiales?.length ? "**Material mostrado por Catalina**\n" + li([...new Set(reunion.materiales)]) : "",
+    m.trazabilidad.notaDeUso ? `_Nota de uso: ${m.trazabilidad.notaDeUso}_` : ""
   ];
   return partes.filter(p => p !== "" && p != null).join("\n\n").replace(/\n{3,}/g, "\n\n");
 }
