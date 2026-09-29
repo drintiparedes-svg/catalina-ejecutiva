@@ -12,6 +12,11 @@ import { GeminiSession } from "./realtime/gemini-session.js";
 import { ElevenLabsSession } from "./realtime/elevenlabs-session.js";
 import { dibujarRuta } from "./mapa.js";
 import { EscuchaDeReunion, escuchaDisponible } from "./escucha.js";
+import { GrabadoraDeReunion, grabadoraDisponible, audioDePestanaDisponible } from "./grabadora.js";
+import {
+  nuevaReunion, guardarReunion, leerReuniones, elegirReunion, consultarReunion, indiceDeReuniones,
+  calidad, duracion, palabras, pedirMinuta, enviarMinutaPorCorreo, cabecerasDeClavePropia
+} from "./reuniones.js";
 
 const canvas = document.querySelector("#avatar");
 const ctx = canvas.getContext("2d");
@@ -45,6 +50,19 @@ const ui = {
   mute: document.querySelector("#mute"),
   meetMode: document.querySelector("#meetMode"),
   exitMeet: document.querySelector("#exitMeet"),
+  reunionDialogo: document.querySelector("#reunionDialogo"),
+  reunionForm: document.querySelector("#reunionForm"),
+  reunionCancelar: document.querySelector("#reunionCancelar"),
+  reunionAlta: document.querySelector("#reunionAlta"),
+  reunionPestana: document.querySelector("#reunionPestana"),
+  reunionContinuar: document.querySelector("#reunionContinuar"),
+  reunionContinuarCasilla: document.querySelector("#reunionContinuarCasilla"),
+  reunionContinuarTexto: document.querySelector("#reunionContinuarTexto"),
+  reunionAviso: document.querySelector("#reunionAviso"),
+  reunionAvisoTitulo: document.querySelector("#reunionAvisoTitulo"),
+  reunionAvisoDetalle: document.querySelector("#reunionAvisoDetalle"),
+  reunionAvisoAbrir: document.querySelector("#reunionAvisoAbrir"),
+  reunionAvisoCerrar: document.querySelector("#reunionAvisoCerrar"),
   audio: document.querySelector("#remoteAudio")
 };
 
@@ -74,6 +92,19 @@ const manejadores = {
     ultimoFallo = null;
     hayActividad();
     calentarUbicacion();   // deja lista la zona antes de que nadie pregunte
+    // Que sepa qué reuniones hay guardadas y, si la sesión se abre con una en
+    // curso, que la está escuchando. Un momento después: el primer mensaje del
+    // protocolo tiene que llegar antes.
+    setTimeout(() => {
+      presentarReunionesGuardadas();
+      if (enModoMeet && reunionActual) {
+        presentarReunionACatalina();
+        memoriaEnviadaHasta = Math.max(0, reunionActual.navegador.length - 40);
+        memoriaCaracteres = 0;
+        pasarReunionAMemoria();
+        if (!sesion.muted) { sesion.pausarEnvio(true); micCortadoPorMeet = true; }
+      }
+    }, 1500);
     mostrarAviso("");   // si el intento anterior falló, su aviso ya no aplica
     ui.signal.classList.add("online");
     ui.connect.textContent = "Finalizar";
@@ -287,7 +318,7 @@ ui.mute.addEventListener("click", () => {
   ui.mute.textContent = muted ? "Activar micrófono" : "Silenciar micrófono";
   setStatus(muted ? "Micrófono silenciado" : "Te escucho");
 });
-ui.meetMode.addEventListener("click", () => entrarEnModoMeet());
+ui.meetMode.addEventListener("click", () => abrirDialogoDeReunion());
 ui.exitMeet.addEventListener("click", () => salirDeModoMeet());
 ui.toggleCaption.addEventListener("click", () => fijarSubtitulos(!verSubtitulos));
 ui.togglePanel.addEventListener("click", () => fijarPanel(!verPanel));
@@ -309,7 +340,7 @@ document.addEventListener("keydown", event => {
   if (event.target.matches("input, textarea")) return;
   const tecla = event.key.toLowerCase();
   if (tecla === "h") {
-    ui.stage.classList.contains("meet") ? salirDeModoMeet() : entrarEnModoMeet();
+    ui.stage.classList.contains("meet") ? salirDeModoMeet() : abrirDialogoDeReunion();
   }
   if (tecla === "s") fijarSubtitulos(!verSubtitulos);
   if (event.key === "Escape") {
@@ -331,20 +362,63 @@ function setStatus(text) {
 //
 // El micrófono queda abierto pero Catalina no habla salvo que la llamen por su
 // nombre. Para que eso no cueste una fortuna, la reunión no se le manda al
-// modelo: la transcribe el navegador, gratis, y sólo cuando alguien dice
-// «Catalina» se le envía lo hablado como texto y se le pide que conteste.
+// modelo de voz: la transcribe el navegador, gratis, y sólo cuando alguien
+// dice «Catalina» se le envía lo hablado como texto y se le pide que conteste.
 //
 // La sesión de voz sigue abierta pero con el micrófono cortado, así que no se
 // envía audio y no se paga por escuchar; a cambio responde al instante y con su
 // voz, sin tener que reconectar.
+//
+// Además de eso, ahora:
+//   · Cada reunión es un registro guardado (reuniones.js) con sus datos, su
+//     transcripción y su minuta. Ya no se borra al volver a entrar.
+//   · Opcionalmente se graba en alta fidelidad (grabadora.js), incluido el
+//     audio de la pestaña del Meet, que el navegador por sí solo no oye.
+//   · Lo que se va diciendo pasa a la memoria de Catalina cada pocos minutos,
+//     y para lo que no quepa tiene la herramienta consultar_reunion.
+//   · Se puede transcribir sin sesión de voz abierta: si nadie necesita que
+//     Catalina conteste, no hay por qué pagar la sesión.
 const escucha = new EscuchaDeReunion({
-  alTranscribir: texto => {
+  alTranscribir: (texto, segmento) => {
     hayActividad();                       // la reunión cuenta como vida
     señalar("Escuchando · " + texto, "");  // se ve lo último entendido
+    if (reunionActual) {
+      reunionActual.navegador.push(segmento);
+      guardarPronto();
+    }
   },
   alLlamarla: (peticion, contexto) => atenderLlamado(peticion, contexto),
-  alFallar: motivo => señalar(motivo, "problema")
+  alFallar: motivo => señalar(motivo, "problema"),
+  alEstado: estado => {
+    if (estado === "reconectando") señalar("Reconectando la escucha…", "problema");
+  }
 });
+
+const grabadora = new GrabadoraDeReunion({
+  transcribir: (audio, meta) => pedirTranscripcion(audio, meta),
+  alSegmento: segmento => {
+    if (!reunionEnGrabacion) return;
+    reunionEnGrabacion.hd.push(segmento);
+    guardarPronto(reunionEnGrabacion);
+  },
+  alFallo: fallo => {
+    console.warn("Alta fidelidad: tramo sin transcribir", fallo.error);
+    if (!reunionEnGrabacion) return;
+    reunionEnGrabacion.hdFallidos.push(fallo);
+    guardarPronto(reunionEnGrabacion);
+    if (enModoMeet) señalar(`Un tramo no se transcribió en alta fidelidad (${fallo.error}); queda el del navegador`, "problema");
+  },
+  alEstado: (texto, estado) => { if (estado === "problema") señalar(texto, estado); }
+});
+
+async function pedirTranscripcion(audio, { previo }) {
+  const r = await fetch("/reunion/transcribir", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...cabecerasDeClavePropia(["openai", "gemini"]) },
+    body: JSON.stringify({ audio, previo, idioma: "es" })
+  });
+  return await r.json().catch(() => ({ ok: false, error: `El servidor respondió ${r.status}` }));
+}
 
 // La señal de escucha es lo único visible en modo reunión. Muestra lo último
 // que entendió el navegador, que además sirve para ver si transcribe bien.
@@ -355,47 +429,151 @@ function señalar(texto, estado = "") {
 
 let enModoMeet = false;
 let micCortadoPorMeet = false;
+let reunionActual = null;       // la que se está escuchando ahora
+let reunionEnGrabacion = null;  // la que recibe los tramos de alta fidelidad (puede terminar después)
+let relojGuardado = null;
+let relojMemoria = null;
+let memoriaEnviadaHasta = 0;    // índice del último segmento pasado a Catalina
+let memoriaCaracteres = 0;
 
-function entrarEnModoMeet() {
+// Se guarda como mucho cada 4 s: localStorage es síncrono y una reunión larga
+// pesa. Al cerrar la pestaña se guarda de inmediato.
+function guardarPronto(reunion = reunionActual) {
+  if (!reunion) return;
+  clearTimeout(relojGuardado);
+  relojGuardado = setTimeout(() => guardarReunion(reunion), 4000);
+}
+window.addEventListener("pagehide", () => {
+  if (reunionActual) {
+    reunionActual.estadisticas = { ...escucha.estadisticas };
+    guardarReunion(reunionActual);
+  }
+});
+
+// El diálogo recoge los datos de la reunión antes de empezar. Van a la minuta:
+// sin objetivo ni participantes, el modelo tiene que adivinarlos.
+function abrirDialogoDeReunion() {
+  if (enModoMeet) return;
+  const ultima = leerReuniones().at(-1);
+  const reciente = ultima && ultima.meta.fin && Date.now() - ultima.meta.fin < 45 * 60000;
+  ui.reunionContinuar.hidden = !reciente;
+  ui.reunionContinuarTexto.textContent = reciente ? `Continuar «${ultima.meta.titulo}»` : "";
+  ui.reunionContinuarCasilla.checked = false;
+  ui.reunionAlta.disabled = !grabadoraDisponible();
+  // Sin clave de transcripción (del servidor o propia) la alta fidelidad sólo
+  // acumularía tramos fallidos: se desactiva y se dice por qué.
+  fetch("/reunion/estado").then(r => r.json()).then(estado => {
+    const propia = cabecerasDeClavePropia(["openai", "gemini"])["X-Proveedor-Propio"];
+    const hay = estado?.transcripcion?.openai || estado?.transcripcion?.gemini || propia;
+    if (!hay) {
+      ui.reunionAlta.checked = false;
+      ui.reunionAlta.disabled = true;
+      ui.reunionPestana.checked = false;
+      ui.reunionPestana.disabled = true;
+      ui.reunionAlta.title = "Falta una clave de OpenAI o Gemini en el servidor (o una clave propia en la página de Minutas).";
+    }
+  }).catch(() => {});
+  ui.reunionPestana.disabled = !audioDePestanaDisponible();
+  ui.reunionDialogo.showModal();
+}
+
+ui.reunionForm.addEventListener("submit", evento => {
+  evento.preventDefault();
+  const datos = Object.fromEntries(new FormData(ui.reunionForm));
+  ui.reunionDialogo.close();
+  // Todo lo que pide permisos va antes de cualquier espera: el navegador sólo
+  // deja compartir una pestaña dentro del clic que lo pidió.
+  entrarEnModoMeet({
+    titulo: datos.titulo,
+    objetivo: datos.objetivo,
+    participantes: datos.participantes,
+    agenda: datos.agenda,
+    enlaces: datos.enlaces,
+    lugar: datos.lugar,
+    alta: ui.reunionAlta.checked,
+    pestana: ui.reunionPestana.checked,
+    continuar: ui.reunionContinuarCasilla.checked
+  });
+});
+ui.reunionCancelar.addEventListener("click", () => ui.reunionDialogo.close());
+ui.reunionAlta.addEventListener("change", () => {
+  ui.reunionPestana.disabled = !ui.reunionAlta.checked || !audioDePestanaDisponible();
+  if (!ui.reunionAlta.checked) ui.reunionPestana.checked = false;
+});
+
+async function entrarEnModoMeet(opciones = {}) {
   ui.stage.classList.add("meet");
   if (enModoMeet) return;
   enModoMeet = true;
-
   ui.oyendo.hidden = false;
+  ocultarAvisoDeReunion();
+
+  // La reunión: nueva, o la anterior si se pidió continuarla.
+  const ultima = leerReuniones().at(-1);
+  if (opciones.continuar && ultima) {
+    reunionActual = ultima;
+    reunionActual.meta.fin = null;
+  } else {
+    reunionActual = nuevaReunion(opciones);
+  }
+  guardarReunion(reunionActual);
+  memoriaEnviadaHasta = reunionActual.navegador.length;
+  memoriaCaracteres = 0;
+
+  // Alta fidelidad primero: es la que necesita el gesto del clic.
+  const alta = opciones.alta && grabadoraDisponible()
+    ? grabadora.iniciar({ audioPestana: opciones.pestana })
+    : null;
+
+  let avisoAlta = "";
+  if (alta) {
+    reunionEnGrabacion = reunionActual;
+    reunionActual.alta = true;
+    const r = await alta;
+    if (!r.ok) {
+      avisoAlta = r.error;
+      reunionEnGrabacion = null;
+    } else if (r.aviso) {
+      avisoAlta = r.aviso;
+    }
+  }
 
   if (!escuchaDisponible()) {
     // Sin reconocimiento de voz el modo sigue sirviendo para capturar la
-    // pantalla, pero no puede escuchar. Mejor decirlo que fingir que escucha.
-    señalar("Este navegador no puede transcribir. Usa Chrome.", "problema");
-    return;
-  }
-  if (!connected) {
-    señalar("Inicia la conversación antes de entrar en reunión", "problema");
+    // pantalla y, si está activa, para grabar en alta fidelidad.
+    señalar(alta && !avisoAlta ? "Grabando en alta fidelidad · este navegador no transcribe en vivo (usa Chrome para llamarme por mi nombre)" : "Este navegador no puede transcribir. Usa Chrome.", "problema");
     return;
   }
 
   // Se deja de enviar audio al modelo sin apagar la pista: quien escucha ahora
   // es el navegador, y con la pista apagada no oiría nada.
-  if (sesion && !sesion.muted) {
+  if (connected && sesion && !sesion.muted) {
     sesion.pausarEnvio(true);
     micCortadoPorMeet = true;
     ui.mute.textContent = "Activar micrófono";
   }
   escucha.olvidar();
   if (escucha.empezar()) {
-    señalar("Escuchando · di «Catalina» para hablarme");
+    const partes = ["Escuchando"];
+    if (reunionEnGrabacion) partes.push(grabadora.conPestana ? "alta fidelidad con audio del Meet" : "alta fidelidad (micrófono)");
+    partes.push(connected ? "di «Catalina» para hablarme" : "sólo transcribo: inicia la conversación si quieres que responda");
+    señalar(avisoAlta || partes.join(" · "), avisoAlta ? "problema" : "");
     setStatus("En reunión");
+    if (connected) presentarReunionACatalina();
+    clearInterval(relojMemoria);
+    relojMemoria = setInterval(pasarReunionAMemoria, (configMemoria.cadaSegundos || 90) * 1000);
   } else {
     señalar("No se pudo iniciar la escucha", "problema");
   }
 }
 
-function salirDeModoMeet() {
+async function salirDeModoMeet() {
   ui.stage.classList.remove("meet");
   if (!enModoMeet) return;
   enModoMeet = false;
 
   escucha.parar();
+  clearInterval(relojMemoria);
   ui.oyendo.hidden = true;
   // Sólo se devuelve el micrófono si fue este modo quien lo quitó.
   if (micCortadoPorMeet && sesion?.muted) {
@@ -404,27 +582,91 @@ function salirDeModoMeet() {
   }
   micCortadoPorMeet = false;
   setStatus(connected ? "Te escucho" : "Lista para comenzar");
+
+  const reunion = reunionActual;
+  reunionActual = null;
+  if (!reunion) return;
+  reunion.meta.fin = Date.now();
+  reunion.estadisticas = { ...escucha.estadisticas };
+  pasarReunionAMemoria(reunion);
+  guardarReunion(reunion);
+  mostrarAvisoDeReunion(reunion, reunionEnGrabacion === reunion ? "Terminando la transcripción de alta fidelidad…" : "");
+
+  // La grabadora termina su cola después: lo último que se dijo también tiene
+  // que quedar transcrito antes de dar la reunión por cerrada.
+  if (reunionEnGrabacion === reunion) {
+    await grabadora.detener();
+    reunionEnGrabacion = null;
+    guardarReunion(reunion);
+    mostrarAvisoDeReunion(reunion);
+  }
+  if (connected) {
+    sesion?.anadirContexto?.(`[Sistema] La reunión «${reunion.meta.titulo}» terminó: ${Math.round(duracion(reunion) / 60000)} minutos, `
+      + `${palabras(reunion)} palabras transcritas. Para responder sobre su contenido usa consultar_reunion; para la minuta, generar_minuta.`);
+  }
+}
+
+// Se le cuenta a Catalina que empezó una reunión y de qué va, para que sepa
+// qué son los fragmentos que le irán llegando.
+function presentarReunionACatalina() {
+  const m = reunionActual?.meta;
+  if (!m || !sesion?.anadirContexto) return;
+  sesion.anadirContexto([
+    `[Sistema] Empezó la reunión «${m.titulo}» y la estás escuchando en silencio.`,
+    m.objetivo ? `Objetivo: ${m.objetivo}.` : "",
+    m.participantes ? `Participantes: ${m.participantes}.` : "",
+    m.agenda ? `Agenda: ${m.agenda}.` : "",
+    "Te llegarán fragmentos de la transcripción: no respondas a ellos; contesta sólo cuando te llamen por tu nombre."
+  ].filter(Boolean).join(" "));
+}
+
+// Lo nuevo de la reunión pasa a la memoria de la conversación como contexto
+// silencioso. Hay un tope por sesión: una reunión de horas no cabe en el
+// contexto de un modelo de voz, y para eso está consultar_reunion.
+function pasarReunionAMemoria(reunion = reunionActual) {
+  if (!reunion || !connected || !sesion?.anadirContexto) return;
+  const nuevos = reunion.navegador.slice(memoriaEnviadaHasta).filter(s => s.texto);
+  memoriaEnviadaHasta = reunion.navegador.length;
+  if (!nuevos.length) return;
+  const maximo = configMemoria.maxCaracteresPorSesion || 30000;
+  if (memoriaCaracteres >= maximo) return;
+  const hora = t => new Date(t).toLocaleTimeString("es-CL", { hour: "2-digit", minute: "2-digit" });
+  let texto = nuevos.map(s => s.texto).join(" ");
+  texto = texto.slice(0, maximo - memoriaCaracteres);
+  memoriaCaracteres += texto.length;
+  const aviso = memoriaCaracteres >= maximo ? " (Límite de memoria alcanzado: lo que siga, consúltalo con consultar_reunion.)" : "";
+  sesion.anadirContexto(`[Transcripción de «${reunion.meta.titulo}», ${hora(nuevos[0].momento)}–${hora(nuevos.at(-1).momento)}. Contexto, no respondas a esto.] ${texto}${aviso}`);
 }
 
 // La llamaron por su nombre en mitad de la reunión.
 async function atenderLlamado(peticion, contexto) {
+  if (reunionActual) {
+    const s = Math.round((Date.now() - reunionActual.meta.inicio) / 1000);
+    const marca = [Math.floor(s / 3600), Math.floor(s % 3600 / 60), s % 60].map(n => String(n).padStart(2, "0")).join(":");
+    reunionActual.intervenciones.push({ momento: Date.now(), marca, pregunta: peticion });
+    guardarPronto();
+  }
   if (!connected || !sesion) {
     // Sin sesión abierta no puede contestar; se avisa en vez de perder lo dicho.
-    señalar("Me llamaste, pero la sesión está cerrada", "problema");
+    señalar("Me llamaste, pero la sesión de voz está cerrada (sigo transcribiendo)", "problema");
     return;
   }
   hayActividad();
+  // Lo pendiente de pasar a memoria se pasa ahora: la pregunta puede ser sobre
+  // lo que se acaba de decir.
+  pasarReunionAMemoria();
 
   // Se le da lo hablado y lo que le piden, separados, para que sepa qué es
   // contexto y qué es la pregunta.
   const mensaje = [
-    "Estás escuchando una reunión. Esto es lo que se ha dicho hasta ahora, transcrito automáticamente:",
+    `Estás escuchando la reunión «${reunionActual?.meta.titulo || "en curso"}». Esto es lo que se ha dicho, transcrito automáticamente:`,
     "",
     contexto || "(todavía no hay nada transcrito)",
     "",
     `Acaban de dirigirse a ti y te han pedido: «${peticion}»`,
     "",
     "Responde sólo a eso, breve y en voz alta. No resumas la reunión entera salvo que te lo pidan.",
+    "Si necesitas una parte de la reunión que no está arriba, usa consultar_reunion.",
     "La transcripción es automática y puede tener errores: si algo no cuadra, dilo en vez de darlo por cierto."
   ].join("\n");
 
@@ -432,6 +674,78 @@ async function atenderLlamado(peticion, contexto) {
   señalar(enviado ? `Te oí: «${peticion}»` : "No pude enviar tu pregunta", enviado ? "respondiendo" : "problema");
   setStatus("Respondiendo…");
 }
+
+// Aviso al terminar: la reunión quedó guardada y desde aquí se abre la minuta.
+function mostrarAvisoDeReunion(reunion, estado = "") {
+  const q = calidad(reunion);
+  ui.reunionAvisoTitulo.textContent = reunion.meta.titulo;
+  ui.reunionAvisoDetalle.textContent = estado || [
+    `${Math.round(duracion(reunion) / 60000)} min`,
+    `${q.palabras} palabras`,
+    `transcripción ${q.fuente}`,
+    q.huecos ? `${q.huecos} hueco(s) sin audio` : "sin huecos detectados"
+  ].join(" · ");
+  ui.reunionAvisoAbrir.href = `minuta.html?id=${encodeURIComponent(reunion.id)}`;
+  ui.reunionAviso.hidden = false;
+}
+function ocultarAvisoDeReunion() { ui.reunionAviso.hidden = true; }
+ui.reunionAvisoCerrar.addEventListener("click", ocultarAvisoDeReunion);
+
+// Herramientas de reuniones.
+function consultarReunionHerramienta(argumentos) {
+  const reunion = elegirReunion(argumentos.reunion, reunionActual?.id);
+  if (!reunion) return { ok: false, error: "No hay ninguna reunión guardada en este navegador." };
+  // La que está en curso se consulta con lo último, aunque aún no se guardara.
+  const fuente = reunion.id === reunionActual?.id ? reunionActual : reunion;
+  return consultarReunion(fuente, String(argumentos.pregunta || ""));
+}
+
+let minutaEnCurso = null;
+function generarMinutaHerramienta(argumentos) {
+  const reunion = elegirReunion(argumentos.reunion || "ultima", reunionActual?.id);
+  if (!reunion) return { ok: false, error: "No hay ninguna reunión guardada en este navegador." };
+  const fuente = reunion.id === reunionActual?.id ? reunionActual : reunion;
+  if (palabras(fuente) < 15) return { ok: false, error: "La reunión casi no tiene transcripción: no hay material para una minuta." };
+  if (minutaEnCurso) return { ok: false, error: "Ya estoy redactando una minuta; espera a que termine." };
+  const nivel = argumentos.nivel === "estandar" ? "estandar" : "detallado";
+
+  // Se devuelve enseguida: la minuta tarda más de lo que la herramienta puede
+  // esperar, y Catalina tiene que poder seguir conversando mientras tanto.
+  minutaEnCurso = pedirMinuta(fuente, { nivel }).then(async r => {
+    minutaEnCurso = null;
+    if (!r.ok) {
+      sesion?.anadirContexto?.(`[Sistema] No se pudo generar la minuta de «${fuente.meta.titulo}»: ${r.error}. Díselo a la persona.`);
+      mostrarAviso(`No se pudo generar la minuta: ${r.error}`);
+      return;
+    }
+    fuente.minuta = r.minuta;
+    fuente.trazabilidad = r.trazabilidad;
+    guardarReunion(fuente);
+    mostrarAvisoDeReunion(fuente, "Minuta lista · ábrela para revisarla, exportarla o enviarla");
+    let enviado = "";
+    if (argumentos.enviar_por_correo) {
+      const e = await enviarMinutaPorCorreo(fuente);
+      enviado = e.ok ? ` Se envió por correo a ${e.destinatario} (sin diagramas dibujados: para el adjunto completo, envíala desde la página de la minuta).` : ` El correo falló: ${e.error}.`;
+    }
+    sesion?.anadirContexto?.(`[Sistema] La minuta de «${fuente.meta.titulo}» está lista y abierta en pantalla. `
+      + `Mensaje clave: ${r.minuta.onePager.mensajeClave} Decisiones: ${r.minuta.onePager.decisiones.join("; ") || "ninguna registrada"}.${enviado} `
+      + "Avísale a la persona de forma breve.");
+    if (connected && !enModoMeet) sesion?.enviarTexto?.("[Sistema] La minuta terminó. Avísalo en una frase.");
+  });
+  mostrarAvisoDeReunion(fuente, `Redactando la minuta (${nivel})… tarda uno o dos minutos`);
+  return { ok: true, estado: "generando", reunion: fuente.meta.titulo, nivel, mensaje: "Tardará uno o dos minutos; te avisaré cuando esté lista." };
+}
+
+// Al abrir una conversación nueva, Catalina sabe qué reuniones hay guardadas.
+// Sin esto, en la sesión siguiente a una reunión no tenía ni noticia de ella.
+function presentarReunionesGuardadas() {
+  const indice = indiceDeReuniones(5);
+  if (!indice.length || !sesion?.anadirContexto) return;
+  sesion.anadirContexto(`[Sistema] Reuniones transcritas disponibles en este equipo, de la más reciente a la más antigua: ${indice.join("; ")}. `
+    + "Si te preguntan por ellas, consulta con consultar_reunion antes de responder.");
+}
+
+let configMemoria = { cadaSegundos: 90, maxCaracteresPorSesion: 30000 };
 
 // Herramientas de docencia.
 //
@@ -459,7 +773,9 @@ async function atenderHerramienta(nombre, argumentos) {
   director.setState("thinking");
   director.setExpression("concentracion", .6);
   try {
-    return await despacharHerramienta(nombre, argumentos);
+    const resultado = await despacharHerramienta(nombre, argumentos);
+    anotarMaterialDeReunion(nombre);
+    return resultado;
   } finally {
     // Si tras la herramienta no llegó a hablar, se vuelve a escuchar en vez de
     // quedarse pensando para siempre. Si sí habla, su audio ya puso "speaking".
@@ -470,6 +786,23 @@ async function atenderHerramienta(nombre, argumentos) {
       }
     }, 600);
   }
+}
+
+// Lo que Catalina muestra durante una reunión forma parte de ella: la minuta lo
+// recoge como material de referencia.
+function anotarMaterialDeReunion(nombre) {
+  if (!reunionActual) return;
+  const materiales = reunionActual.materiales;
+  if (nombre === "buscar_imagen_medica" && laminaEnPantalla) {
+    materiales.push(`Lámina: ${laminaEnPantalla.titulo}${laminaEnPantalla.fuente ? ` — ${laminaEnPantalla.fuente}` : ""}`);
+  }
+  if (nombre === "buscar_referencias") {
+    for (const r of referenciasEnPantalla.slice(0, 8)) {
+      materiales.push(`${r.titulo}${r.revista ? `, ${r.revista}` : ""}${r.anio ? ` (${r.anio})` : ""}${r.enlace ? ` — ${r.enlace}` : ""}`);
+    }
+  }
+  reunionActual.materiales = [...new Set(materiales)];
+  guardarPronto();
 }
 
 async function despacharHerramienta(nombre, argumentos) {
@@ -487,6 +820,8 @@ async function despacharHerramienta(nombre, argumentos) {
   if (nombre === "buscar_imagenes_web") return await buscarImagenesWeb(argumentos);
   if (nombre === "fuentes_clinicas") return await pedirFuentesClinicas(argumentos);
   if (nombre === "buscar_videos") return await buscarVideos(argumentos);
+  if (nombre === "consultar_reunion") return consultarReunionHerramienta(argumentos);
+  if (nombre === "generar_minuta") return generarMinutaHerramienta(argumentos);
   // Cualquier otro nombre viene de un conector definido en el administrador.
   // Se manda el nombre, no la dirección: el servidor la resuelve.
   return await usarConector(nombre, argumentos);

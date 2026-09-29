@@ -140,11 +140,14 @@ export function versionTexto({ titulo, resumen, lamina, referencias = [] }) {
 }
 
 // Envío por Resend: una llamada HTTPS, sin dependencias que instalar.
-export async function enviarPorResend({ apiKey, remitente, destinatario, asunto, html, texto }) {
+export async function enviarPorResend({ apiKey, remitente, destinatario, asunto, html, texto, adjuntos = [] }) {
+  const cuerpoCorreo = { from: remitente, to: [destinatario], subject: asunto, html, text: texto };
+  // Resend recibe los adjuntos como {filename, content en base64}.
+  if (adjuntos.length) cuerpoCorreo.attachments = adjuntos;
   const upstream = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ from: remitente, to: [destinatario], subject: asunto, html, text: texto }),
+    body: JSON.stringify(cuerpoCorreo),
     signal: AbortSignal.timeout(15000)
   });
 

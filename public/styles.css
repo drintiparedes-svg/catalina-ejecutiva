@@ -274,3 +274,53 @@ button.primary { border-color: rgba(109,228,255,.45); background: linear-gradien
 .referencias-ampliar:hover { background: rgba(169,216,236,.12); }
 .referencias[data-expandido="si"] { max-height: 72dvh; }
 .referencia-impacto { color: #8fd0b0; }
+
+/* Reuniones: enlace con aspecto de botón, diálogo de datos y aviso de cierre. */
+.boton-enlace {
+  display: inline-flex; align-items: center; min-height: 42px; padding: 0 17px;
+  border: 1px solid rgba(184,226,246,.2); border-radius: 12px; background: rgba(255,255,255,.06);
+  color: #eaf8ff; font: inherit; text-decoration: none; white-space: nowrap;
+}
+.boton-enlace.primary { border-color: rgba(109,228,255,.45); background: linear-gradient(135deg, rgba(25,134,173,.85), rgba(39,82,126,.9)); }
+
+.reunion-dialogo {
+  width: min(560px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); padding: 0;
+  border: 1px solid rgba(180,225,245,.18); border-radius: 18px;
+  background: rgba(6,16,26,.96); color: #eaf8ff; box-shadow: 0 24px 60px rgba(0,0,0,.55);
+}
+.reunion-dialogo::backdrop { background: rgba(0,0,0,.55); backdrop-filter: blur(4px); }
+.reunion-dialogo form { display: flex; flex-direction: column; gap: 11px; padding: 22px 22px 18px; overflow-y: auto; }
+.reunion-dialogo h2 { margin: 0; font-size: 20px; font-weight: 520; letter-spacing: -.01em; }
+.reunion-ayuda { margin: 0; color: rgba(209,229,239,.66); font-size: 12px; line-height: 1.5; }
+.reunion-dialogo label { display: flex; flex-direction: column; gap: 5px; color: #a9d8ec; font-size: 12px; font-weight: 600; }
+.reunion-dialogo input:not([type="checkbox"]), .reunion-dialogo textarea {
+  width: 100%; padding: 9px 11px; border: 1px solid rgba(184,226,246,.2); border-radius: 10px;
+  background: rgba(255,255,255,.05); color: #f4fbff; font: inherit; font-size: 14px; font-weight: 400; resize: vertical;
+}
+.reunion-dialogo input:focus, .reunion-dialogo textarea:focus { outline: 2px solid rgba(109,228,255,.45); outline-offset: 1px; }
+.reunion-dialogo fieldset { display: flex; flex-direction: column; gap: 9px; margin: 4px 0 0; padding: 11px 12px; border: 1px solid rgba(184,226,246,.16); border-radius: 12px; }
+.reunion-dialogo legend { padding: 0 6px; color: #a9d8ec; font-size: 11px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+.reunion-dialogo .casilla { flex-direction: row; align-items: flex-start; gap: 9px; color: #d1e5ef; font-weight: 400; line-height: 1.45; }
+.reunion-dialogo .casilla input { margin-top: 3px; flex: none; }
+.reunion-dialogo .casilla strong { color: #f4fbff; font-weight: 600; }
+.reunion-dialogo [hidden] { display: none; }
+.reunion-botones { display: flex; justify-content: flex-end; gap: 10px; margin-top: 4px; }
+
+.reunion-aviso {
+  position: absolute; right: calc(20px + env(safe-area-inset-right)); top: calc(24px + env(safe-area-inset-top));
+  display: flex; align-items: center; gap: 14px; max-width: min(430px, calc(100% - 32px));
+  padding: 13px 12px 13px 16px; border: 1px solid rgba(180,225,245,.16); border-radius: 16px;
+  background: rgba(5,14,23,.82); backdrop-filter: blur(18px); box-shadow: 0 12px 38px rgba(0,0,0,.35);
+}
+.reunion-aviso[hidden] { display: none; }
+.reunion-aviso > div { min-width: 0; flex: 1; }
+.reunion-aviso p { margin: 0; }
+.reunion-aviso-eyebrow { color: #a9d8ec; font-size: 10px; font-weight: 700; letter-spacing: .2em; text-transform: uppercase; }
+.reunion-aviso-titulo { margin-top: 3px !important; font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reunion-aviso-detalle { margin-top: 2px !important; color: rgba(209,229,239,.7); font-size: 12px; line-height: 1.4; }
+.reunion-aviso-cerrar { min-height: 28px; padding: 0 9px; border-color: transparent; background: transparent; color: #a9d8ec; font-size: 17px; }
+.meet .reunion-aviso { display: none; }
+@media (max-width: 650px) {
+  .controls .boton-enlace { display: none; }
+  .reunion-aviso { left: 16px; right: 16px; max-width: none; }
+}

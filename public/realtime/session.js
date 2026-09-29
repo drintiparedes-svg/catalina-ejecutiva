@@ -170,6 +170,16 @@ export class RealtimeSession {
     return true;
   }
 
+  // Contexto silencioso: se añade a la conversación sin pedir respuesta.
+  anadirContexto(texto) {
+    if (this.channel?.readyState !== "open" || !texto) return false;
+    this.channel.send(JSON.stringify({
+      type: "conversation.item.create",
+      item: { type: "message", role: "user", content: [{ type: "input_text", text: texto }] }
+    }));
+    return true;
+  }
+
   disconnect() {
     this.connected = false;
     this.channel?.close();

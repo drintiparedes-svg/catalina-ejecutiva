@@ -15,11 +15,14 @@ import {
 import {
   telefoniaElevenLabsLista, originarLlamadaElevenLabs, estadoLlamadaElevenLabs, diagnosticoElevenLabs
 } from "./llamadas.mjs";
+import {
+  estadoReuniones, clavePropiaDe, transcribirTramo, generarMinuta, correoDeMinuta, adjuntosSeguros, promptManual
+} from "./reunion.mjs";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // Se sube a mano con cada arreglo que el usuario tiene que descargar.
-export const VERSION = "2026-08-24.24";
+export const VERSION = "2026-09-29.25";
 
 const root = fileURLToPath(new URL("./public", import.meta.url));
 // El .env se lee de forma síncrona a propósito. Con `await` aquí arriba, en el
@@ -248,6 +251,33 @@ export async function atender(req, res) {
       return await enviarResumen(req, res);
     }
 
+    // Reuniones: estado de proveedores, transcripción de alta fidelidad,
+    // minuta y su envío. Ver reunion.mjs.
+    if (req.method === "GET" && req.url === "/reunion/estado") {
+      return json(res, 200, { ok: true, ...estadoReuniones(await cargarConfig()) });
+    }
+
+    if (req.method === "POST" && req.url === "/reunion/transcribir") {
+      let p = {};
+      try { p = JSON.parse(await readBody(req)); } catch {}
+      const r = await transcribirTramo(p, await cargarConfig(), clavePropiaDe(req));
+      return json(res, r.ok ? 200 : 502, r);
+    }
+
+    if (req.method === "POST" && req.url === "/reunion/minuta") {
+      return await responderMinuta(req, res);
+    }
+
+    if (req.method === "POST" && req.url === "/reunion/prompt") {
+      let p = {};
+      try { p = JSON.parse(await readBody(req)); } catch {}
+      return json(res, 200, { ok: true, prompt: promptManual(p) });
+    }
+
+    if (req.method === "POST" && req.url === "/reunion/correo") {
+      return await enviarMinuta(req, res);
+    }
+
     if (req.method === "POST" && req.url === "/conector") {
       return await usarConector(req, res);
     }
@@ -333,6 +363,14 @@ const USO_DE_HERRAMIENTAS = [
 
 ].join(" ");
 
+// Reuniones: memoria y minutas. Fijo, como el resto del uso de herramientas.
+const USO_DE_REUNIONES = [
+  "Las reuniones que escuchas en modo Meet quedan transcritas y guardadas. Durante la reunión recibirás fragmentos de la transcripción como contexto: no los comentes ni respondas a ellos salvo que te hablen.",
+  "Cuando te pregunten por lo que se dijo en una reunión —la actual o una anterior—, usa consultar_reunion antes de contestar, aunque creas recordarlo. Nunca digas que no tienes esa información sin haberla consultado.",
+  "Al responder sobre una reunión, di qué se dijo y, si importa, en qué minuto; distingue lo acordado de lo que sólo se planteó, y avisa si la transcripción tenía huecos en ese tramo.",
+  "Si te piden la minuta o el acta, usa generar_minuta; por defecto en nivel detallado. Avisa que tarda un par de minutos y sigue disponible mientras tanto."
+].join(" ");
+
 // Sólo se añade cuando las herramientas de llamada están disponibles: si no,
 // sería describirle a Catalina algo que no puede hacer.
 const USO_DEL_TELEFONO = [
@@ -352,6 +390,7 @@ async function instruccionesDeSesion(config) {
   return [
     componerInstrucciones(config),
     USO_DE_HERRAMIENTAS,
+    USO_DE_REUNIONES,
     puedeLlamar ? USO_DEL_TELEFONO : ""
   ].filter(Boolean).join(" ");
 }
@@ -623,6 +662,46 @@ const PARAMETROS_ESTADO_LLAMADA = {
 const DESCRIPCION_ESTADO_LLAMADA = "Dice cómo va o cómo terminó una llamada. Consúltala cada pocos segundos "
   + "mientras la llamada esté en curso, y cuenta el desenlace cuando lo haya.";
 
+// Reuniones. Sin una herramienta para consultarlas, Catalina sólo «recordaba»
+// lo que cupiera en su contexto de voz, y ante una pregunta sobre una reunión
+// anterior respondía que no tenía la información.
+const PARAMETROS_CONSULTAR_REUNION = {
+  type: "object",
+  properties: {
+    pregunta: {
+      type: "string",
+      description: "Qué quieres saber de la reunión, con las palabras clave del tema (p. ej. «presupuesto del piloto de telemedicina», «quién quedó a cargo de la integración»)."
+    },
+    reunion: {
+      type: "string",
+      description: "Cuál: «actual», «última», o palabras del título. Vacío = la actual o, si no hay, la última."
+    }
+  },
+  required: ["pregunta"]
+};
+
+const DESCRIPCION_CONSULTAR_REUNION = "Consulta lo que se dijo en una reunión transcrita —la que está en curso o una anterior— y su minuta si existe. "
+  + "Devuelve pasajes textuales con marca de tiempo. Úsala SIEMPRE antes de responder sobre el contenido de una reunión: "
+  + "nunca digas que no tienes la información sin haberla consultado.";
+
+const PARAMETROS_GENERAR_MINUTA = {
+  type: "object",
+  properties: {
+    nivel: {
+      type: "string",
+      enum: ["estandar", "detallado"],
+      description: "«detallado» usa el modelo de mayor razonamiento y un formato exhaustivo; «estandar» es más rápido. Por defecto, detallado."
+    },
+    reunion: { type: "string", description: "Cuál: «actual», «última», o palabras del título. Vacío = la última." },
+    enviar_por_correo: { type: "boolean", description: "Si además se envía por correo al destinatario configurado. Sólo si lo piden." }
+  },
+  required: []
+};
+
+const DESCRIPCION_GENERAR_MINUTA = "Genera la minuta de una reunión transcrita en dos formatos —extensa con detalle, diagramas y gráficos, y one pager— "
+  + "y la deja abierta en pantalla para revisarla. Tarda uno o dos minutos: devuelve enseguida y avisa cuando esté lista. "
+  + "Úsala cuando te pidan la minuta, el acta o el resumen formal de una reunión.";
+
 const HERRAMIENTAS = [
   { nombre: "buscar_imagen_medica", descripcion: DESCRIPCION_IMAGEN, parametros: PARAMETROS_IMAGEN },
   { nombre: "como_llegar", descripcion: DESCRIPCION_RUTA, parametros: PARAMETROS_RUTA },
@@ -635,7 +714,9 @@ const HERRAMIENTAS = [
   { nombre: "fuentes_clinicas", descripcion: DESCRIPCION_FUENTES_CLINICAS, parametros: PARAMETROS_FUENTES_CLINICAS },
   { nombre: "generar_imagen", descripcion: DESCRIPCION_IMAGEN_GEN, parametros: PARAMETROS_IMAGEN_GEN },
   { nombre: "buscar_videos", descripcion: DESCRIPCION_VIDEOS, parametros: PARAMETROS_VIDEOS },
-  { nombre: "enviar_resumen", descripcion: DESCRIPCION_CORREO, parametros: PARAMETROS_CORREO }
+  { nombre: "enviar_resumen", descripcion: DESCRIPCION_CORREO, parametros: PARAMETROS_CORREO },
+  { nombre: "consultar_reunion", descripcion: DESCRIPCION_CONSULTAR_REUNION, parametros: PARAMETROS_CONSULTAR_REUNION },
+  { nombre: "generar_minuta", descripcion: DESCRIPCION_GENERAR_MINUTA, parametros: PARAMETROS_GENERAR_MINUTA }
 ];
 
 // Las de llamada sólo se le ofrecen al modelo si la telefonía está de verdad
@@ -1699,6 +1780,63 @@ async function enviarResumen(req, res) {
     return json(res, 502, { ok: false, error: resultado.error, code: "CORREO_RECHAZADO" });
   }
   // El destinatario se devuelve para que Catalina pueda confirmarlo en voz alta.
+  json(res, 200, { ok: true, destinatario: correo.destinatario });
+}
+
+// Minuta de reunión.
+//
+// Un modelo con razonamiento alto tarda uno o dos minutos en redactar una
+// minuta extensa. Para que ningún intermediario corte una conexión que parece
+// inactiva, la respuesta se abre enseguida y se manda un espacio cada 10 s; el
+// JSON llega al final. JSON.parse ignora los espacios iniciales.
+async function responderMinuta(req, res) {
+  let p = {};
+  try { p = JSON.parse(await readBody(req)); } catch {}
+  const config = await cargarConfig();
+  const propia = clavePropiaDe(req);
+
+  res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+  const latido = setInterval(() => { try { res.write(" "); } catch {} }, 10_000);
+  try {
+    const r = await generarMinuta(p, config, propia);
+    res.end(JSON.stringify(r));
+  } catch (error) {
+    console.error("Minuta:", error?.message || error);
+    res.end(JSON.stringify({ ok: false, error: "Falló la generación de la minuta." }));
+  } finally {
+    clearInterval(latido);
+  }
+}
+
+// Envío de la minuta. Mismas garantías que el resumen: el destinatario sale de
+// la configuración y nunca del navegador ni del modelo.
+async function enviarMinuta(req, res) {
+  const apiKey = process.env.RESEND_API_KEY?.trim();
+  if (!apiKey) return json(res, 503, { ok: false, error: "Falta RESEND_API_KEY: no hay forma de enviar correo." });
+  const config = await cargarConfig();
+  const correo = config.correo ?? {};
+  if (correo.activo === false) return json(res, 403, { ok: false, error: "El envío de correo está desactivado." });
+  if (!correo.destinatario) return json(res, 503, { ok: false, error: "No hay destinatario configurado." });
+
+  let p = {};
+  try { p = JSON.parse(await readBody(req)); } catch {}
+  if (!p.minuta?.onePager) return json(res, 400, { ok: false, error: "Falta la minuta." });
+
+  const meta = { titulo: String(p.meta?.titulo || p.minuta.titulo || "Minuta").slice(0, 160), fecha: String(p.meta?.fecha || "").slice(0, 80) };
+  const { html, texto } = correoDeMinuta({ minuta: p.minuta, meta, trazabilidad: p.trazabilidad || {} });
+  const resultado = await enviarPorResend({
+    apiKey,
+    remitente: correo.remitente || "Catalina <onboarding@resend.dev>",
+    destinatario: correo.destinatario,
+    asunto: `Minuta · ${meta.titulo}`,
+    html,
+    texto,
+    adjuntos: adjuntosSeguros(p.adjuntos)
+  });
+  if (!resultado.ok) {
+    console.error("Correo minuta:", resultado.estado, resultado.error);
+    return json(res, 502, { ok: false, error: resultado.error });
+  }
   json(res, 200, { ok: true, destinatario: correo.destinatario });
 }
 
