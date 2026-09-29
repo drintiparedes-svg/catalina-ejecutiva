@@ -444,9 +444,45 @@ abajo y la identidad se reduce al nombre.
 
 Para que los demás participantes reciban la voz de Catalina, se necesita enrutar el audio del navegador a Meet con un dispositivo virtual (por ejemplo BlackHole en macOS). Esa configuración se realiza después de validar este prototipo.
 
+### Transcripción, memoria y minutas
+
+Al pulsar **Modo Meet** se abre un diálogo con los datos de la reunión (título,
+objetivo, participantes, agenda, enlaces). Todo va a la minuta.
+
+- **Dos capturas en paralelo.** El reconocimiento del navegador (gratis, sólo
+  oye el micrófono) y, opcionalmente, la **alta fidelidad**: graba el
+  micrófono y, si se marca, el audio de la pestaña del Meet, y lo transcribe
+  por tramos de 20–40 s con `gpt-4o-transcribe` o Gemini Flash. Con audífonos,
+  sin el audio de la pestaña los participantes remotos no quedan transcritos.
+- **Robustez.** La escucha del navegador rescata la frase a medias cuando
+  Chrome corta la sesión, rearranca con espera creciente, tiene un vigilante
+  que la reinicia si se cuelga y anota los huecos. Los tramos de alta
+  fidelidad que fallan se rellenan con lo que entendió el navegador.
+- **Memoria de Catalina.** Cada reunión queda guardada en el navegador. Lo que
+  se dice pasa a su contexto cada 90 s, y la herramienta `consultar_reunion`
+  le permite buscar en reuniones actuales o anteriores. Con ElevenLabs hay que
+  volver a registrar las herramientas (abrir `/registrar.html`)
+  para que el agente reciba `consultar_reunion` y `generar_minuta`.
+- **Minutas** (`/minuta.html`): one pager + minuta extensa con desarrollo por
+  tema, citas con marca de tiempo, decisiones, plan de acción, riesgos,
+  diagramas Mermaid y gráficos SVG cuando hay datos. Nivel *estándar* (Gemini
+  Flash) o *detallado* (Claude Opus 5.5 si hay `ANTHROPIC_API_KEY`; si no,
+  Gemini Pro u OpenAI). Proveedores y modelos se cambian en `config.mjs →
+  reuniones`. Exporta a PDF, HTML autónomo y Markdown (para Google Docs) y se
+  envía por correo con la extensa adjunta.
+- **Cuenta propia.** Clave de API propia (se guarda sólo en el navegador) o,
+  sin coste, copiar instrucciones + transcripción para pegarlas en el chat de
+  una suscripción. Evaluación completa en
+  [`docs/minutas-y-cuentas-propias.md`](docs/minutas-y-cuentas-propias.md).
+- También se puede crear una reunión pegando una transcripción existente (por
+  ejemplo, la que genera Google Meet).
+
+Pruebas: `npm run test:reuniones`.
+
 ## Privacidad
 
 - La interfaz y la animación se ejecutan en el equipo.
 - El análisis de labios se ejecuta completamente en el navegador local.
-- El audio conversacional se envía a OpenAI Realtime API.
+- El audio conversacional se envía al proveedor de voz activo (ElevenLabs, OpenAI o Gemini).
+- Las reuniones se guardan sólo en el navegador (localStorage). En alta fidelidad el audio se envía por tramos al proveedor de transcripción, y la transcripción completa al modelo que redacta la minuta. Con datos identificables de pacientes, úsese sólo con proveedores y acuerdos de tratamiento de datos autorizados por la institución.
 - `.env` está ignorado por Git para evitar publicar la clave.

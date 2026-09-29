@@ -370,6 +370,15 @@ export class ElevenLabsSession {
     return true;
   }
 
+  // Contexto silencioso: ElevenLabs lo añade a la conversación sin que el
+  // agente responda ni interrumpa lo que esté diciendo. Es el canal por el que
+  // la reunión en curso pasa a su memoria.
+  anadirContexto(texto) {
+    if (this.socket?.readyState !== WebSocket.OPEN || !texto) return false;
+    this.#responder({ type: "contextual_update", text: texto });
+    return true;
+  }
+
   disconnect() {
     this.cierreLimpio = true;
     this.connected = false;
@@ -392,6 +401,15 @@ export class ElevenLabsSession {
   toggleMute() {
     this.muted = !this.muted;
     this.#emit("onMute", this.muted);
+    return this.muted;
+  }
+
+  // Corta lo que se envía sin apagar la pista del micrófono, igual que en las
+  // otras dos sesiones. Faltaba aquí, y con ElevenLabs —la voz principal— el
+  // modo reunión fallaba al entrar: la llamada lanzaba un error antes de que
+  // arrancara la escucha. El envío de audio ya mira `muted` en cada bloque.
+  pausarEnvio(pausado) {
+    this.muted = Boolean(pausado);
     return this.muted;
   }
 }

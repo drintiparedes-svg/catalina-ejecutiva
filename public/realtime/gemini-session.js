@@ -221,6 +221,16 @@ export class GeminiSession {
     return true;
   }
 
+  // Contexto silencioso: con turnComplete en falso Gemini lo incorpora al
+  // historial pero no genera respuesta hasta el siguiente turno completo.
+  anadirContexto(texto) {
+    if (this.socket?.readyState !== WebSocket.OPEN || !texto) return false;
+    this.socket.send(JSON.stringify({
+      clientContent: { turns: [{ role: "user", parts: [{ text: texto }] }], turnComplete: false }
+    }));
+    return true;
+  }
+
   disconnect() {
     this.connected = false;
     this.#callar();

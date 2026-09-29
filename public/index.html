@@ -61,7 +61,8 @@
       <button id="mute" disabled>Silenciar micrófono</button>
       <button id="toggleCaption" aria-pressed="false" title="Muestra lo que dice Catalina sobre el vídeo">Subtítulos</button>
       <button id="togglePanel" aria-pressed="false" title="Abre el historial de la conversación">Historial</button>
-      <button id="meetMode" title="Oculta los controles para capturar la ventana">Modo Meet</button>
+      <button id="meetMode" title="Empieza a escuchar y transcribir una reunión; oculta los controles para capturar la ventana">Modo Meet</button>
+      <a class="boton-enlace" href="minuta.html" target="_blank" rel="noopener" title="Reuniones guardadas, minutas y exportación">Minutas</a>
     </nav>
     <!-- Señal de escucha del modo reunión. Es lo único que se ve en ese modo
          aparte de la cara: sin ella no hay forma de saber si está oyendo. -->
@@ -70,9 +71,49 @@
       <span id="oyendoTexto">Escuchando…</span>
     </div>
 
-    <button class="exit-meet" id="exitMeet" aria-label="Salir del modo Meet">Mostrar controles</button>
+    <button class="exit-meet" id="exitMeet" aria-label="Terminar la reunión y salir del modo Meet">Terminar reunión</button>
+
+    <!-- Aviso al terminar una reunión: quedó guardada y desde aquí se abre la
+         minuta. Sin esto, la transcripción existía pero no había camino a ella. -->
+    <aside class="reunion-aviso" id="reunionAviso" hidden aria-live="polite">
+      <div>
+        <p class="reunion-aviso-eyebrow">Reunión guardada</p>
+        <p class="reunion-aviso-titulo" id="reunionAvisoTitulo"></p>
+        <p class="reunion-aviso-detalle" id="reunionAvisoDetalle"></p>
+      </div>
+      <a class="primary boton-enlace" id="reunionAvisoAbrir" href="minuta.html" target="_blank" rel="noopener">Minuta</a>
+      <button class="reunion-aviso-cerrar" id="reunionAvisoCerrar" aria-label="Cerrar el aviso">&times;</button>
+    </aside>
+
+    <dialog class="reunion-dialogo" id="reunionDialogo" aria-labelledby="reunionDialogoTitulo">
+      <form id="reunionForm" method="dialog">
+        <h2 id="reunionDialogoTitulo">Nueva reunión</h2>
+        <p class="reunion-ayuda">Estos datos van a la minuta. Todo es opcional salvo que quieras una minuta precisa: sin objetivo ni participantes, el modelo tiene que deducirlos.</p>
+        <label>Título<input name="titulo" autocomplete="off" placeholder="Comité de salud digital · seguimiento mensual"></label>
+        <label>Objetivo<input name="objetivo" autocomplete="off" placeholder="Qué debe salir decidido de esta reunión"></label>
+        <label>Participantes<input name="participantes" autocomplete="off" placeholder="Nombre (rol), Nombre (rol)…"></label>
+        <label>Lugar o plataforma<input name="lugar" autocomplete="off" placeholder="Google Meet, sala 3…"></label>
+        <label>Agenda<textarea name="agenda" rows="3" placeholder="1. …&#10;2. …"></textarea></label>
+        <label>Enlaces y documentos de referencia<textarea name="enlaces" rows="2" placeholder="Una referencia por línea (URL, documento, estudio)"></textarea></label>
+
+        <fieldset>
+          <legend>Calidad de la transcripción</legend>
+          <label class="casilla"><input type="checkbox" id="reunionAlta" checked>
+            <span><strong>Alta fidelidad</strong> — graba y transcribe con un modelo de voz dedicado, además del navegador. Recomendado. Coste aprox. 0,05–0,40 USD por hora según proveedor.</span></label>
+          <label class="casilla"><input type="checkbox" id="reunionPestana">
+            <span><strong>Incluir el audio de la pestaña del Meet</strong> — imprescindible si usas audífonos: sin esto sólo se oye tu micrófono. Al empezar, elige la pestaña del Meet y marca «Compartir audio de la pestaña».</span></label>
+          <label class="casilla" id="reunionContinuar" hidden><input type="checkbox" id="reunionContinuarCasilla">
+            <span id="reunionContinuarTexto"></span></label>
+        </fieldset>
+        <p class="reunion-ayuda">La transcripción se guarda sólo en este navegador. En alta fidelidad el audio se envía por tramos al proveedor de transcripción; no lo uses con datos identificables de pacientes sin la autorización que corresponda.</p>
+        <div class="reunion-botones">
+          <button type="button" id="reunionCancelar">Cancelar</button>
+          <button type="submit" class="primary">Empezar a escuchar</button>
+        </div>
+      </form>
+    </dialog>
   </main>
   <audio id="remoteAudio" autoplay></audio>
-  <script type="module" src="app.js?v=25"></script>
+  <script type="module" src="app.js?v=26"></script>
 </body>
 </html>

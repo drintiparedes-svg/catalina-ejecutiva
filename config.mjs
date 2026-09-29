@@ -186,6 +186,37 @@ export const CONFIG_POR_DEFECTO = {
     ].join("\n")
   },
 
+  // Reuniones: transcripción de alta fidelidad y minutas.
+  //
+  // Los proveedores y modelos se eligen aquí y no en el código: cambian cada
+  // pocos meses y cada organización tiene sus claves. Los alias «gemini-flash»,
+  // «gemini-pro», «openai-texto» y «openai-voz» se expanden en reunion.mjs a
+  // una lista de nombres que se prueban en orden si alguno ya no existe.
+  reuniones: {
+    transcripcion: {
+      // "auto" = OpenAI (gpt-4o-transcribe) y, si falla o no hay clave, Gemini.
+      proveedor: "auto",
+      openai: "openai-voz",
+      gemini: "gemini-flash"
+    },
+    minuta: {
+      // Estándar: rápido y económico, ya con formato extenso + one pager.
+      estandar: { proveedor: "gemini", modelo: "gemini-flash" },
+      // Detallado: el modelo con más razonamiento disponible. Claude Opus si
+      // hay ANTHROPIC_API_KEY; si no, se cae a los respaldos en orden.
+      detallado: { proveedor: "anthropic", modelo: "claude-opus-5-5" },
+      respaldo: [
+        { proveedor: "gemini", modelo: "gemini-pro" },
+        { proveedor: "openai", modelo: "openai-texto" },
+        { proveedor: "gemini", modelo: "gemini-flash" }
+      ]
+    },
+    // Cada cuánto se le pasa a Catalina lo nuevo de la reunión en curso, y el
+    // máximo que se le pasa por sesión. Lo que no quepa lo consulta con la
+    // herramienta consultar_reunion.
+    memoria: { cadaSegundos: 90, maxCaracteresPorSesion: 30000 }
+  },
+
   // Envío de resúmenes por correo.
   //
   // El destinatario vive aquí y no lo elige el modelo: Catalina sólo aporta el
