@@ -324,3 +324,14 @@ button.primary { border-color: rgba(109,228,255,.45); background: linear-gradien
   .controls .boton-enlace { display: none; }
   .reunion-aviso { left: 16px; right: 16px; max-width: none; }
 }
+
+/* Participar Catalina: visible sólo en modo reunión, discreto hasta pasar el
+   puntero (la ventana puede estar capturada por OBS), y siempre visible
+   mientras participa, para que se vea que su micrófono está abierto. */
+.participar { display: none; position: absolute; right: calc(190px + env(safe-area-inset-right)); bottom: calc(16px + env(safe-area-inset-bottom)); opacity: 0; transition: opacity .2s; }
+.meet .participar { display: block; }
+.meet:hover .participar { opacity: .85; }
+.meet .participar[aria-pressed="true"] { opacity: 1; border-color: rgba(109,228,255,.55); background: rgba(109,228,255,.18); color: #d6f6ff; }
+.reunion-dialogo select { width: 100%; padding: 9px 11px; border: 1px solid rgba(184,226,246,.2); border-radius: 10px; background: rgba(255,255,255,.05); color: #f4fbff; font: inherit; font-size: 14px; font-weight: 400; }
+.reunion-dialogo select option { background: #0a1622; }
+@media (max-width: 650px) { .participar { right: auto; left: calc(16px + env(safe-area-inset-left)); } }

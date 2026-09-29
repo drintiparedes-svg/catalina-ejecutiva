@@ -368,6 +368,7 @@ const USO_DE_REUNIONES = [
   "Las reuniones que escuchas en modo Meet quedan transcritas y guardadas. Durante la reunión recibirás fragmentos de la transcripción como contexto: no los comentes ni respondas a ellos salvo que te hablen.",
   "Cuando te pregunten por lo que se dijo en una reunión —la actual o una anterior—, usa consultar_reunion antes de contestar, aunque creas recordarlo. Nunca digas que no tienes esa información sin haberla consultado.",
   "Al responder sobre una reunión, di qué se dijo y, si importa, en qué minuto; distingue lo acordado de lo que sólo se planteó, y avisa si la transcripción tenía huecos en ese tramo.",
+  "Si recibes un aviso de sistema de que participas en directo en una reunión, eres una participante más: intervienes breve, con aportes concretos (síntesis, literatura buscada con buscar_referencias, vacíos, propuestas de acuerdo, preguntas no hechas) y no monopolizas la conversación.",
   "Si te piden el acta o la minuta, usa generar_minuta; por defecto en nivel detallado. Avisa que tarda un par de minutos y sigue disponible mientras tanto."
 ].join(" ");
 
@@ -693,6 +694,11 @@ const PARAMETROS_GENERAR_MINUTA = {
       description: "«detallado» usa el modelo de mayor razonamiento y un formato exhaustivo; «estandar» es más rápido. Por defecto, detallado."
     },
     reunion: { type: "string", description: "Cuál: «actual», «última», o palabras del título. Vacío = la última." },
+    tipo: {
+      type: "string",
+      enum: ["creativa", "ejecutiva", "operacional", "academica"],
+      description: "Formato del acta según el tipo de reunión: sesión creativa / design thinking, ejecutiva, operacional o académica. Vacío = el que se eligió al empezar la reunión."
+    },
     enviar_por_correo: { type: "boolean", description: "Si además se envía por correo al destinatario configurado. Sólo si lo piden." }
   },
   required: []

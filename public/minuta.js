@@ -10,14 +10,22 @@ import {
   transcripcionComoTexto, datosParaMinuta, calidad, duracion, pedirMinuta, enviarMinutaPorCorreo,
   minutaAMarkdown, nombreDeArchivo, leerClavePropia, guardarClavePropia
 } from "./reuniones.js";
-import { actaHTML, onePagerHTML, dibujarDiagramas, documentoAutonomo, ESTILOS_ACTA, esc } from "./acta.js";
+import { actaHTML, onePagerHTML, dibujarDiagramas, documentoAutonomo, ESTILOS_ACTA, esc, tipoDelActa } from "./acta.js";
+import { PLANTILLAS, plantillaDe } from "./plantillas-acta.js";
 
 const $ = selector => document.querySelector(selector);
 $("#estilosActa").textContent = ESTILOS_ACTA;
 
 let seleccionada = null;
 let estadoServidor = null;
-const esLean = r => r?.minuta?.formato === "lean-1";
+// Un acta con formato vigente (cualquiera de las cuatro plantillas).
+const esLean = r => Boolean(tipoDelActa(r));
+const A = v => Array.isArray(v) ? v : [];
+
+// Formato del acta: las cuatro plantillas, con su descripción a la vista.
+$("#tipo").innerHTML = Object.values(PLANTILLAS).map(p => `<option value="${p.id}">${esc(p.nombre)}</option>`).join("");
+const describirTipo = () => { $("#tipoAyuda").textContent = plantillaDe($("#tipo").value).descripcion; };
+$("#tipo").addEventListener("change", describirTipo);
 
 // ── Listado ──────────────────────────────────────────────────────────────────
 
@@ -27,7 +35,7 @@ function pintarLista() {
     <li><button data-id="${esc(r.id)}" aria-current="${r.id === seleccionada?.id}">
       <span class="t">${esc(r.meta.titulo)}</span>
       <span class="d">${esc(new Date(r.meta.inicio).toLocaleString("es-CL", { dateStyle: "medium", timeStyle: "short" }))} · ${Math.round(duracion(r) / 60000)} min</span>
-      <span>${r.minuta ? '<span class="chip bien">con acta</span>' : '<span class="chip">sin acta</span>'}${!r.meta.fin ? ' <span class="chip aviso">en curso</span>' : ""}</span>
+      <span><span class="chip">${esc(plantillaDe(tipoDelActa(r) || r.meta.tipo).corto)}</span> ${r.minuta ? '<span class="chip bien">con acta</span>' : '<span class="chip">sin acta</span>'}${!r.meta.fin ? ' <span class="chip aviso">en curso</span>' : ""}</span>
     </button></li>`).join("");
   $("#vacio").hidden = reuniones.length > 0 || !$("#importar").hidden;
   if (!reuniones.length) $("#detalle").hidden = true;
@@ -49,7 +57,7 @@ function seleccionar(id) {
   pintarDetalle();
   // Un acta generada por voz, o antes de esta versión, puede no tener aún su
   // búsqueda de evidencia: se completa sola al abrirla.
-  if (esLean(seleccionada) && seleccionada.minuta.preguntasEvidencia.length && !seleccionada.evidencia) buscarEvidencia();
+  if (esLean(seleccionada) && A(seleccionada.minuta.preguntasEvidencia).length && !seleccionada.evidencia) buscarEvidencia();
 }
 
 // ── Detalle ──────────────────────────────────────────────────────────────────
@@ -78,6 +86,8 @@ function pintarDetalle() {
   $("#fAgenda").value = r.meta.agenda || "";
   $("#fEnlaces").value = r.meta.enlaces || "";
   $("#generar").textContent = r.minuta ? "Regenerar acta" : "Generar acta";
+  $("#tipo").value = tipoDelActa(r) || r.meta.tipo || "creativa";
+  describirTipo();
 
   $("#docTranscripcion").textContent = transcripcionComoTexto(r) || "(sin transcripción)";
   pintarActa();
@@ -90,7 +100,7 @@ function pintarActa() {
   // Markdown o correo; el resto necesita el formato lean.
   const soloLean = new Set(["pdfActa", "descargarHtml", "buscarEvidencia"]);
   document.querySelectorAll("#exportar button").forEach(b => { b.disabled = !hay || (soloLean.has(b.id) && !esLean(r)); });
-  $("#buscarEvidencia").disabled = !esLean(r) || !r.minuta.preguntasEvidencia.length;
+  $("#buscarEvidencia").disabled = !esLean(r) || !A(r.minuta.preguntasEvidencia).length;
   if (!hay) {
     const aviso = `<p style="color:#575756;margin:0">Esta reunión todavía no tiene acta. Revisa los datos (paso 1) y pulsa «Generar acta» (paso 2).</p>`;
     $("#docActa").innerHTML = aviso;
@@ -140,13 +150,14 @@ $("#generar").addEventListener("click", async () => {
   if (r.minuta && !confirm("Esta reunión ya tiene acta. ¿Generar una nueva y reemplazarla?")) return;
   const [proveedor, modelo] = ($("#motor").value || "|").split("|");
   const nivel = $("#nivel").value;
+  const tipo = $("#tipo").value;
   const estado = $("#estadoGenerar");
   const boton = $("#generar");
   boton.disabled = true;
   estado.className = "estado";
   const inicio = Date.now();
   const reloj = setInterval(() => { estado.textContent = `Redactando el acta (${nivel})… ${Math.round((Date.now() - inicio) / 1000)} s`; }, 1000);
-  const resultado = await pedirMinuta(r, { nivel, motor: proveedor ? { proveedor, modelo } : null });
+  const resultado = await pedirMinuta(r, { nivel, tipo, motor: proveedor ? { proveedor, modelo } : null });
   clearInterval(reloj);
   boton.disabled = false;
   if (!resultado.ok) {
@@ -157,6 +168,7 @@ $("#generar").addEventListener("click", async () => {
   // Se relee por si la reunión cambió mientras tanto (p. ej. terminó de
   // transcribirse en la pestaña de Catalina).
   const actual = obtenerReunion(r.id) || r;
+  actual.meta.tipo = tipo;
   actual.minuta = resultado.minuta;
   actual.trazabilidad = resultado.trazabilidad;
   delete actual.evidencia;
@@ -167,7 +179,7 @@ $("#generar").addEventListener("click", async () => {
   estado.textContent = `Acta lista en ${t.segundos} s con ${t.proveedor}/${t.modelo}.${t.advertencias?.length ? " " + t.advertencias.join(" ") : ""}`;
   pintarLista();
   pintarDetalle();
-  if (actual.minuta.preguntasEvidencia.length) buscarEvidencia();
+  if (A(actual.minuta.preguntasEvidencia).length) buscarEvidencia();
 });
 
 // Evidencia real: cada pregunta del acta se busca en las nueve bases que ya usa
@@ -176,7 +188,7 @@ $("#generar").addEventListener("click", async () => {
 async function buscarEvidencia() {
   const r = seleccionada;
   if (!esLean(r)) return;
-  const preguntas = r.minuta.preguntasEvidencia.slice(0, 5);
+  const preguntas = A(r.minuta.preguntasEvidencia).slice(0, 5);
   const estado = $("#estadoExportar");
   $("#buscarEvidencia").disabled = true;
   const evidencia = [];
@@ -276,7 +288,7 @@ $("#copiarPrompt").addEventListener("click", async () => {
   const r = await fetch("/reunion/prompt", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ ...datosParaMinuta(seleccionada), nivel: $("#nivel").value })
+    body: JSON.stringify({ ...datosParaMinuta(seleccionada), nivel: $("#nivel").value, tipo: $("#tipo").value })
   }).then(x => x.json()).catch(() => null);
   if (!r?.ok) { $("#byokEstado").textContent = "No se pudo preparar el texto."; return; }
   try {

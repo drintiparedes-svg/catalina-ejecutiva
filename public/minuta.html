@@ -102,7 +102,7 @@
     <div>
       <p class="eyebrow">CATALINA · ACTAS DE REUNIÓN</p>
       <h1>Actas</h1>
-      <p class="explica">Aquí quedan las reuniones que Catalina escuchó en <strong>Modo Meet</strong>. Elige una reunión, completa sus datos, genera el <strong>acta en formato minuta lean</strong> (one pager + documento completo con A3, flujos, causa raíz, evidencia y trazabilidad) y expórtala a PDF, HTML, Markdown o correo.</p>
+      <p class="explica">Aquí quedan las reuniones que Catalina escuchó en <strong>Modo Meet</strong>. Elige una reunión, completa sus datos, genera su <strong>acta</strong> (one pager + documento completo en el formato de su tipo: creativa, ejecutiva, operacional o académica) y expórtala a PDF, HTML, Markdown o correo.</p>
     </div>
     <a class="boton" href="./">← Volver a Catalina</a>
   </header>
@@ -156,7 +156,13 @@
 
         <section class="panel paso">
           <div class="paso-cabeza"><span class="paso-num">2</span><h2>Genera el acta</h2></div>
-          <p class="ayuda">Catalina redacta el acta a partir de la transcripción y luego busca literatura real para las preguntas de evidencia. Tarda de 1 a 3 minutos.</p>
+          <p class="ayuda">Elige el formato que mejor se acomoda a la reunión: sesión creativa / design thinking, ejecutiva, operacional o académica. Catalina redacta el acta con ese formato, separa sus propias intervenciones de las de los participantes y busca literatura real para las preguntas de evidencia. Tarda de 1 a 3 minutos.</p>
+          <div class="fila">
+            <label>Formato del acta (tipo de reunión)
+              <select id="tipo"></select>
+            </label>
+          </div>
+          <p class="estado" id="tipoAyuda"></p>
           <div class="fila">
             <label>Nivel de detalle
               <select id="nivel">
@@ -226,6 +232,6 @@
   </div>
 
   <div id="zonaImpresion" class="acta"></div>
-  <script type="module" src="minuta.js?v=2"></script>
+  <script type="module" src="minuta.js?v=3"></script>
 </body>
 </html>

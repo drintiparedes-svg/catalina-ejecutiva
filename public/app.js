@@ -15,8 +15,9 @@ import { EscuchaDeReunion, escuchaDisponible } from "./escucha.js";
 import { GrabadoraDeReunion, grabadoraDisponible, audioDePestanaDisponible } from "./grabadora.js";
 import {
   nuevaReunion, guardarReunion, leerReuniones, elegirReunion, consultarReunion, indiceDeReuniones,
-  calidad, duracion, palabras, pedirMinuta, enviarMinutaPorCorreo, cabecerasDeClavePropia
+  calidad, duracion, palabras, pedirMinuta, enviarMinutaPorCorreo, cabecerasDeClavePropia, transcripcionComoTexto
 } from "./reuniones.js";
+import { PLANTILLAS, plantillaDe } from "./plantillas-acta.js";
 
 const canvas = document.querySelector("#avatar");
 const ctx = canvas.getContext("2d");
@@ -50,6 +51,9 @@ const ui = {
   mute: document.querySelector("#mute"),
   meetMode: document.querySelector("#meetMode"),
   exitMeet: document.querySelector("#exitMeet"),
+  participar: document.querySelector("#participar"),
+  reunionTipo: document.querySelector("#reunionTipo"),
+  reunionTipoAyuda: document.querySelector("#reunionTipoAyuda"),
   reunionDialogo: document.querySelector("#reunionDialogo"),
   reunionForm: document.querySelector("#reunionForm"),
   reunionCancelar: document.querySelector("#reunionCancelar"),
@@ -102,7 +106,10 @@ const manejadores = {
         memoriaEnviadaHasta = Math.max(0, reunionActual.navegador.length - 40);
         memoriaCaracteres = 0;
         pasarReunionAMemoria();
-        if (!sesion.muted) { sesion.pausarEnvio(true); micCortadoPorMeet = true; }
+        // Si se pidió su participación antes de que hubiera sesión, empieza
+        // ahora; si no, se queda escuchando en silencio como siempre.
+        if (participacionPendiente) prepararParticipacion();
+        else if (!participando && !sesion.muted) { sesion.pausarEnvio(true); micCortadoPorMeet = true; }
       }
     }, 1500);
     mostrarAviso("");   // si el intento anterior falló, su aviso ya no aplica
@@ -156,11 +163,16 @@ const manejadores = {
   onNota: anotarNota,
   onTranscript: text => {
     hayActividad();
+    // Texto vacío = la respuesta anterior se cortó (alguien habló encima): lo
+    // que alcanzó a decir también forma parte de la reunión.
+    if (!text) registrarTurnoDeCatalina({ interrumpida: true });
+    else { turnoCatalina.inicio ||= Date.now(); turnoCatalina.texto = text; }
     anotarTurno(text);
     aplicarExpresionDeFrase(text);
   },
   onResponseDone: () => {
     respuestaCerrada = true;
+    registrarTurnoDeCatalina();
     cerrarTurno();
   },
   onToolCall: atenderHerramienta,
@@ -343,6 +355,7 @@ document.addEventListener("keydown", event => {
     ui.stage.classList.contains("meet") ? salirDeModoMeet() : abrirDialogoDeReunion();
   }
   if (tecla === "s") fijarSubtitulos(!verSubtitulos);
+  if (tecla === "p" && enModoMeet) alternarParticipacion();
   if (event.key === "Escape") {
     if (verPanel) fijarPanel(false);
     else salirDeModoMeet();
@@ -490,6 +503,7 @@ ui.reunionForm.addEventListener("submit", evento => {
     agenda: datos.agenda,
     enlaces: datos.enlaces,
     lugar: datos.lugar,
+    tipo: datos.tipo,
     alta: ui.reunionAlta.checked,
     pestana: ui.reunionPestana.checked,
     continuar: ui.reunionContinuarCasilla.checked
@@ -570,6 +584,7 @@ async function entrarEnModoMeet(opciones = {}) {
 async function salirDeModoMeet() {
   ui.stage.classList.remove("meet");
   if (!enModoMeet) return;
+  if (participando || participacionPendiente) desactivarParticipacion({ alSalir: true });
   enModoMeet = false;
 
   escucha.parar();
@@ -625,6 +640,10 @@ function presentarReunionACatalina() {
 // contexto de un modelo de voz, y para eso está consultar_reunion.
 function pasarReunionAMemoria(reunion = reunionActual) {
   if (!reunion || !connected || !sesion?.anadirContexto) return;
+  // Mientras participa, Catalina oye la sala en directo: repetírsela como
+  // texto sería duplicarla. Se avanza el puntero para que, al volver a
+  // activarla, sólo reciba lo que se dijo mientras no participaba.
+  if (participando) { memoriaEnviadaHasta = reunion.navegador.length; return; }
   const nuevos = reunion.navegador.slice(memoriaEnviadaHasta).filter(s => s.texto);
   memoriaEnviadaHasta = reunion.navegador.length;
   if (!nuevos.length) return;
@@ -646,6 +665,9 @@ async function atenderLlamado(peticion, contexto) {
     reunionActual.intervenciones.push({ momento: Date.now(), marca, pregunta: peticion });
     guardarPronto();
   }
+  // Participando, ya oyó la pregunta por su propio micrófono y contestará
+  // sola: mandársela además por texto la haría responder dos veces.
+  if (participando) return;
   if (!connected || !sesion) {
     // Sin sesión abierta no puede contestar; se avisa en vez de perder lo dicho.
     señalar("Me llamaste, pero la sesión de voz está cerrada (sigo transcribiendo)", "problema");
@@ -712,7 +734,9 @@ function generarMinutaHerramienta(argumentos) {
 
   // Se devuelve enseguida: la minuta tarda más de lo que la herramienta puede
   // esperar, y Catalina tiene que poder seguir conversando mientras tanto.
-  minutaEnCurso = pedirMinuta(fuente, { nivel }).then(async r => {
+  const tipo = PLANTILLAS[argumentos.tipo] ? argumentos.tipo : null;
+  if (tipo) fuente.meta.tipo = tipo;
+  minutaEnCurso = pedirMinuta(fuente, { nivel, tipo }).then(async r => {
     minutaEnCurso = null;
     if (!r.ok) {
       sesion?.anadirContexto?.(`[Sistema] No se pudo generar el acta de «${fuente.meta.titulo}»: ${r.error}. Díselo a la persona.`);
@@ -747,6 +771,147 @@ function presentarReunionesGuardadas() {
 }
 
 let configMemoria = { cadaSegundos: 90, maxCaracteresPorSesion: 30000 };
+
+// Tipo de reunión: decide el formato del acta (plantillas-acta.js). Se elige
+// al empezar y se puede cambiar después, en la página de actas.
+ui.reunionTipo.innerHTML = Object.values(PLANTILLAS).map(p => `<option value="${p.id}">${p.nombre}</option>`).join("");
+const describirTipo = () => { ui.reunionTipoAyuda.textContent = plantillaDe(ui.reunionTipo.value).descripcion; };
+ui.reunionTipo.addEventListener("change", describirTipo);
+describirTipo();
+
+// Lo que dice Catalina durante una reunión.
+//
+// Se guarda aparte de la transcripción de los participantes: es una asistente
+// de IA y el acta tiene que poder distinguir lo que aportó ella de lo que dijo
+// el equipo. Se registra cada respuesta completa (o lo que alcanzó a decir si
+// la interrumpieron), con la hora en que empezó a hablar.
+const turnoCatalina = { texto: "", inicio: 0 };
+function registrarTurnoDeCatalina({ interrumpida = false } = {}) {
+  const texto = turnoCatalina.texto.trim();
+  const inicio = turnoCatalina.inicio;
+  turnoCatalina.texto = "";
+  turnoCatalina.inicio = 0;
+  if (!texto || !enModoMeet || !reunionActual) return;
+  reunionActual.catalina ||= [];
+  reunionActual.catalina.push({ momento: inicio || Date.now(), texto: interrumpida ? `${texto} (interrumpida)` : texto });
+  guardarPronto();
+}
+
+// Participación de Catalina.
+//
+// Por defecto escucha en silencio y sólo contesta si la llaman por su nombre.
+// Con «Participar Catalina» pasa a ser una interlocutora más:
+//   1. se guarda la reunión tal como está;
+//   2. se le entrega lo dicho hasta ahora (o desde su última participación)
+//      como memoria, junto con el objetivo y el foco de su participación;
+//   3. se abre su micrófono: oye la sala y conversa en directo.
+// Al desactivarlo se cierra su micrófono y la reunión sigue grabándose. Cada
+// activación abre un tramo de participación que queda en el acta.
+//
+// Límite físico: Catalina oye lo que llega a este micrófono. Si la reunión se
+// escucha con audífonos, no oirá a quienes hablan por el Meet.
+let participando = false;
+let participacionPendiente = false;
+
+function alternarParticipacion() {
+  if (!enModoMeet || !reunionActual) return;
+  if (participando || participacionPendiente) desactivarParticipacion();
+  else activarParticipacion();
+}
+
+function activarParticipacion() {
+  participacionPendiente = true;
+  ui.participar.setAttribute("aria-pressed", "true");
+  ui.participar.textContent = "Catalina participa · detener";
+  // 1. Lo transcrito hasta ahora queda guardado antes de abrir la conversación.
+  reunionActual.estadisticas = { ...escucha.estadisticas };
+  reunionActual.participacion ||= [];
+  reunionActual.participacion.push({ desde: Date.now(), hasta: null });
+  guardarReunion(reunionActual);
+  if (!connected || !sesion) {
+    señalar("Conectando con Catalina para que participe…", "respondiendo");
+    if (!ui.connect.disabled) conectar();
+    // Si la voz no llega a conectarse, el tramo no puede quedar abierto: se
+    // cierra y se dice, y la reunión sigue grabándose.
+    setTimeout(() => {
+      if (!participacionPendiente) return;
+      desactivarParticipacion();
+      señalar("No se pudo conectar la voz de Catalina: sigue grabando sin su participación", "problema");
+    }, 15000);
+    return;
+  }
+  prepararParticipacion();
+}
+
+function prepararParticipacion() {
+  if (!participacionPendiente || !sesion?.anadirContexto) return;
+  participacionPendiente = false;
+  participando = true;
+  // 2. Memoria: lo dicho hasta ahora y el encargo.
+  sesion.anadirContexto(mensajeDeParticipacion());
+  memoriaEnviadaHasta = reunionActual.navegador.length;
+  // La entrada: el contexto por sí solo no la hace hablar, y quien pulsó el
+  // botón espera que se incorpore.
+  sesion.enviarTexto("[Sistema] Incorpórate ahora a la reunión con una intervención de una o dos frases: dónde está la conversación respecto de su objetivo y, si corresponde, la pregunta o el vacío más importante.");
+  // 3. Micrófono abierto: oye la sala y habla cuando aporta.
+  sesion.pausarEnvio(false);
+  micCortadoPorMeet = false;
+  ui.mute.textContent = "Silenciar micrófono";
+  señalar("Catalina participa · conversa con la sala (P para detener)", "respondiendo");
+}
+
+function desactivarParticipacion({ alSalir = false } = {}) {
+  participando = false;
+  participacionPendiente = false;
+  ui.participar.setAttribute("aria-pressed", "false");
+  ui.participar.textContent = "Participar Catalina";
+  const tramo = reunionActual?.participacion?.at(-1);
+  if (tramo && !tramo.hasta) tramo.hasta = Date.now();
+  registrarTurnoDeCatalina({ interrumpida: true });
+  if (reunionActual) guardarReunion(reunionActual);
+  if (alSalir) return;
+  // La reunión sigue grabándose; Catalina vuelve a escuchar en silencio.
+  if (connected && sesion && !sesion.muted) {
+    sesion.pausarEnvio(true);
+    micCortadoPorMeet = true;
+    ui.mute.textContent = "Activar micrófono";
+  }
+  señalar("Escuchando · Catalina ya no participa (sigue grabando)");
+}
+
+// El encargo de participación. Lo que se le pide está en el foco que definió
+// el Dr. Paredes: entender lo tratado, aportar literatura, empujar los
+// objetivos, llenar vacíos, proponer acuerdos y hacer las preguntas que nadie
+// hizo. Y hacerlo como una participante, no como una conferenciante.
+function mensajeDeParticipacion() {
+  const r = reunionActual;
+  const m = r.meta;
+  const primera = (r.participacion || []).length <= 1;
+  let transcrito = transcripcionComoTexto(r);
+  const MAX = 14000;
+  if (transcrito.length > MAX) {
+    transcrito = transcrito.slice(0, 3000) + "\n[…parte intermedia omitida: consúltala con consultar_reunion…]\n" + transcrito.slice(-(MAX - 3000));
+  }
+  return [
+    `[Sistema] ${primera ? "Desde ahora participas" : "Vuelves a participar"} en directo en la reunión «${m.titulo}» (${plantillaDe(m.tipo).nombre}). Oyes la sala por el micrófono.`,
+    m.objetivo ? `Objetivo de la reunión: ${m.objetivo}.` : "Objetivo no declarado: dedúcelo de lo conversado y, si no está claro, pregúntalo.",
+    m.participantes ? `Participantes: ${m.participantes}.` : "",
+    m.agenda ? `Agenda: ${m.agenda}.` : "",
+    `Transcripción automática de la reunión hasta este momento${primera ? "" : " (incluye tus intervenciones anteriores, marcadas CATALINA (IA))"}; puede tener errores de reconocimiento:`,
+    transcrito || "(todavía no hay nada transcrito)",
+    "Tu papel como participante:",
+    "1) entender lo tratado y, si te lo piden, sintetizarlo con precisión;",
+    "2) aportar literatura cuando ayude, buscándola con buscar_referencias y citando su fuente; nunca cites de memoria;",
+    "3) ayudar a cumplir los objetivos de la reunión y señalar si la conversación se aleja de ellos;",
+    "4) detectar vacíos o supuestos que nadie ha considerado;",
+    "5) proponer acuerdos concretos (qué, quién, cuándo) para que el grupo los valide; no decides por el grupo;",
+    "6) hacer las preguntas importantes que nadie ha hecho;",
+    "y dar tu opinión fundamentada cuando te la pidan, distinguiendo lo que sabes de lo que supones.",
+    "Forma: intervenciones breves (dos a cuatro frases), una idea por vez, sin monopolizar la conversación. Si dos participantes están hablando entre ellos, no los interrumpas. Si lo último que se dijo no requiere tu aporte, responde con una confirmación muy breve o no añadas nada."
+  ].filter(Boolean).join("\n");
+}
+
+ui.participar.addEventListener("click", alternarParticipacion);
 
 // Herramientas de docencia.
 //

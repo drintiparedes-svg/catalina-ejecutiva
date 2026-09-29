@@ -15,6 +15,8 @@
 // cuando se pide explícitamente transcribir en alta fidelidad o generar la
 // minuta, y en ese caso sólo el audio o el texto necesarios.
 
+import { actaMarkdown } from "./acta.js";
+
 const CLAVE = "catalina.reuniones.v1";
 const MAX_REUNIONES = 15;
 
@@ -87,6 +89,7 @@ export function nuevaReunion(meta = {}) {
       agenda: String(meta.agenda || "").trim(),
       enlaces: String(meta.enlaces || "").trim(),
       lugar: String(meta.lugar || "").trim(),
+      tipo: String(meta.tipo || "creativa"),
       inicio,
       fin: null
     },
@@ -94,7 +97,9 @@ export function nuevaReunion(meta = {}) {
     navegador: [],     // {momento, texto, incompleto?, hueco?}
     hd: [],            // {desde, hasta, texto, proveedor}
     hdFallidos: [],    // {desde, hasta, error}
-    intervenciones: [], // lo que se le preguntó a Catalina y qué respondió
+    intervenciones: [], // lo que se le preguntó a Catalina por su nombre
+    catalina: [],      // lo que dijo Catalina: {momento, texto}, separado de los participantes
+    participacion: [], // tramos en que Catalina participó en la conversación: {desde, hasta}
     materiales: [],    // láminas y referencias mostradas durante la reunión
     estadisticas: {},
     minuta: null
@@ -138,6 +143,11 @@ export function transcripcionPreferida(reunion) {
       else if (s.texto) lineas.push({ t: s.momento, texto: s.texto, fuente: "navegador", incompleto: s.incompleto });
     }
   }
+  // Lo que dijo Catalina va en la misma línea de tiempo, marcado: es una
+  // asistente de IA, no un participante, y la minuta tiene que distinguirlo.
+  for (const c of reunion.catalina || []) {
+    if (c.texto) lineas.push({ t: c.momento, texto: c.texto, fuente: "catalina" });
+  }
   lineas.sort((a, b) => a.t - b.t);
   return lineas.map(l => ({ ...l, marca: reloj(l.t, base) }));
 }
@@ -146,6 +156,7 @@ export function transcripcionComoTexto(reunion, { marcas = true } = {}) {
   return transcripcionPreferida(reunion).map(l => {
     if (l.hueco) return `${marcas ? `[${l.marca}] ` : ""}[SIN AUDIO ~${Math.round(l.hueco / 1000)} s: no se pudo transcribir este tramo]`;
     const marcasExtra = [l.fuente === "navegador" && reunion.hd.length ? "(respaldo navegador)" : "", l.incompleto ? "(frase cortada)" : ""].filter(Boolean).join(" ");
+    if (l.fuente === "catalina") return `${marcas ? `[${l.marca}] ` : ""}CATALINA (IA): ${l.texto}`;
     return `${marcas ? `[${l.marca}] ` : ""}${l.texto}${marcasExtra ? " " + marcasExtra : ""}`;
   }).join("\n");
 }
@@ -156,7 +167,8 @@ export function duracion(reunion) {
 }
 
 export function palabras(reunion) {
-  return transcripcionPreferida(reunion).reduce((n, l) => n + (l.texto ? l.texto.split(/\s+/).length : 0), 0);
+  // Sólo las de los participantes: lo que dijo Catalina no es la reunión.
+  return transcripcionPreferida(reunion).reduce((n, l) => n + (l.texto && l.fuente !== "catalina" ? l.texto.split(/\s+/).length : 0), 0);
 }
 
 // Indicadores de calidad de la captura. Van a la minuta y a la pantalla: una
@@ -331,16 +343,18 @@ export function datosParaMinuta(reunion) {
     calidad: calidad(reunion),
     materiales,
     intervenciones: (reunion.intervenciones || []).map(i => ({ marca: i.marca, pregunta: i.pregunta })),
+    participacion: (reunion.participacion || []).map(p => ({ desde: reloj(p.desde, reunion.meta.inicio), hasta: p.hasta ? reloj(p.hasta, reunion.meta.inicio) : "" })),
+    tipo: reunion.meta.tipo || "creativa",
     transcripcion: transcripcionComoTexto(reunion)
   };
 }
 
-export async function pedirMinuta(reunion, { nivel = "estandar", motor = null } = {}) {
+export async function pedirMinuta(reunion, { nivel = "estandar", motor = null, tipo = null } = {}) {
   try {
     const r = await fetch("/reunion/minuta", {
       method: "POST",
       headers: { "Content-Type": "application/json", ...cabecerasDeClavePropia() },
-      body: JSON.stringify({ ...datosParaMinuta(reunion), nivel, motor })
+      body: JSON.stringify({ ...datosParaMinuta(reunion), nivel, motor, ...(tipo ? { tipo } : {}) })
     });
     const texto = await r.text();
     try { return JSON.parse(texto); } catch { return { ok: false, error: `Respuesta ilegible del servidor (${r.status}).` }; }
@@ -372,135 +386,8 @@ export async function enviarMinutaPorCorreo(reunion, adjuntosExtra = []) {
 
 export const nombreDeArchivo = titulo => normalizar(titulo).replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60) || "reunion";
 
-// Markdown del acta: el formato que se pega sin pérdida en Google Docs (Pegar
-// desde Markdown), Notion u Obsidian. Sigue las secciones de la minuta lean;
-// flujos y diagramas van como bloques mermaid.
+// Markdown del acta: lo arma acta.js con las mismas secciones y bloques que el
+// HTML, para las cuatro plantillas.
 export function minutaAMarkdown(reunion) {
-  const m = reunion.minuta;
-  if (!m) return "";
-  const op = m.onePager;
-  const li = items => (items || []).filter(Boolean).map(i => `- ${i}`).join("\n");
-  const tabla = (cab, filas) => filas.length
-    ? `| ${cab.join(" | ")} |\n| ${cab.map(() => "---").join(" | ")} |\n` + filas.map(f => `| ${f.map(c => String(c || "—").replace(/\|/g, "/").replace(/\n/g, " ")).join(" | ")} |`).join("\n")
-    : "";
-  const fecha = new Date(reunion.meta.inicio).toLocaleString("es-CL", { dateStyle: "full", timeStyle: "short" });
-  const min = Math.round(duracion(reunion) / 60000);
-  const t = reunion.trazabilidad || {};
-  const q = calidad(reunion);
-  const onePager = [
-    `# ${m.titulo || reunion.meta.titulo}`,
-    `*Acta · minuta lean · ${fecha} · ${min} min · Nivel N2 (pendiente de validación)*`,
-    "",
-    "## One pager",
-    op.estado ? `**Estado:** ${op.estado}` : "",
-    `> ${op.mensajeClave}`,
-    op.contexto,
-    op.indicadores.length ? "**Indicadores**\n" + li(op.indicadores.map(i => `${i.etiqueta}: **${i.valor}**`)) : "",
-    op.decisiones.length ? "**Decisiones**\n" + li(op.decisiones) : "",
-    op.acciones.length ? "**Acciones**\n\n" + tabla(["Acción", "Responsable", "Plazo"], op.acciones.map(a => [a.accion, a.responsable, a.plazo])) : "",
-    op.riesgos.length ? "**Riesgos**\n" + li(op.riesgos) : "",
-    op.proximosPasos.length ? "**Próximos pasos**\n" + li(op.proximosPasos) : ""
-  ];
-  if (m.formato !== "lean-1") {
-    return [...onePager, "", "_Acta generada con el formato anterior: vuelve a generarla para obtener el formato de minuta lean._"]
-      .filter(p => p !== "" && p != null).join("\n\n");
-  }
-
-  // Flujo por carriles como diagrama Mermaid: cada carril es un subgrafo y
-  // los pasos se encadenan en orden de fase. Así el flujo sobrevive al pegar
-  // en herramientas que dibujan Mermaid.
-  const flujoMermaid = (flujo, prefijo) => {
-    if (!flujo.pasos.length) return "";
-    const id = (i) => `${prefijo}${i}`;
-    const pasos = flujo.pasos.map((p, i) => ({ ...p, i }));
-    const lineas = ["flowchart LR"];
-    for (const carril of flujo.carriles) {
-      const propios = pasos.filter(p => p.carril === carril);
-      if (!propios.length) continue;
-      lineas.push(`  subgraph ${prefijo}${flujo.carriles.indexOf(carril)}c["${carril.replace(/"/g, "'")}"]`);
-      for (const p of propios) lineas.push(`    ${id(p.i)}["${(p.marca ? `(${p.marca}) ` : "") + p.titulo.replace(/"/g, "'")}"]`);
-      lineas.push("  end");
-      const ordenados = propios.sort((a, b) => flujo.fases.indexOf(a.fase) - flujo.fases.indexOf(b.fase));
-      for (let k = 1; k < ordenados.length; k += 1) lineas.push(`  ${id(ordenados[k - 1].i)} --> ${id(ordenados[k].i)}`);
-    }
-    return "```mermaid\n" + lineas.join("\n") + "\n```";
-  };
-  const ishikawaMd = m.causaRaiz.familias.length
-    ? `**Efecto observado:** ${m.causaRaiz.efecto}\n\n` + tabla(["Familia", "Causas"], m.causaRaiz.familias.map(f => [f.nombre, f.causas.join("; ")]))
-    : "";
-  const referencias = [];
-  for (const e of reunion.evidencia || []) for (const r of e.refs || []) if (!referencias.some(x => x.enlace === r.enlace)) referencias.push(r);
-  const num = r => referencias.findIndex(x => x.enlace === r.enlace) + 1;
-
-  const partes = [
-    ...onePager,
-    "",
-    "---",
-    "",
-    `# Acta · ${m.titulo || reunion.meta.titulo}`,
-    m.lede ? `*${m.lede}*` : "",
-    tabla(["Reunión", "Área", "Participantes", "Hito siguiente"], [[`${fecha} · ${min} min · "${reunion.meta.titulo}"`, m.area, reunion.meta.participantes || "No declarados", m.hitoSiguiente || "Por definir"]]),
-    "## 00 · Cómo leer este documento",
-    `**Pregunta de trabajo.** ${m.comoLeer.preguntaTrabajo}`,
-    m.comoLeer.fuentesPrimarias ? `**Fuentes primarias:** ${m.comoLeer.fuentesPrimarias}` : "",
-    m.comoLeer.fuentesSecundarias ? `**Fuentes secundarias:** ${m.comoLeer.fuentesSecundarias}` : "",
-    tabla(["Nivel", "Qué significa"], [
-      ["N1", "Registro de lo dicho, ordenamiento de flujos y diagramas. Ejecutado."],
-      ["N2", "Causas, flujo futuro, indicadores y opciones. Listos para discusión; requieren validación."],
-      ["N3", "Decisiones que exceden al equipo. No se deciden aquí; se escalan."]
-    ]),
-    m.comoLeer.convenciones ? `> ${m.comoLeer.convenciones}` : "",
-    "## 01 · Minuta lean (A3)",
-    "### 1 · Antecedentes\n" + li(m.a3.antecedentes),
-    "### 2 · Situación actual\n" + li(m.a3.situacionActual),
-    "### 3 · Objetivo / condición meta\n" + li(m.a3.condicionMeta),
-    "### 4 · Análisis de causas\n" + li(m.a3.analisisCausas),
-    "### 5 · Contramedidas en discusión (N2)\n" + li(m.a3.contramedidas),
-    m.a3.plan.length ? "### 6 · Plan y seguimiento\n" + tabla(["Acción", "Responsable", "Cuándo"], m.a3.plan.map(p => [p.accion, p.responsable, p.cuando])) : "",
-    m.a3.muda.length ? "### 7 · Desperdicios (muda) identificados\n" + tabla(["Tipo de muda", "Dónde aparece", "Punto de dolor"], m.a3.muda.map(x => [x.tipo, x.donde, x.puntoDolor])) : "",
-    m.inconsistencias.length ? "**Inconsistencias detectadas (confirmar por escrito)**\n\n" + m.inconsistencias.map((x, i) => `${i + 1}. **${x.tema}:** ${x.detalle}`).join("\n") : "",
-    m.flujoActual.pasos.length ? "## 02 · Flujo actual (AS-IS) y puntos de dolor\n\n" + flujoMermaid(m.flujoActual, "a") + "\n\n" + m.flujoActual.puntosDolor.map(p => `${p.numero}. **${p.titulo}.** ${p.cita ? `"${p.cita}"` : ""}`).join("\n") : "",
-    ishikawaMd ? "## 02 · Causa raíz\n\n" + ishikawaMd : "",
-    (m.flujoFuturo.pasos.length || m.flujoFuturo.comparacion.length) ? "## 02 · Flujo futuro hipotético (TO-BE) · N2\n\n" + flujoMermaid(m.flujoFuturo, "b") + "\n\n"
-      + m.flujoFuturo.cambios.map(c => `- **${c.marcas} · ${c.titulo}.** ${c.texto}`).join("\n") + "\n\n"
-      + tabla(["Actividad", "Hoy (AS-IS)", "Hipótesis (TO-BE)"], m.flujoFuturo.comparacion.map(c => [c.actividad, c.hoy, c.propuesta])) : "",
-    m.diagramas.length ? m.diagramas.map(d => `**${d.titulo}** — ${d.proposito}\n\n\`\`\`mermaid\n${d.mermaid}\n\`\`\``).join("\n\n") : "",
-    m.graficos.length ? m.graficos.map(g => `**${g.titulo}** (${g.unidad}; fuente ${g.fuente})\n\n` + tabla(["Serie", "Valor"], g.series.map(s => [s.etiqueta, s.valor]))).join("\n\n") : "",
-    (m.actores.length || m.senales.length) ? "## 03 · Lectura de actores y señales" : "",
-    m.actores.length ? tabla(["Actor", "Rol en el flujo", "Implicancia"], m.actores.map(a => [a.actor, a.rol, a.implicancia])) : "",
-    m.senales.map(s => `> "${s.cita}"${s.fuente ? ` — ${s.fuente}` : ""}`).join("\n>\n"),
-    m.restricciones.length ? "**Restricciones para el diseño**\n" + li(m.restricciones) : "",
-    (m.preguntasEvidencia.length || m.referenciasMencionadas.length) ? "## 04 · Evidencia y literatura" : "",
-    m.preguntasEvidencia.length ? tabla(["Pregunta", "Referencias encontradas", "Aplicabilidad", "Certeza"], m.preguntasEvidencia.map(p => {
-      const e = (reunion.evidencia || []).find(x => x.pregunta === p.pregunta);
-      const refs = e?.refs?.length ? e.refs.map(r => `${r.titulo} [${num(r)}]`).join("; ") : (e ? e.error || "Sin resultados" : "Búsqueda pendiente");
-      return [p.pregunta, refs, p.aplicabilidad, "Por evaluar"];
-    })) : "",
-    m.preguntasEvidencia.length ? "_Referencias obtenidas por búsqueda automática en bases bibliográficas, sin lectura crítica: certeza por evaluar._" : "",
-    m.referenciasMencionadas.length ? "**Referencias mencionadas en la reunión (no verificadas)**\n" + li(m.referenciasMencionadas.map(r => `${r.tipo ? `[${r.tipo}] ` : ""}${r.descripcion}${r.url ? ` — ${r.url}` : ""}${r.marca ? ` [${r.marca}]` : ""}`)) : "",
-    (m.beneficios.length || m.riesgos.length) ? "## 05 · Beneficios, riesgos e indicadores" : "",
-    m.beneficios.length ? "**Beneficios esperados (hipótesis, no compromiso)**\n\n" + tabla(["Dimensión", "Beneficio esperado", "Indicador propuesto"], m.beneficios.map(b => [b.dimension, b.beneficio, b.indicador])) : "",
-    m.notaMagnitud ? `> ${m.notaMagnitud}` : "",
-    m.riesgos.length ? "**Matriz de riesgos**\n\n" + tabla(["Riesgo", "Prob.", "Impacto", "Mitigación"], m.riesgos.map(r => [r.riesgo, r.probabilidad, r.impacto, r.mitigacion])) : "",
-    m.riesgoN3 ? `> **N3** ${m.riesgoN3}` : "",
-    m.soluciones.length ? "## 06 · Espacio de soluciones\n\n" + tabla(["Nivel", "Opción", "Origen", "Dependencias"], m.soluciones.map(s => [s.nivel, s.opcion, s.origen, s.dependencias])) : "",
-    (m.proximaReunion.estructura.length || m.proximaReunion.preguntas.length) ? "## 07 · Preparación de la próxima reunión" : "",
-    m.proximaReunion.estructura.length ? "**Estructura sugerida**\n" + m.proximaReunion.estructura.map((e, i) => `${i + 1}. ${e.punto}${e.minutos ? ` (${e.minutos} min)` : ""}`).join("\n") : "",
-    m.proximaReunion.datosASolicitar.length ? "**Datos a solicitar**\n" + li(m.proximaReunion.datosASolicitar) : "",
-    m.proximaReunion.preguntas.length ? "**Preguntas que conviene hacer**\n" + li(m.proximaReunion.preguntas) : "",
-    m.proximaReunion.erroresAEvitar.length ? "**Errores a evitar**\n" + li(m.proximaReunion.erroresAEvitar) : "",
-    "## 08 · Trazabilidad",
-    li([
-      `Transcripción ${q.fuente}: cobertura estimada ${q.cobertura}%, ${q.palabras} palabras${q.huecos ? `, ${q.huecos} tramo(s) sin audio` : ""}.`,
-      t.modelo && `Acta redactada con ${t.proveedor}/${t.modelo} (nivel ${t.nivel}) el ${new Date(t.generadaEn).toLocaleString("es-CL")}.`,
-      "Revisión humana pendiente antes de difundir."
-    ]),
-    m.trazabilidad.supuestos.length ? "**Supuestos**\n" + li(m.trazabilidad.supuestos) : "",
-    m.trazabilidad.limites ? `**Límites.** ${m.trazabilidad.limites}` : "",
-    referencias.length ? "**Referencias**\n" + referencias.map((r, i) => `${i + 1}. ${r.autores ? r.autores.replace(/\.+$/, "") + ". " : ""}${r.titulo}. ${r.revista ? `*${r.revista}*. ` : ""}${r.anio || ""}. ${r.enlace || ""}`).join("\n") : "",
-    reunion.meta.enlaces ? "**Aportadas por el organizador**\n" + li(reunion.meta.enlaces.split(/\n+/)) : "",
-    reunion.materiales?.length ? "**Material mostrado por Catalina**\n" + li([...new Set(reunion.materiales)]) : "",
-    m.trazabilidad.notaDeUso ? `_Nota de uso: ${m.trazabilidad.notaDeUso}_` : ""
-  ];
-  return partes.filter(p => p !== "" && p != null).join("\n\n").replace(/\n{3,}/g, "\n\n");
+  return actaMarkdown(reunion, calidad(reunion));
 }

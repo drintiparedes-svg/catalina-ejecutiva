@@ -463,20 +463,35 @@ objetivo, participantes, agenda, enlaces). Todo va a la minuta.
   le permite buscar en reuniones actuales o anteriores. Con ElevenLabs hay que
   volver a registrar las herramientas (abrir `/registrar.html`)
   para que el agente reciba `consultar_reunion` y `generar_minuta`.
-- **Actas** (botón «Actas», página `/minuta.html`, con la gráfica de
-  Catalina): cada reunión guardada se abre ahí y se sigue en tres pasos
-  —revisar datos, generar el acta, exportar—. El acta usa el formato estándar
-  **minuta lean ejecutiva**: portada, 00 cómo leer, 01 A3 (antecedentes,
-  situación, meta, causas, contramedidas, plan, muda, inconsistencias),
-  02 flujo AS-IS por carriles con puntos de dolor, Ishikawa y TO-BE,
-  03 actores y señales, 04 evidencia, 05 beneficios y riesgos, 06 espacio de
-  soluciones, 07 próxima reunión y 08 trazabilidad, con niveles N1/N2/N3.
+- **Actas en cuatro formatos** (botón «Actas», página `/minuta.html`, con la
+  gráfica de Catalina). El tipo de reunión se elige al empezar (y se puede
+  cambiar al generar el acta); cada uno es una plantilla en
+  `public/plantillas-acta.js` con sus instrucciones, su esquema y sus
+  secciones, sobre el núcleo común de la **minuta lean ejecutiva** (portada,
+  cómo leer, evidencia, intervenciones de Catalina, próxima reunión,
+  trazabilidad, niveles N1/N2/N3):
+  - **Sesión creativa / design thinking**: A3, flujo AS-IS por carriles con
+    puntos de dolor, Ishikawa, TO-BE, insights, «¿cómo podríamos…?», espacio
+    de soluciones.
+  - **Ejecutiva**: síntesis, decisiones con fundamento y alternativas,
+    acuerdos, cartera en semáforo, indicadores, riesgos y escalamientos N3.
+  - **Operacional**: seguimiento de acuerdos previos, estado de frentes,
+    incidentes (causa, acción inmediata y correctiva), plan de acción,
+    indicadores; Ishikawa y flujo si se analizaron.
+  - **Académica**: pregunta central, exposiciones, argumentos y evidencia
+    citada, metodología, brechas y conclusiones, tareas, glosario.
   La evidencia no la escribe el modelo: formula preguntas y la app las busca en
-  las nueve bases bibliográficas de Catalina, marcadas «por evaluar».
-  Nivel *estándar* (Gemini Flash) o *detallado* (Claude Opus 5.5 si hay
-  `ANTHROPIC_API_KEY`; si no, Gemini Pro u OpenAI), configurable en
-  `config.mjs → reuniones`. Exporta a PDF (A4, flujos en apaisado), HTML
-  autónomo, Markdown para Google Docs y correo con el acta adjunta.
+  las nueve bases bibliográficas de Catalina, marcadas «por evaluar». Exporta a
+  PDF (A4; flujos en apaisado), HTML autónomo, Markdown y correo.
+- **Participar Catalina** (botón en modo reunión o tecla `P`): guarda lo
+  transcrito, se lo entrega como memoria junto con el objetivo, y abre su
+  micrófono para que converse con la sala —sintetiza, aporta literatura
+  buscada, detecta vacíos, propone acuerdos y hace las preguntas que nadie
+  hizo—. Al desactivarlo la reunión sigue grabándose; al reactivarlo recibe lo
+  dicho mientras tanto. Lo que dice Catalina se guarda aparte y el acta lo
+  presenta en «Intervenciones de Catalina (IA)», sin contarlo como decisión del
+  equipo. Para que oiga a quienes hablan por el Meet, la reunión debe sonar por
+  altavoces, no por audífonos.
 - **Cuenta propia.** Clave de API propia (se guarda sólo en el navegador) o,
   sin coste, copiar instrucciones + transcripción para pegarlas en el chat de
   una suscripción. Evaluación completa en
