@@ -17,6 +17,9 @@
 
 const ENTRADA_HZ = 16000;   // lo que Gemini exige recibir
 const SALIDA_HZ = 24000;    // lo que Gemini envía
+// Tras callar, el audio de la reunión sigue cortado un momento más: lo que
+// vuelve por la videollamada llega con retraso y sería su propia voz.
+const RETENCION_MS = 700;
 const MUESTRAS_POR_ENVIO = 2048;
 
 export class GeminiSession {
@@ -98,6 +101,10 @@ export class GeminiSession {
     this.reproductor = new AudioWorkletNode(this.salida, "reproductor-pcm", {
       numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [1]
     });
+    this.reproductor.port.onmessage = ({ data }) => {
+      if (data?.tipo === "voz") this.#alSonar(data.sonando);
+      if (data?.tipo === "voz" || data?.tipo === "estadisticas") this.estadisticasVoz = { ...data, tipo: undefined };
+    };
     this.destino = this.salida.createMediaStreamDestination();
     this.reproductor.connect(this.destino);
 
@@ -115,6 +122,10 @@ export class GeminiSession {
     const muestras = new Float32Array(enteros.length);
     for (let i = 0; i < enteros.length; i += 1) muestras[i] = enteros[i] / 32768;
     // Se transfiere en vez de copiarse: son bloques de audio y llegan seguidos.
+    // La compuerta de la reunión se cierra en cuanto llega su voz, sin esperar
+    // a que suene: el colchón del reproductor tarda unos 200 ms, y en ese rato
+    // el audio de la llamada ya podría interrumpirla.
+    if (!this.hablando) this.#alSonar(true);
     this.reproductor.port.postMessage({ tipo: "audio", muestras }, [muestras.buffer]);
   }
 
@@ -150,6 +161,7 @@ export class GeminiSession {
     mudo.gain.value = 0;
     nodo.connect(mudo).connect(this.entrada.destination);
     this.nodoEntrada = nodo;
+    if (this.flujoExtra) this.mezclarEntrada(this.flujoExtra);
   }
 
   #onMensaje(evento) {
@@ -160,6 +172,7 @@ export class GeminiSession {
 
       const contenido = mensaje.serverContent;
       if (contenido?.interrupted) {
+        this.interrupciones = (this.interrupciones || 0) + 1;
         this.#callar();
         this.#emit("onPhase", "listening");
         this.#emit("onStatus", "Te escucho…");
@@ -231,11 +244,65 @@ export class GeminiSession {
     return true;
   }
 
+  // Segunda fuente de audio: la pestaña de la reunión (Google Meet). Se suma
+  // al micrófono en el mismo procesador, así Catalina oye a quienes hablan por
+  // la videollamada aunque se usen audífonos. Sólo se envía al modelo cuando no
+  // está en pausa, igual que el micrófono.
+  mezclarEntrada(flujo) {
+    try { this.fuenteExtra?.disconnect(); this.compuertaExtra?.disconnect(); } catch {}
+    this.fuenteExtra = this.compuertaExtra = null;
+    this.flujoExtra = flujo?.getAudioTracks?.().length ? flujo : null;
+    if (!this.flujoExtra || !this.entrada || !this.nodoEntrada) return false;
+    this.fuenteExtra = this.entrada.createMediaStreamSource(new MediaStream(this.flujoExtra.getAudioTracks()));
+    // La reunión pasa por una compuerta que se cierra mientras Catalina habla.
+    // Sin ella, cualquier voz o ruido de la videollamada —incluida su propia voz
+    // de vuelta— lo toma el agente como alguien hablándole encima, la
+    // interrumpe y la voz sale a trozos. El micrófono no pasa por aquí: quien
+    // la usa puede seguir cortándola.
+    this.compuertaExtra = this.entrada.createGain();
+    this.compuertaExtra.gain.value = this.hablando ? 0 : 1;
+    this.fuenteExtra.connect(this.compuertaExtra).connect(this.nodoEntrada);
+    return true;
+  }
+
+  // El reproductor avisa cuándo empieza y termina de sonar su voz.
+  #alSonar(sonando) {
+    this.hablando = sonando;
+    clearTimeout(this.relojCompuerta);
+    if (sonando) return this.#compuerta(false);
+    this.relojCompuerta = setTimeout(() => this.#compuerta(true), RETENCION_MS);
+  }
+
+  #compuerta(abierta) {
+    const ganancia = this.compuertaExtra?.gain;
+    if (!ganancia || !this.entrada) return;
+    const ahora = this.entrada.currentTime;
+    ganancia.cancelScheduledValues(ahora);
+    ganancia.setTargetAtTime(abierta ? 1 : 0, ahora, abierta ? .05 : .01);
+    this.compuertaAbierta = abierta;
+  }
+
+  // Cómo va la voz: cortes del reproductor, interrupciones y estado de la
+  // compuerta. Sirve para saber si lo entrecortado viene de la red, del equipo
+  // o de la reunión. Desde la consola: `catalina.session.diagnostico()`.
+  diagnostico() {
+    return {
+      ...this.estadisticasVoz,
+      interrupciones: this.interrupciones || 0,
+      reunionMezclada: Boolean(this.fuenteExtra),
+      compuertaAbierta: this.fuenteExtra ? this.compuertaAbierta !== false : null
+    };
+  }
+
   disconnect() {
     this.connected = false;
     this.#callar();
     try { this.socket?.close(); } catch {}
     this.nodoEntrada?.disconnect();
+    try { this.fuenteExtra?.disconnect(); } catch {}
+    clearTimeout(this.relojCompuerta);
+    this.fuenteExtra = this.compuertaExtra = null;
+    this.hablando = false;
     this.micStream?.getTracks().forEach(pista => pista.stop());
     this.entrada?.close().catch(() => {});
     this.salida?.close().catch(() => {});

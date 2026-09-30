@@ -22,7 +22,7 @@ import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // Se sube a mano con cada arreglo que el usuario tiene que descargar.
-export const VERSION = "2026-09-29.25";
+export const VERSION = "2026-09-30.26";
 
 const root = fileURLToPath(new URL("./public", import.meta.url));
 // El .env se lee de forma síncrona a propósito. Con `await` aquí arriba, en el
@@ -368,7 +368,8 @@ const USO_DE_REUNIONES = [
   "Las reuniones que escuchas en modo Meet quedan transcritas y guardadas. Durante la reunión recibirás fragmentos de la transcripción como contexto: no los comentes ni respondas a ellos salvo que te hablen.",
   "Cuando te pregunten por lo que se dijo en una reunión —la actual o una anterior—, usa consultar_reunion antes de contestar, aunque creas recordarlo. Nunca digas que no tienes esa información sin haberla consultado.",
   "Al responder sobre una reunión, di qué se dijo y, si importa, en qué minuto; distingue lo acordado de lo que sólo se planteó, y avisa si la transcripción tenía huecos en ese tramo.",
-  "Si te piden la minuta o el acta, usa generar_minuta; por defecto en nivel detallado. Avisa que tarda un par de minutos y sigue disponible mientras tanto."
+  "Si recibes un aviso de sistema de que participas en directo en una reunión, eres una participante más: intervienes breve, con aportes concretos (síntesis, literatura buscada con buscar_referencias, vacíos, propuestas de acuerdo, preguntas no hechas) y no monopolizas la conversación.",
+  "Si te piden el acta o la minuta, usa generar_minuta; por defecto en nivel detallado. Avisa que tarda un par de minutos y sigue disponible mientras tanto."
 ].join(" ");
 
 // Sólo se añade cuando las herramientas de llamada están disponibles: si no,
@@ -693,14 +694,19 @@ const PARAMETROS_GENERAR_MINUTA = {
       description: "«detallado» usa el modelo de mayor razonamiento y un formato exhaustivo; «estandar» es más rápido. Por defecto, detallado."
     },
     reunion: { type: "string", description: "Cuál: «actual», «última», o palabras del título. Vacío = la última." },
+    tipo: {
+      type: "string",
+      enum: ["creativa", "ejecutiva", "operacional", "academica"],
+      description: "Formato del acta según el tipo de reunión: sesión creativa / design thinking, ejecutiva, operacional o académica. Vacío = el que se eligió al empezar la reunión."
+    },
     enviar_por_correo: { type: "boolean", description: "Si además se envía por correo al destinatario configurado. Sólo si lo piden." }
   },
   required: []
 };
 
-const DESCRIPCION_GENERAR_MINUTA = "Genera la minuta de una reunión transcrita en dos formatos —extensa con detalle, diagramas y gráficos, y one pager— "
-  + "y la deja abierta en pantalla para revisarla. Tarda uno o dos minutos: devuelve enseguida y avisa cuando esté lista. "
-  + "Úsala cuando te pidan la minuta, el acta o el resumen formal de una reunión.";
+const DESCRIPCION_GENERAR_MINUTA = "Genera el acta de una reunión transcrita en formato minuta lean —one pager y documento completo con A3, flujos, causa raíz, evidencia y trazabilidad— "
+  + "y la deja lista en la página de actas para revisarla y exportarla. Tarda uno o dos minutos: devuelve enseguida y avisa cuando esté lista. "
+  + "Úsala cuando te pidan el acta, la minuta o el resumen formal de una reunión.";
 
 const HERRAMIENTAS = [
   { nombre: "buscar_imagen_medica", descripcion: DESCRIPCION_IMAGEN, parametros: PARAMETROS_IMAGEN },

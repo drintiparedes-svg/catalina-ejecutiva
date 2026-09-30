@@ -192,7 +192,8 @@ await prueba("minuta: usa Gemini en estándar, normaliza la respuesta y deja tra
     pedido = JSON.parse(opciones.body);
     const minuta = {
       onePager: { mensajeClave: "Se aprueba el piloto", decisiones: ["Aprobar piloto"], acciones: [{ accion: "Enviar informe", responsable: "Luis" }] },
-      extensa: { temas: [{ titulo: "Piloto", desarrollo: "..." }], graficos: [{ titulo: "Uno solo", tipo: "barras", series: [{ etiqueta: "a", valor: "3" }] }], diagramas: [{ titulo: "Vacío", mermaid: " " }] }
+      graficos: [{ titulo: "Uno solo", tipo: "barras", series: [{ etiqueta: "a", valor: "3" }] }], diagramas: [{ titulo: "Vacío", mermaid: " " }],
+      flujoActual: { fases: ["Ingreso", "Alta"], carriles: ["Médico"], pasos: [{ carril: "Médico", fase: "Ingreso", titulo: "Indica" }, { carril: "Enfermería", fase: "Alta", titulo: "Fuera de carril" }] }
     };
     return respuesta(200, { candidates: [{ content: { parts: [{ text: "```json\n" + JSON.stringify(minuta) + "\n```" }] }, finishReason: "STOP" }] });
   });
@@ -202,9 +203,13 @@ await prueba("minuta: usa Gemini en estándar, normaliza la respuesta y deja tra
   assert.equal(r.trazabilidad.proveedor, "gemini");
   assert.equal(r.trazabilidad.modelo, "gemini-2.5-flash");
   assert.equal(r.minuta.onePager.acciones[0].plazo, "", "los campos ausentes deben quedar vacíos, no indefinidos");
-  assert.deepEqual(r.minuta.extensa.riesgos, []);
-  assert.equal(r.minuta.extensa.graficos.length, 0, "un gráfico de un solo valor se descarta");
-  assert.equal(r.minuta.extensa.diagramas.length, 0, "un diagrama vacío se descarta");
+  assert.equal(r.minuta.formato, "acta-2");
+  assert.equal(r.minuta.plantilla, "creativa");
+  assert.deepEqual(r.minuta.riesgos, []);
+  assert.deepEqual(r.minuta.a3.plan, []);
+  assert.equal(r.minuta.graficos.length, 0, "un gráfico de un solo valor se descarta");
+  assert.equal(r.minuta.diagramas.length, 0, "un diagrama vacío se descarta");
+  assert.deepEqual(r.minuta.flujoActual.pasos.map(p => p.titulo), ["Indica"], "un paso fuera de los carriles declarados se descarta");
   const entrada = pedido.contents[0].parts[0].text;
   assert.match(entrada, /Objetivo declarado: Aprobar el piloto de telemedicina/);
   assert.match(entrada, /<transcripcion>/);
@@ -264,20 +269,160 @@ await prueba("prompt para suscripción de chat: incluye instrucciones y transcri
   assert.ok(!p.includes("Responde SOLO con el JSON"));
 });
 
-await prueba("Markdown de la minuta: secciones, tablas y bloques mermaid", async () => {
-  simular(() => respuesta(200, { candidates: [{ content: { parts: [{ text: JSON.stringify({
-    onePager: { mensajeClave: "Clave", acciones: [{ accion: "Enviar | informe", responsable: "Luis", plazo: "viernes" }] },
-    extensa: { resumenEjecutivo: "Resumen", diagramas: [{ titulo: "Flujo", mermaid: "flowchart LR\n  A --> B" }] }
-  }) }] } }] }));
+// Acta de ejemplo en formato lean, usada por las pruebas de Markdown y de
+// maquetación.
+const ACTA = {
+  titulo: "Conciliación de medicamentos al alta", lede: "Levantar el problema antes de hablar de soluciones.", area: "Farmacia clínica", hitoSiguiente: "Flujo QF",
+  onePager: { mensajeClave: "Clave", acciones: [{ accion: "Enviar | informe", responsable: "Luis", plazo: "viernes" }] },
+  comoLeer: { preguntaTrabajo: "¿Qué cambiar para recibir la lista conciliada?" },
+  a3: { antecedentes: ["El QF prepara la planilla"], plan: [{ accion: "Documentar flujo", responsable: "Equipo QF", cuando: "Próxima reunión" }], muda: [{ tipo: "Esperas", donde: "Búsqueda del tratante", puntoDolor: "8" }] },
+  inconsistencias: [{ tema: "Taxonomía", detalle: "4 frente a 5 categorías" }],
+  flujoActual: { fases: ["Ingreso", "Alta"], carriles: ["Médico", "QF"], pasos: [
+    { carril: "Médico", fase: "Ingreso", titulo: "Mantiene o suspende", marca: "1" },
+    { carril: "QF", fase: "Alta", titulo: "Recopila <b>manual</b>", marca: "6" }], puntosDolor: [{ numero: "1", titulo: "Sin respaldo", cita: "un acto de fe" }] },
+  causaRaiz: { efecto: "Lista de alta incompleta", familias: [{ nombre: "Roles", causas: ["Responsable no formalizado"] }, { nombre: "Método", causas: ["Sin estándar de aviso"] }] },
+  preguntasEvidencia: [{ pregunta: "¿Es frecuente el error al ingreso?", busqueda: "medication history errors admission", aplicabilidad: "Puntos 1 y 2" }],
+  riesgos: [{ riesgo: "Doble registro", probabilidad: "Alta", impacto: "Alto", mitigacion: "Fuente única" }],
+  trazabilidad: { supuestos: ["Remy = REMI"], limites: "Sin línea base" }
+};
+
+await prueba("Markdown del acta: secciones de la minuta lean, tablas, flujo como mermaid y evidencia numerada", async () => {
+  simular(() => respuesta(200, { candidates: [{ content: { parts: [{ text: JSON.stringify(ACTA) }] } }] }));
   process.env.GEMINI_API_KEY = "AIza-prueba";
   const r = await S.generarMinuta({ transcripcion: "x".repeat(100) }, config, null);
   reunion.minuta = r.minuta;
   reunion.trazabilidad = r.trazabilidad;
+  reunion.evidencia = [{ pregunta: ACTA.preguntasEvidencia[0].pregunta, refs: [{ titulo: "Frequency of medication history errors", revista: "CMAJ", anio: 2005, enlace: "https://doi.org/10.1503/cmaj.045311" }] }];
   const md = R.minutaAMarkdown(reunion);
   assert.match(md, /## One pager/);
   assert.match(md, /\| Enviar \/ informe \| Luis \| viernes \|/);
-  assert.match(md, /```mermaid\nflowchart LR/);
-  assert.match(md, /Requiere revisión humana/);
+  for (const seccion of ["## 00 · Cómo leer", "## 01 · Minuta lean (A3)", "## 02 · Flujo actual (AS-IS)", "## 02 · Causa raíz", "· Evidencia y literatura", "· Beneficios, riesgos", "· Trazabilidad"]) {
+    assert.ok(md.includes(seccion), `falta la sección ${seccion}`);
+  }
+  assert.match(md, /```mermaid\nflowchart LR\n  subgraph/);
+  assert.match(md, /Frequency of medication history errors CMAJ, 2005 \[1\]/);
+  assert.match(md, /1\. Frequency of medication history errors\. \*CMAJ\*/);
+  assert.match(md, /Revisión humana pendiente/);
+});
+
+await prueba("acta.js: maqueta la plantilla (portada, secciones, carriles, Ishikawa) y escapa el contenido", async () => {
+  const A = await import("../public/acta.js");
+  const html = A.actaHTML(reunion, R.calidad(reunion));
+  assert.match(html, /class="portada"/);
+  assert.match(html, /NIVEL N2 \(PENDIENTE DE VALIDACIÓN\)/);
+  for (const titulo of ["Cómo leer este documento", "Minuta lean (A3)", "Flujo actual (AS-IS) y puntos de dolor", "Causa raíz", "Evidencia y literatura", "Trazabilidad"]) {
+    assert.ok(html.includes(`<h2>${titulo}</h2>`), `falta la sección ${titulo}`);
+  }
+  assert.match(html, /class="carriles"/);
+  assert.match(html, /<span class="dolor">6<\/span>/);
+  assert.match(html, /class="ishikawa"/);
+  assert.match(html, /Por evaluar/);
+  assert.ok(!html.includes("<b>manual</b>"), "el contenido del modelo debe ir escapado");
+  assert.match(A.onePagerHTML(reunion), /ONE PAGER/);
+  const doc = A.documentoAutonomo("Prueba", html);
+  assert.match(doc, /^<!doctype html>/);
+  assert.match(doc, /@page apaisada/);
+  const antigua = { ...reunion, minuta: { ...reunion.minuta, formato: undefined } };
+  assert.match(A.actaHTML(antigua, R.calidad(antigua)), /formato anterior/);
+  const primera = { ...reunion, minuta: { ...reunion.minuta, formato: "lean-1", plantilla: undefined } };
+  assert.match(A.actaHTML(primera, R.calidad(primera)), /Minuta lean \(A3\)/, "las actas lean-1 se leen como sesión creativa");
+});
+
+await prueba("plantillas: los cuatro esquemas son estrictos y las instrucciones nombran su tipo", async () => {
+  const P = await import("../public/plantillas-acta.js");
+  assert.deepEqual(P.TIPOS, ["creativa", "ejecutiva", "operacional", "academica"]);
+  const estricto = (e, ruta) => {
+    if (e.type === "object") {
+      assert.equal(e.additionalProperties, false, `${ruta} admite propiedades extra`);
+      assert.deepEqual(e.required, Object.keys(e.properties), `${ruta} no exige todas sus propiedades`);
+      for (const [k, v] of Object.entries(e.properties)) estricto(v, `${ruta}.${k}`);
+    }
+    if (e.type === "array") estricto(e.items, `${ruta}[]`);
+  };
+  for (const tipo of P.TIPOS) {
+    estricto(P.esquemaDe(tipo), tipo);
+    const i = P.instruccionesDe(tipo);
+    assert.ok(i.includes(P.PLANTILLAS[tipo].nombre));
+    assert.match(i, /CATALINA \(IA\)/);
+    assert.match(i, /Responde SOLO con el JSON/);
+    for (const seccion of P.PLANTILLAS[tipo].secciones) assert.ok(seccion, "sección sin nombre");
+  }
+});
+
+// Reunión ejecutiva con participación de Catalina: el caso completo.
+const ejecutiva = R.nuevaReunion({ titulo: "Comité de dirección", tipo: "ejecutiva", objetivo: "Priorizar la cartera" });
+ejecutiva.meta.inicio = base;
+ejecutiva.meta.fin = base + 20 * 60000;
+ejecutiva.navegador = [
+  { momento: base + 60000, texto: "revisamos la cartera de proyectos digitales" },
+  { momento: base + 5 * 60000, texto: "Catalina qué dice la evidencia sobre telemedicina" },
+  { momento: base + 7 * 60000, texto: "aprobamos priorizar el piloto" }
+];
+ejecutiva.catalina = [{ momento: base + 5 * 60000 + 8000, texto: "Hay revisiones sistemáticas que muestran beneficios en acceso." }];
+ejecutiva.participacion = [{ desde: base + 4 * 60000, hasta: base + 6 * 60000 }];
+
+await prueba("participación: lo que dice Catalina va marcado, no cuenta como palabras de participantes y llega al modelo con sus tramos", async () => {
+  const texto = R.transcripcionComoTexto(ejecutiva);
+  assert.match(texto, /\[00:05:08\] CATALINA \(IA\): Hay revisiones sistemáticas/);
+  assert.equal(R.palabras(ejecutiva), 17, "sólo cuentan las palabras de los participantes");
+  const datos = R.datosParaMinuta(ejecutiva);
+  assert.equal(datos.tipo, "ejecutiva");
+  assert.deepEqual(datos.participacion, [{ desde: "00:04:00", hasta: "00:06:00" }]);
+  let enviado = null;
+  process.env.GEMINI_API_KEY = "AIza-prueba";
+  simular((url, opciones) => {
+    enviado = JSON.parse(opciones.body);
+    return respuesta(200, { candidates: [{ content: { parts: [{ text: JSON.stringify({
+      onePager: { mensajeClave: "Se prioriza el piloto" },
+      decisiones: [{ decision: "Priorizar el piloto", fundamento: "Capacidad", responsable: "Comité", evidencia: "00:07:00" }],
+      cartera: [{ tema: "Piloto telemedicina", estado: "Verde", sintesis: "En plazo", requiere: "Nada" }, { tema: "ERP", estado: "Rojo", sintesis: "Atrasado", requiere: "Decisión" }],
+      aportesCatalina: [{ marca: "00:05:08", tipo: "referencia", aporte: "Evidencia de beneficio en acceso", recepcion: "Se tomó nota" }]
+    }) }] } }] });
+  });
+  const r = await S.generarMinuta({ ...datos, nivel: "estandar" }, config, null);
+  assert.equal(r.ok, true, r.error);
+  assert.equal(r.minuta.plantilla, "ejecutiva");
+  assert.equal(r.trazabilidad.tipo, "ejecutiva");
+  assert.match(enviado.systemInstruction.parts[0].text, /TIPO: REUNIÓN EJECUTIVA/);
+  assert.match(enviado.systemInstruction.parts[0].text, /"cartera"/);
+  assert.match(enviado.contents[0].parts[0].text, /Tramos en que Catalina participó/);
+  assert.match(enviado.contents[0].parts[0].text, /CATALINA \(IA\):/);
+  ejecutiva.minuta = r.minuta;
+  ejecutiva.trazabilidad = r.trazabilidad;
+  const A = await import("../public/acta.js");
+  const html = A.actaHTML(ejecutiva, R.calidad(ejecutiva));
+  for (const titulo of ["Decisiones", "Cartera de temas", "Intervenciones de Catalina (IA)", "Trazabilidad"]) assert.ok(html.includes(`<h2>${titulo}</h2>`), `falta ${titulo}`);
+  assert.ok(!html.includes("<h2>Minuta lean (A3)</h2>"), "la ejecutiva no lleva A3");
+  assert.match(html, /<span class="tag ok">Verde<\/span>/);
+  assert.match(html, /<span class="tag bad">Rojo<\/span>/);
+  assert.match(html, /De 00:04:00 a 00:06:00/);
+  assert.match(html, /REUNIÓN EJECUTIVA/);
+  const md = A.actaMarkdown(ejecutiva, R.calidad(ejecutiva));
+  assert.match(md, /# Acta · Reunión ejecutiva/);
+  assert.match(md, /\*\*Piloto telemedicina\*\* \| Verde/);
+  assert.match(md, /Intervenciones de Catalina \(IA\)/);
+});
+
+await prueba("formatos operacional y académico: maquetan sus secciones propias", async () => {
+  const A = await import("../public/acta.js");
+  const base2 = { ...ejecutiva, catalina: [], participacion: [] };
+  const operacional = { ...base2, minuta: { formato: "acta-2", plantilla: "operacional", onePager: { mensajeClave: "x" },
+    frentes: [{ frente: "Farmacia", estado: "Amarillo", avance: "60%", bloqueos: "Proveedor", responsable: "QF" }],
+    incidentes: [{ incidente: "Quiebre de stock", impacto: "Alto", causa: "en análisis", accionInmediata: "Préstamo", accionCorrectiva: "Stock crítico", responsable: "Abastecimiento", plazo: "1 semana" }],
+    acciones: [{ accion: "Revisar stock", responsable: "QF", plazo: "Lunes", prioridad: "Alta" }] } };
+  const hOp = A.actaHTML(operacional, R.calidad(operacional));
+  for (const titulo of ["Estado de frentes", "Incidentes y problemas", "Plan de acción"]) assert.ok(hOp.includes(`<h2>${titulo}</h2>`), `falta ${titulo}`);
+  assert.match(hOp, /<span class="tag warn">Amarillo<\/span>/);
+  assert.match(hOp, /<span class="tag bad">Alta<\/span>/);
+  const academica = { ...base2, minuta: { formato: "acta-2", plantilla: "academica", onePager: { mensajeClave: "x" },
+    preguntaCentral: "¿Reduce la conciliación los eventos adversos?",
+    exposiciones: [{ expositor: "Dra. X", tema: "Revisión Cochrane", puntosClave: ["RR 0,53"], evidenciaCitada: ["Redmond 2018"] }],
+    argumentos: [{ afirmacion: "Reduce discrepancias", sustento: "Cochrane", contraargumento: "Certeza baja", quien: "Dra. X" }],
+    brechas: ["Sin datos locales"], conclusiones: ["Beneficio en discrepancias"], tareas: [{ tarea: "Leer MARQUIS", responsable: "Todos", plazo: "Próxima sesión" }] } };
+  const hAc = A.actaHTML(academica, R.calidad(academica));
+  for (const titulo of ["Exposiciones", "Argumentos y evidencia citada", "Brechas y conclusiones", "Tareas académicas"]) assert.ok(hAc.includes(`<h2>${titulo}</h2>`), `falta ${titulo}`);
+  assert.match(hAc, /PREGUNTA CENTRAL/);
+  assert.match(A.actaMarkdown(academica, R.calidad(academica)), /## \d\d · Exposiciones/);
 });
 
 await prueba("minuta detallada con Claude: salida estructurada y, si la cuenta la rechaza (400), reintento sin ella", async () => {

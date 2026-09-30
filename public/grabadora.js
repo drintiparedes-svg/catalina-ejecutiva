@@ -53,14 +53,11 @@ export class GrabadoraDeReunion {
 
   // Tiene que llamarse dentro del gesto del usuario (un clic): el navegador
   // no deja pedir el audio de la pestaña de otro modo.
-  async iniciar({ audioPestana = false } = {}) {
+  // El audio de la reunión llega ya capturado (puente-meet.js): la pestaña se
+  // comparte una sola vez y ese mismo audio sirve para grabar y para que
+  // Catalina oiga. Esta grabadora no lo detiene al terminar: es del puente.
+  async iniciar({ flujoReunion = null } = {}) {
     if (this.activa) return { ok: true };
-    const pedirPestana = audioPestana && audioDePestanaDisponible()
-      // Chrome exige pedir vídeo para poder compartir el audio de la pestaña.
-      // El vídeo se apaga en cuanto llega: aquí sólo interesa el sonido.
-      ? navigator.mediaDevices.getDisplayMedia({ video: true, audio: true, preferCurrentTab: false, selfBrowserSurface: "exclude" }).catch(error => ({ error }))
-      : null;
-
     let mic;
     try {
       mic = await navigator.mediaDevices.getUserMedia({
@@ -70,31 +67,18 @@ export class GrabadoraDeReunion {
       return { ok: false, error: "No se pudo abrir el micrófono para grabar." };
     }
     this.flujos.push(mic);
-
-    let avisoPestana = "";
-    if (pedirPestana) {
-      const pantalla = await pedirPestana;
-      if (pantalla?.error || !pantalla?.getAudioTracks?.().length) {
-        pantalla?.getTracks?.().forEach(p => p.stop());
-        avisoPestana = pantalla?.error
-          ? "No se compartió la pestaña: sólo se grabará el micrófono."
-          : "La pestaña se compartió sin audio (marca «Compartir audio de la pestaña»): sólo se grabará el micrófono.";
-      } else {
-        pantalla.getVideoTracks().forEach(p => { p.enabled = false; });
-        // Si la persona deja de compartir desde la barra de Chrome, se sigue
-        // con el micrófono y se avisa, en vez de morir en silencio.
-        pantalla.getAudioTracks()[0].addEventListener("ended", () => {
-          this.conPestana = false;
-          this.alEstado?.("Se dejó de compartir la pestaña: sigo grabando sólo el micrófono", "problema");
-        });
-        this.flujos.push(pantalla);
-        this.conPestana = true;
-      }
+    this.conPestana = Boolean(flujoReunion?.getAudioTracks?.().length);
+    const fuentes = [mic, ...(this.conPestana ? [flujoReunion] : [])];
+    if (this.conPestana) {
+      flujoReunion.getAudioTracks()[0].addEventListener("ended", () => {
+        this.conPestana = false;
+        this.alEstado?.("Se dejó de compartir la pestaña de la reunión: sigo grabando sólo el micrófono", "problema");
+      });
     }
 
     this.ctx = new AudioContext();
     const mezcla = this.ctx.createGain();
-    for (const flujo of this.flujos) {
+    for (const flujo of fuentes) {
       if (!flujo.getAudioTracks().length) continue;
       this.ctx.createMediaStreamSource(new MediaStream(flujo.getAudioTracks())).connect(mezcla);
     }
@@ -112,7 +96,7 @@ export class GrabadoraDeReunion {
 
     this.activa = true;
     this.#reiniciarTramo();
-    return { ok: true, conPestana: this.conPestana, aviso: avisoPestana };
+    return { ok: true, conPestana: this.conPestana };
   }
 
   #reiniciarTramo() {

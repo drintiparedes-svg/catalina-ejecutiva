@@ -15,6 +15,8 @@
 // cuando se pide explícitamente transcribir en alta fidelidad o generar la
 // minuta, y en ese caso sólo el audio o el texto necesarios.
 
+import { actaMarkdown } from "./acta.js";
+
 const CLAVE = "catalina.reuniones.v1";
 const MAX_REUNIONES = 15;
 
@@ -87,6 +89,7 @@ export function nuevaReunion(meta = {}) {
       agenda: String(meta.agenda || "").trim(),
       enlaces: String(meta.enlaces || "").trim(),
       lugar: String(meta.lugar || "").trim(),
+      tipo: String(meta.tipo || "creativa"),
       inicio,
       fin: null
     },
@@ -94,7 +97,9 @@ export function nuevaReunion(meta = {}) {
     navegador: [],     // {momento, texto, incompleto?, hueco?}
     hd: [],            // {desde, hasta, texto, proveedor}
     hdFallidos: [],    // {desde, hasta, error}
-    intervenciones: [], // lo que se le preguntó a Catalina y qué respondió
+    intervenciones: [], // lo que se le preguntó a Catalina por su nombre
+    catalina: [],      // lo que dijo Catalina: {momento, texto}, separado de los participantes
+    participacion: [], // tramos en que Catalina participó en la conversación: {desde, hasta}
     materiales: [],    // láminas y referencias mostradas durante la reunión
     estadisticas: {},
     minuta: null
@@ -138,6 +143,11 @@ export function transcripcionPreferida(reunion) {
       else if (s.texto) lineas.push({ t: s.momento, texto: s.texto, fuente: "navegador", incompleto: s.incompleto });
     }
   }
+  // Lo que dijo Catalina va en la misma línea de tiempo, marcado: es una
+  // asistente de IA, no un participante, y la minuta tiene que distinguirlo.
+  for (const c of reunion.catalina || []) {
+    if (c.texto) lineas.push({ t: c.momento, texto: c.texto, fuente: "catalina" });
+  }
   lineas.sort((a, b) => a.t - b.t);
   return lineas.map(l => ({ ...l, marca: reloj(l.t, base) }));
 }
@@ -146,6 +156,7 @@ export function transcripcionComoTexto(reunion, { marcas = true } = {}) {
   return transcripcionPreferida(reunion).map(l => {
     if (l.hueco) return `${marcas ? `[${l.marca}] ` : ""}[SIN AUDIO ~${Math.round(l.hueco / 1000)} s: no se pudo transcribir este tramo]`;
     const marcasExtra = [l.fuente === "navegador" && reunion.hd.length ? "(respaldo navegador)" : "", l.incompleto ? "(frase cortada)" : ""].filter(Boolean).join(" ");
+    if (l.fuente === "catalina") return `${marcas ? `[${l.marca}] ` : ""}CATALINA (IA): ${l.texto}`;
     return `${marcas ? `[${l.marca}] ` : ""}${l.texto}${marcasExtra ? " " + marcasExtra : ""}`;
   }).join("\n");
 }
@@ -156,7 +167,8 @@ export function duracion(reunion) {
 }
 
 export function palabras(reunion) {
-  return transcripcionPreferida(reunion).reduce((n, l) => n + (l.texto ? l.texto.split(/\s+/).length : 0), 0);
+  // Sólo las de los participantes: lo que dijo Catalina no es la reunión.
+  return transcripcionPreferida(reunion).reduce((n, l) => n + (l.texto && l.fuente !== "catalina" ? l.texto.split(/\s+/).length : 0), 0);
 }
 
 // Indicadores de calidad de la captura. Van a la minuta y a la pantalla: una
@@ -331,16 +343,18 @@ export function datosParaMinuta(reunion) {
     calidad: calidad(reunion),
     materiales,
     intervenciones: (reunion.intervenciones || []).map(i => ({ marca: i.marca, pregunta: i.pregunta })),
+    participacion: (reunion.participacion || []).map(p => ({ desde: reloj(p.desde, reunion.meta.inicio), hasta: p.hasta ? reloj(p.hasta, reunion.meta.inicio) : "" })),
+    tipo: reunion.meta.tipo || "creativa",
     transcripcion: transcripcionComoTexto(reunion)
   };
 }
 
-export async function pedirMinuta(reunion, { nivel = "estandar", motor = null } = {}) {
+export async function pedirMinuta(reunion, { nivel = "estandar", motor = null, tipo = null } = {}) {
   try {
     const r = await fetch("/reunion/minuta", {
       method: "POST",
       headers: { "Content-Type": "application/json", ...cabecerasDeClavePropia() },
-      body: JSON.stringify({ ...datosParaMinuta(reunion), nivel, motor })
+      body: JSON.stringify({ ...datosParaMinuta(reunion), nivel, motor, ...(tipo ? { tipo } : {}) })
     });
     const texto = await r.text();
     try { return JSON.parse(texto); } catch { return { ok: false, error: `Respuesta ilegible del servidor (${r.status}).` }; }
@@ -372,79 +386,8 @@ export async function enviarMinutaPorCorreo(reunion, adjuntosExtra = []) {
 
 export const nombreDeArchivo = titulo => normalizar(titulo).replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60) || "reunion";
 
-// Markdown: el formato que se pega sin pérdida en Google Docs (Pegar desde
-// Markdown), Notion u Obsidian. Los diagramas van como bloques mermaid.
+// Markdown del acta: lo arma acta.js con las mismas secciones y bloques que el
+// HTML, para las cuatro plantillas.
 export function minutaAMarkdown(reunion) {
-  const m = reunion.minuta;
-  if (!m) return "";
-  const op = m.onePager, ex = m.extensa;
-  const li = items => items.filter(Boolean).map(i => `- ${i}`).join("\n");
-  const tabla = (cab, filas) => filas.length
-    ? `| ${cab.join(" | ")} |\n| ${cab.map(() => "---").join(" | ")} |\n` + filas.map(f => `| ${f.map(c => String(c || "—").replace(/\|/g, "/").replace(/\n/g, " ")).join(" | ")} |`).join("\n")
-    : "";
-  const fecha = new Date(reunion.meta.inicio).toLocaleString("es-CL", { dateStyle: "full", timeStyle: "short" });
-  const t = reunion.trazabilidad || {};
-  const partes = [
-    `# ${reunion.meta.titulo}`,
-    `*${fecha} · ${Math.round(duracion(reunion) / 60000)} min · ${m.tipoDeReunion || "Reunión"}*`,
-    "",
-    "## One pager",
-    op.estado ? `**Estado:** ${op.estado}` : "",
-    `> ${op.mensajeClave}`,
-    "",
-    op.contexto,
-    op.indicadores.length ? "\n**Indicadores**\n" + li(op.indicadores.map(i => `${i.etiqueta}: **${i.valor}**`)) : "",
-    op.decisiones.length ? "\n**Decisiones**\n" + li(op.decisiones) : "",
-    op.acciones.length ? "\n**Acciones**\n\n" + tabla(["Acción", "Responsable", "Plazo"], op.acciones.map(a => [a.accion, a.responsable, a.plazo])) : "",
-    op.riesgos.length ? "\n**Riesgos**\n" + li(op.riesgos) : "",
-    op.proximosPasos.length ? "\n**Próximos pasos**\n" + li(op.proximosPasos) : "",
-    "",
-    "---",
-    "",
-    "## Minuta extensa",
-    "### Información de la reunión",
-    li([
-      `Fecha: ${fecha}`,
-      reunion.meta.lugar && `Lugar/plataforma: ${reunion.meta.lugar}`,
-      reunion.meta.participantes && `Participantes declarados: ${reunion.meta.participantes}`,
-      reunion.meta.objetivo && `Objetivo: ${reunion.meta.objetivo}`
-    ]),
-    reunion.meta.agenda ? `\n**Agenda**\n\n${reunion.meta.agenda}` : "",
-    "### Resumen ejecutivo",
-    ex.resumenEjecutivo,
-    ex.contexto ? `### Contexto\n${ex.contexto}` : "",
-    ex.participantes.length ? "### Participantes\n" + tabla(["Nombre", "Rol", "Aportes"], ex.participantes.map(p => [p.nombre, p.rol, p.aportes])) : "",
-    "### Desarrollo por tema",
-    ...ex.temas.map((tema, i) => [
-      `#### ${i + 1}. ${tema.titulo}${tema.marcaInicio ? ` · [${tema.marcaInicio}]` : ""}`,
-      tema.desarrollo,
-      tema.puntosClave.length ? "\n**Puntos clave**\n" + li(tema.puntosClave) : "",
-      tema.posiciones.length ? "\n**Posiciones**\n" + li(tema.posiciones.map(p => `**${p.quien}:** ${p.postura}`)) : "",
-      tema.datos.length ? "\n**Datos**\n" + li(tema.datos) : "",
-      tema.citas.length ? "\n" + tema.citas.map(c => `> «${c.texto}» — ${c.hablante || "No identificado"}${c.marca ? ` [${c.marca}]` : ""}`).join("\n>\n") : "",
-      tema.conclusion ? `\n**Conclusión:** ${tema.conclusion}` : ""
-    ].filter(Boolean).join("\n")),
-    ex.decisiones.length ? "### Decisiones\n" + tabla(["Decisión", "Fundamento", "Responsable", "Evidencia"], ex.decisiones.map(d => [d.decision, d.fundamento, d.responsable, d.evidencia])) : "",
-    ex.acciones.length ? "### Plan de acción\n" + tabla(["Acción", "Responsable", "Plazo", "Prioridad", "Evidencia"], ex.acciones.map(a => [a.accion, a.responsable, a.plazo, a.prioridad, a.evidencia])) : "",
-    ex.riesgos.length ? "### Riesgos\n" + tabla(["Riesgo", "Probabilidad", "Impacto", "Mitigación"], ex.riesgos.map(r => [r.riesgo, r.probabilidad, r.impacto, r.mitigacion])) : "",
-    ex.preguntasAbiertas.length ? "### Preguntas abiertas\n" + li(ex.preguntasAbiertas) : "",
-    ex.desacuerdos.length ? "### Desacuerdos\n" + li(ex.desacuerdos) : "",
-    ex.supuestos.length ? "### Supuestos\n" + li(ex.supuestos) : "",
-    ex.datosCuantitativos.length ? "### Datos cuantitativos\n" + tabla(["Indicador", "Valor", "Unidad", "Contexto", "Marca"], ex.datosCuantitativos.map(d => [d.indicador, d.valor, d.unidad, d.contexto, d.marca])) : "",
-    ex.diagramas.length ? "### Diagramas\n" + ex.diagramas.map(d => `**${d.titulo}** — ${d.proposito}\n\n\`\`\`mermaid\n${d.mermaid}\n\`\`\``).join("\n\n") : "",
-    ex.graficos.length ? "### Gráficos (datos)\n" + ex.graficos.map(g => `**${g.titulo}** (${g.unidad}; fuente ${g.fuente})\n\n` + tabla(["Serie", "Valor"], g.series.map(s => [s.etiqueta, s.valor]))).join("\n\n") : "",
-    (ex.referenciasMencionadas.length || reunion.meta.enlaces || reunion.materiales?.length) ? "### Referencias" : "",
-    reunion.meta.enlaces ? "**Aportadas por el organizador**\n" + li(reunion.meta.enlaces.split(/\n+/)) : "",
-    ex.referenciasMencionadas.length ? "\n**Mencionadas en la reunión (no verificadas)**\n" + li(ex.referenciasMencionadas.map(r => `${r.tipo ? `[${r.tipo}] ` : ""}${r.descripcion}${r.url ? ` — ${r.url}` : ""}${r.marca ? ` [${r.marca}]` : ""}`)) : "",
-    reunion.materiales?.length ? "\n**Material mostrado por Catalina**\n" + li([...new Set(reunion.materiales)]) : "",
-    ex.glosario.length ? "### Glosario\n" + li(ex.glosario.map(g => `**${g.termino}:** ${g.definicion}`)) : "",
-    "### Limitaciones y trazabilidad",
-    ex.limitaciones,
-    li([
-      `Transcripción: ${calidad(reunion).fuente}, cobertura estimada ${calidad(reunion).cobertura}%, ${calidad(reunion).palabras} palabras.`,
-      t.modelo && `Redactada con ${t.proveedor}/${t.modelo} (nivel ${t.nivel}) el ${new Date(t.generadaEn).toLocaleString("es-CL")}.`,
-      "Minuta generada automáticamente a partir de una transcripción automática. Requiere revisión humana antes de difundirse."
-    ])
-  ];
-  return partes.filter(p => p !== "" && p != null).join("\n\n").replace(/\n{3,}/g, "\n\n");
+  return actaMarkdown(reunion, calidad(reunion));
 }
