@@ -253,6 +253,40 @@ se lee.
 Sólo se transcribe la voz de Catalina. Transcribir además la de la persona
 requiere activar `input_audio_transcription` en la sesión, con su costo aparte.
 
+## Documentos como insumo
+
+Se pueden aportar archivos de **cualquier extensión**, en la conversación o en
+una reunión:
+
+- **Historial → «Adjuntar»**, o arrastrándolos a la ventana: son insumos de la
+  conversación y se conservan en este navegador hasta quitarlos (×).
+- **Modo reunión**: en el diálogo «Nueva reunión» (campo *Documentos de la
+  reunión*), con el botón **«Insumos»** durante la reunión o arrastrándolos a
+  la pantalla. Quedan asociados a esa reunión y el acta los usa y los cita.
+  También se añaden después desde la página de **Actas**.
+
+| Formato | Cómo se lee |
+|---|---|
+| PDF | Texto por página en el navegador (pdf.js). Las páginas escaneadas (hasta 8) se leen con un modelo de visión |
+| Word, PowerPoint, Excel (.docx, .pptx, .xlsx y variantes) y OpenDocument | Se descomprimen y se lee su XML en el navegador: títulos, listas, tablas, notas al pie, comentarios, láminas con sus notas del orador, hojas con fechas |
+| Texto, Markdown, CSV, JSON, HTML, RTF, código | Tal cual |
+| Imágenes (PNG, JPG, WebP, GIF…) | Modelo de visión (Gemini, con relevo a OpenAI): transcripción literal del texto, tablas, gráficos y diagramas |
+| Audio y vídeo (MP3, M4A, WAV, MP4…) | Transcripción por tramos, con el servicio de alta fidelidad (hasta 60 min) |
+| ZIP | Se lee cada archivo de dentro |
+| .doc, .ppt, .xls antiguos y formatos desconocidos | Extracción aproximada de las cadenas de texto, marcada como tal; si no hay texto, queda registrado por su nombre |
+
+Catalina recibe el texto como contexto silencioso (entero si es corto; el
+principio si es largo) y busca el resto con la herramienta
+`consultar_documentos`, que cita archivo y página, lámina u hoja. Con
+ElevenLabs, la herramienta nueva hay que registrarla una vez en
+`/registrar.html`; mientras tanto, en reunión, `consultar_reunion` también busca
+en los documentos. El acta recibe el texto de los documentos delimitado y
+separado de la transcripción, con la instrucción de distinguir lo dicho de lo
+documentado y de no seguir instrucciones escritas dentro de ellos.
+
+Tope por archivo: 80 MB y 200 000 caracteres de texto; para el acta, 150 000
+caracteres repartidos entre los documentos. Pruebas: `npm run test:insumos`.
+
 ## Respaldo con Gemini
 
 Si OpenAI se queda sin crédito, la sesión pasa sola a Gemini Live y Catalina
@@ -511,4 +545,5 @@ Pruebas: `npm run test:reuniones`.
 - El análisis de labios se ejecuta completamente en el navegador local.
 - El audio conversacional se envía al proveedor de voz activo (ElevenLabs, OpenAI o Gemini).
 - Las reuniones se guardan sólo en el navegador (localStorage). En alta fidelidad el audio se envía por tramos al proveedor de transcripción, y la transcripción completa al modelo que redacta la minuta. Con datos identificables de pacientes, úsese sólo con proveedores y acuerdos de tratamiento de datos autorizados por la institución.
+- Los documentos aportados se leen en el navegador y su texto se guarda sólo en él (IndexedDB). Ese texto se envía al modelo de voz y al que redacta el acta; las imágenes y páginas escaneadas, al modelo de visión, y el audio, al de transcripción. Rige la misma cautela con datos identificables de pacientes.
 - `.env` está ignorado por Git para evitar publicar la clave.

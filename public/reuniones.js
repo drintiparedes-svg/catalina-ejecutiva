@@ -32,7 +32,7 @@ const VACIAS = new Set((
   "cual cuales quien quienes cuanto cuanta que del los las una uno unos unas con sin por ser hay han"
 ).split(" "));
 
-const terminos = texto => [...new Set(normalizar(texto).split(/[^a-z0-9ñ]+/).filter(p => p.length > 3 && !VACIAS.has(p)))];
+export const terminos = texto => [...new Set(normalizar(texto).split(/[^a-z0-9ñ]+/).filter(p => p.length > 3 && !VACIAS.has(p)))];
 
 // ── Persistencia ─────────────────────────────────────────────────────────────
 
@@ -101,6 +101,7 @@ export function nuevaReunion(meta = {}) {
     catalina: [],      // lo que dijo Catalina: {momento, texto}, separado de los participantes
     participacion: [], // tramos en que Catalina participó en la conversación: {desde, hasta}
     materiales: [],    // láminas y referencias mostradas durante la reunión
+    insumos: [],       // fichas de los documentos aportados (el texto vive en IndexedDB, insumos.js)
     estadisticas: {},
     minuta: null
   };
@@ -349,12 +350,13 @@ export function datosParaMinuta(reunion) {
   };
 }
 
-export async function pedirMinuta(reunion, { nivel = "estandar", motor = null, tipo = null } = {}) {
+// `insumos`: los documentos aportados, ya con su texto (insumosParaMinuta).
+export async function pedirMinuta(reunion, { nivel = "estandar", motor = null, tipo = null, insumos = [] } = {}) {
   try {
     const r = await fetch("/reunion/minuta", {
       method: "POST",
       headers: { "Content-Type": "application/json", ...cabecerasDeClavePropia() },
-      body: JSON.stringify({ ...datosParaMinuta(reunion), nivel, motor, ...(tipo ? { tipo } : {}) })
+      body: JSON.stringify({ ...datosParaMinuta(reunion), nivel, motor, ...(tipo ? { tipo } : {}), ...(insumos.length ? { insumos } : {}) })
     });
     const texto = await r.text();
     try { return JSON.parse(texto); } catch { return { ok: false, error: `Respuesta ilegible del servidor (${r.status}).` }; }

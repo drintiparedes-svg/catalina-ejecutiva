@@ -207,7 +207,7 @@ function remuestrear(muestras, desde, hasta) {
 
 // WAV PCM de 16 bits: el formato que aceptan todos los proveedores de
 // transcripción sin conversión. 30 s pesan ~1 MB, dentro del límite de Vercel.
-function aWavBase64(muestras, hz) {
+export function aWavBase64(muestras, hz) {
   const buffer = new ArrayBuffer(44 + muestras.length * 2);
   const v = new DataView(buffer);
   const texto = (o, s) => { for (let i = 0; i < s.length; i += 1) v.setUint8(o + i, s.charCodeAt(i)); };

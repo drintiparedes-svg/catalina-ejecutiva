@@ -27,8 +27,12 @@
     <aside class="panel" id="panel" data-open="false" aria-label="Historial de la conversación">
       <header class="panel-head">
         <span class="panel-title">Conversación</span>
-        <button class="panel-close" id="panelClose" aria-label="Cerrar el historial">&minus;</button>
+        <span class="panel-acciones">
+          <button class="panel-adjuntar" id="adjuntar" title="Sube documentos como insumo para Catalina: PDF, Word, PowerPoint, Excel, imágenes, Markdown, audio… (también puedes arrastrarlos aquí)">Adjuntar</button>
+          <button class="panel-close" id="panelClose" aria-label="Cerrar el historial">&minus;</button>
+        </span>
       </header>
+      <div class="panel-docs" id="panelDocs" hidden aria-label="Documentos aportados"></div>
       <div class="panel-body" id="panelBody">
         <p class="panel-empty">Lo que diga Catalina irá quedando aquí.</p>
       </div>
@@ -75,6 +79,10 @@
          sólo si la llaman por su nombre. Con este botón (o la tecla P) pasa a
          conversar con la sala, con lo transcrito hasta ahora como memoria. -->
     <button class="participar" id="participar" aria-pressed="false" title="Catalina guarda lo transcrito, lo usa como memoria y entra a conversar: sintetiza, aporta literatura, detecta vacíos, propone acuerdos y pregunta lo que nadie preguntó. La reunión sigue grabándose al desactivarlo. Tecla P.">Participar Catalina</button>
+    <button class="insumos-meet" id="insumosMeet" title="Sube documentos como insumo de la reunión (cualquier formato). Catalina los usa como antecedente y van al acta. También puedes arrastrarlos a la pantalla.">Insumos</button>
+    <input type="file" id="archivos" multiple hidden>
+    <!-- Zona para soltar archivos: aparece al arrastrar sobre la ventana. -->
+    <div class="soltar" id="soltar" hidden><p>Suelta los archivos para aportarlos como insumo</p></div>
     <button class="exit-meet" id="exitMeet" aria-label="Terminar la reunión y salir del modo Meet">Terminar reunión</button>
 
     <!-- Aviso al terminar una reunión: quedó guardada y desde aquí se abre la
@@ -113,6 +121,8 @@
         <label>Lugar o plataforma<input name="lugar" autocomplete="off" placeholder="Google Meet, sala 3…"></label>
         <label>Agenda<textarea name="agenda" rows="3" placeholder="1. …&#10;2. …"></textarea></label>
         <label>Enlaces y documentos de referencia<textarea name="enlaces" rows="2" placeholder="Una referencia por línea (URL, documento, estudio)"></textarea></label>
+        <label>Documentos de la reunión (insumos)<input type="file" id="reunionArchivos" multiple></label>
+        <p class="reunion-ayuda">Cualquier formato: PDF, Word, PowerPoint, Excel, imágenes, Markdown, audio… Se leen en este navegador; Catalina los usa como antecedente y el acta los cita. Durante la reunión puedes añadir más con «Insumos» o arrastrándolos a la pantalla.</p>
 
         <fieldset>
           <legend>Videollamada</legend>
@@ -129,7 +139,7 @@
             <span id="reunionContinuarTexto"></span></label>
         </fieldset>
         <p class="reunion-ayuda">Durante la reunión, «Participar Catalina» (o la tecla P) la hace entrar a conversar con lo transcrito como memoria. Mientras no participa escucha en silencio; los demás participantes no pueden despertarla diciendo su nombre, así que actívala tú cuando le pidan su opinión.</p>
-        <p class="reunion-ayuda">La transcripción se guarda sólo en este navegador. En alta fidelidad el audio se envía por tramos al proveedor de transcripción; no lo uses con datos identificables de pacientes sin la autorización que corresponda.</p>
+        <p class="reunion-ayuda">La transcripción y los documentos se guardan sólo en este navegador. El texto de los documentos se envía al modelo de voz y al de actas; las imágenes y páginas escaneadas, a un modelo de visión. En alta fidelidad el audio se envía por tramos al proveedor de transcripción; no lo uses con datos identificables de pacientes sin la autorización que corresponda.</p>
         <div class="reunion-botones">
           <button type="button" id="reunionCancelar">Cancelar</button>
           <button type="submit" class="primary">Empezar a escuchar</button>
@@ -138,6 +148,6 @@
     </dialog>
   </main>
   <audio id="remoteAudio" autoplay></audio>
-  <script type="module" src="app.js?v=30"></script>
+  <script type="module" src="app.js?v=31"></script>
 </body>
 </html>

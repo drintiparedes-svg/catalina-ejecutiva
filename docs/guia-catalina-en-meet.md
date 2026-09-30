@@ -37,6 +37,9 @@ ve y oye a Catalina porque en Meet **presentas la pestaña de Catalina** con su 
   conversado como memoria, se incorpora con una síntesis breve y conversa con todos.
 - Vuelve a pulsar **P** para que deje de participar. La grabación continúa.
 - Los demás participantes **no pueden despertarla diciendo su nombre**: tú la activas.
+- Para darle **documentos** (presentación, informe, planilla, imágenes…): botón
+  **«Insumos»** o arrástralos a la pantalla. Catalina los usa como antecedente y
+  van al acta. También se pueden elegir al crear la reunión.
 
 ## Al terminar
 

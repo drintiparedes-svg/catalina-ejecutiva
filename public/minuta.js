@@ -12,6 +12,7 @@ import {
 } from "./reuniones.js";
 import { actaHTML, onePagerHTML, dibujarDiagramas, documentoAutonomo, ESTILOS_ACTA, esc, tipoDelActa } from "./acta.js";
 import { PLANTILLAS, plantillaDe } from "./plantillas-acta.js";
+import { leerArchivo, guardarInsumo, borrarInsumo, insumosDeReunion, insumosParaMinuta, fichaDe, resumenDeFicha } from "./insumos.js";
 
 const $ = selector => document.querySelector(selector);
 $("#estilosActa").textContent = ESTILOS_ACTA;
@@ -90,8 +91,52 @@ function pintarDetalle() {
   describirTipo();
 
   $("#docTranscripcion").textContent = transcripcionComoTexto(r) || "(sin transcripción)";
+  pintarInsumos();
   pintarActa();
 }
+
+// ── Documentos aportados como insumo ────────────────────────────────────────
+
+function pintarInsumos() {
+  const lista = A(seleccionada?.insumos);
+  $("#insumosLista").innerHTML = lista.map(f => `
+    <li><span class="n" title="${esc(f.nombre)}">${esc(f.nombre)}</span>
+      <span class="f${["parcial", "sin-texto", "error"].includes(f.estado) ? " aviso" : ""}">${esc(resumenDeFicha(f))}${f.metodo ? ` · ${esc(f.metodo)}` : ""}${f.avisos?.[0] ? ` — ${esc(f.avisos[0])}` : ""}</span>
+      <button data-quitar="${esc(f.id)}" aria-label="Quitar ${esc(f.nombre)}">Quitar</button></li>`).join("")
+    || '<li><span class="f">Sin documentos aportados.</span></li>';
+}
+
+$("#insumosAnadir").addEventListener("click", () => $("#insumosArchivos").click());
+$("#insumosArchivos").addEventListener("change", async () => {
+  const archivos = [...$("#insumosArchivos").files];
+  $("#insumosArchivos").value = "";
+  const r = seleccionada;
+  if (!r || !archivos.length) return;
+  const estado = $("#insumosEstado");
+  for (const archivo of archivos) {
+    estado.className = "estado";
+    estado.textContent = `Leyendo «${archivo.name}»…`;
+    const insumo = await leerArchivo(archivo, { ambito: r.id, alProgreso: t => { estado.textContent = `«${archivo.name}»: ${t}`; } });
+    await guardarInsumo(insumo);
+    const actual = obtenerReunion(r.id) || r;
+    actual.insumos = [...A(actual.insumos), fichaDe(insumo)];
+    guardarReunion(actual);
+    seleccionada = actual;
+    pintarInsumos();
+    estado.className = insumo.estado === "error" ? "estado mal" : "estado bien";
+    estado.textContent = insumo.estado === "error" ? `No se pudo leer «${insumo.nombre}»: ${insumo.avisos[0]}` : `Añadido «${insumo.nombre}». Regenera el acta para incorporarlo.`;
+  }
+});
+$("#insumosLista").addEventListener("click", async evento => {
+  const id = evento.target.closest("[data-quitar]")?.dataset.quitar;
+  if (!id || !seleccionada) return;
+  const actual = obtenerReunion(seleccionada.id) || seleccionada;
+  actual.insumos = A(actual.insumos).filter(f => f.id !== id);
+  guardarReunion(actual);
+  await borrarInsumo(id);
+  seleccionada = actual;
+  pintarInsumos();
+});
 
 function pintarActa() {
   const r = seleccionada;
@@ -136,6 +181,7 @@ $("#guardarDatos").addEventListener("click", () => {
 
 $("#borrar").addEventListener("click", () => {
   if (!confirm(`¿Borrar «${seleccionada.meta.titulo}» con su transcripción y su acta? No se puede deshacer.`)) return;
+  A(seleccionada.insumos).forEach(f => borrarInsumo(f.id));
   borrarReunion(seleccionada.id);
   seleccionada = null;
   history.replaceState(null, "", location.pathname);
@@ -157,7 +203,8 @@ $("#generar").addEventListener("click", async () => {
   estado.className = "estado";
   const inicio = Date.now();
   const reloj = setInterval(() => { estado.textContent = `Redactando el acta (${nivel})… ${Math.round((Date.now() - inicio) / 1000)} s`; }, 1000);
-  const resultado = await pedirMinuta(r, { nivel, tipo, motor: proveedor ? { proveedor, modelo } : null });
+  const insumos = insumosParaMinuta(await insumosDeReunion(r));
+  const resultado = await pedirMinuta(r, { nivel, tipo, insumos, motor: proveedor ? { proveedor, modelo } : null });
   clearInterval(reloj);
   boton.disabled = false;
   if (!resultado.ok) {
@@ -288,7 +335,7 @@ $("#copiarPrompt").addEventListener("click", async () => {
   const r = await fetch("/reunion/prompt", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ ...datosParaMinuta(seleccionada), nivel: $("#nivel").value, tipo: $("#tipo").value })
+    body: JSON.stringify({ ...datosParaMinuta(seleccionada), nivel: $("#nivel").value, tipo: $("#tipo").value, insumos: insumosParaMinuta(await insumosDeReunion(seleccionada)) })
   }).then(x => x.json()).catch(() => null);
   if (!r?.ok) { $("#byokEstado").textContent = "No se pudo preparar el texto."; return; }
   try {

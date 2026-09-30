@@ -19,6 +19,10 @@ import {
   calidad, duracion, palabras, pedirMinuta, enviarMinutaPorCorreo, cabecerasDeClavePropia, transcripcionComoTexto
 } from "./reuniones.js";
 import { PLANTILLAS, plantillaDe } from "./plantillas-acta.js";
+import {
+  leerArchivo, guardarInsumo, insumosDe, borrarInsumo, todosLosInsumos, insumosDeReunion, fichaDe,
+  resumenDeFicha, mensajeDeInsumo, buscarEnInsumos, insumosParaMinuta
+} from "./insumos.js";
 
 const canvas = document.querySelector("#avatar");
 const ctx = canvas.getContext("2d");
@@ -71,7 +75,13 @@ const ui = {
   reunionAvisoDetalle: document.querySelector("#reunionAvisoDetalle"),
   reunionAvisoAbrir: document.querySelector("#reunionAvisoAbrir"),
   reunionAvisoCerrar: document.querySelector("#reunionAvisoCerrar"),
-  audio: document.querySelector("#remoteAudio")
+  audio: document.querySelector("#remoteAudio"),
+  adjuntar: document.querySelector("#adjuntar"),
+  archivos: document.querySelector("#archivos"),
+  panelDocs: document.querySelector("#panelDocs"),
+  insumosMeet: document.querySelector("#insumosMeet"),
+  soltar: document.querySelector("#soltar"),
+  reunionArchivos: document.querySelector("#reunionArchivos")
 };
 
 const director = new PerformanceDirector();
@@ -105,6 +115,7 @@ const manejadores = {
     // protocolo tiene que llegar antes.
     setTimeout(() => {
       presentarReunionesGuardadas();
+      presentarDocumentos();
       if (puenteReunion) sesion.mezclarEntrada?.(puenteReunion.flujo);
       if (enModoMeet && reunionActual) {
         presentarReunionACatalina();
@@ -510,8 +521,10 @@ ui.reunionForm.addEventListener("submit", evento => {
     tipo: datos.tipo,
     alta: ui.reunionAlta.checked,
     pestana: ui.reunionPestana.checked,
-    continuar: ui.reunionContinuarCasilla.checked
+    continuar: ui.reunionContinuarCasilla.checked,
+    archivos: [...(ui.reunionArchivos.files || [])]
   });
+  ui.reunionArchivos.value = "";
 });
 ui.reunionCancelar.addEventListener("click", () => ui.reunionDialogo.close());
 // Conectar con la reunión y la alta fidelidad son independientes: el puente
@@ -540,6 +553,7 @@ async function entrarEnModoMeet(opciones = {}) {
   } else {
     reunionActual = nuevaReunion(opciones);
   }
+  reunionActual.insumos ||= [];
   guardarReunion(reunionActual);
   memoriaEnviadaHasta = reunionActual.navegador.length;
   memoriaCaracteres = 0;
@@ -575,6 +589,12 @@ async function entrarEnModoMeet(opciones = {}) {
       reunionEnGrabacion = null;
     }
   }
+
+  // Los documentos elegidos en el diálogo se leen ya dentro de la reunión, para
+  // que queden asociados a ella. Se leen en segundo plano: la escucha empieza
+  // sin esperarlos.
+  if (opciones.archivos?.length) aportarArchivos(opciones.archivos);
+  pintarDocumentos();
 
   if (!escuchaDisponible()) {
     // Sin reconocimiento de voz el modo sigue sirviendo para capturar la
@@ -626,6 +646,7 @@ async function salirDeModoMeet() {
 
   const reunion = reunionActual;
   reunionActual = null;
+  pintarDocumentos();
   if (!reunion) return;
   reunion.meta.fin = Date.now();
   reunion.estadisticas = { ...escucha.estadisticas };
@@ -657,6 +678,7 @@ function presentarReunionACatalina() {
     m.objetivo ? `Objetivo: ${m.objetivo}.` : "",
     m.participantes ? `Participantes: ${m.participantes}.` : "",
     m.agenda ? `Agenda: ${m.agenda}.` : "",
+    reunionActual.insumos?.length ? `Documentos aportados como insumo: ${reunionActual.insumos.map(f => `«${f.nombre}»`).join(", ")}; consúltalos con consultar_documentos o consultar_reunion.` : "",
     "Te llegarán fragmentos de la transcripción: no respondas a ellos; contesta sólo cuando te llamen por tu nombre."
   ].filter(Boolean).join(" "));
 }
@@ -741,12 +763,31 @@ function ocultarAvisoDeReunion() { ui.reunionAviso.hidden = true; }
 ui.reunionAvisoCerrar.addEventListener("click", ocultarAvisoDeReunion);
 
 // Herramientas de reuniones.
-function consultarReunionHerramienta(argumentos) {
+async function consultarReunionHerramienta(argumentos) {
   const reunion = elegirReunion(argumentos.reunion, reunionActual?.id);
   if (!reunion) return { ok: false, error: "No hay ninguna reunión guardada en este navegador." };
   // La que está en curso se consulta con lo último, aunque aún no se guardara.
   const fuente = reunion.id === reunionActual?.id ? reunionActual : reunion;
-  return consultarReunion(fuente, String(argumentos.pregunta || ""));
+  const resultado = consultarReunion(fuente, String(argumentos.pregunta || ""));
+  // Los documentos de la reunión también responden: así funcionan aunque el
+  // agente todavía no tenga registrada consultar_documentos.
+  if (fuente.insumos?.length) {
+    const docs = buscarEnInsumos(await insumosDeReunion(fuente), String(argumentos.pregunta || ""), { maxCaracteres: 3000 });
+    resultado.documentos = docs.documentos;
+    resultado.pasajesDeDocumentos = docs.pasajes;
+  }
+  return resultado;
+}
+
+// Busca en los documentos aportados: los de la conversación y los de la
+// reunión en curso primero; si piden uno por nombre, en todos.
+async function consultarDocumentosHerramienta(argumentos) {
+  const todos = await todosLosInsumos();
+  if (!todos.length) return { ok: false, error: "No hay documentos aportados en este navegador." };
+  const documento = String(argumentos.documento || "");
+  const actuales = todos.filter(i => i.ambito === "conversacion" || i.ambito === reunionActual?.id);
+  const base = documento || !actuales.length ? todos : actuales;
+  return buscarEnInsumos(base, String(argumentos.pregunta || ""), { documento });
 }
 
 let minutaEnCurso = null;
@@ -762,7 +803,9 @@ function generarMinutaHerramienta(argumentos) {
   // esperar, y Catalina tiene que poder seguir conversando mientras tanto.
   const tipo = PLANTILLAS[argumentos.tipo] ? argumentos.tipo : null;
   if (tipo) fuente.meta.tipo = tipo;
-  minutaEnCurso = pedirMinuta(fuente, { nivel, tipo }).then(async r => {
+  minutaEnCurso = insumosDeReunion(fuente)
+    .then(docs => pedirMinuta(fuente, { nivel, tipo, insumos: insumosParaMinuta(docs) }))
+    .then(async r => {
     minutaEnCurso = null;
     if (!r.ok) {
       sesion?.anadirContexto?.(`[Sistema] No se pudo generar el acta de «${fuente.meta.titulo}»: ${r.error}. Díselo a la persona.`);
@@ -1037,7 +1080,8 @@ async function despacharHerramienta(nombre, argumentos) {
   if (nombre === "buscar_imagenes_web") return await buscarImagenesWeb(argumentos);
   if (nombre === "fuentes_clinicas") return await pedirFuentesClinicas(argumentos);
   if (nombre === "buscar_videos") return await buscarVideos(argumentos);
-  if (nombre === "consultar_reunion") return consultarReunionHerramienta(argumentos);
+  if (nombre === "consultar_reunion") return await consultarReunionHerramienta(argumentos);
+  if (nombre === "consultar_documentos") return await consultarDocumentosHerramienta(argumentos);
   if (nombre === "generar_minuta") return generarMinutaHerramienta(argumentos);
   // Cualquier otro nombre viene de un conector definido en el administrador.
   // Se manda el nombre, no la dirección: el servidor la resuelve.
@@ -2018,6 +2062,167 @@ function cerrarTurno() {
   else turnoVivo.nodo.dataset.vivo = "false";
   turnoVivo = null;
 }
+
+// ── Documentos aportados como insumo ────────────────────────────────────────
+//
+// Se pueden subir desde el historial (insumos de la conversación) o en modo
+// reunión (insumos de esa reunión, que además van al acta). Cualquier
+// extensión: insumos.js lee lo que se pueda y registra el resto por su
+// nombre. El texto pasa a Catalina como contexto silencioso, y para lo que no
+// cabe tiene consultar_documentos.
+let documentosConversacion = [];
+const pendientesDeEntrega = [];      // insumos que esperan a que haya sesión
+const entregadosEnSesion = new Set();
+const leyendo = new Map();           // id provisional → {nombre, progreso}
+
+async function aportarArchivos(lista) {
+  const archivos = [...(lista || [])];
+  for (const archivo of archivos) {
+    const reunion = enModoMeet ? reunionActual : null;
+    const provisional = `leyendo-${Math.random().toString(36).slice(2)}`;
+    leyendo.set(provisional, { nombre: archivo.name, progreso: "Leyendo…" });
+    pintarDocumentos();
+    if (enModoMeet) señalar(`Leyendo insumo «${archivo.name}»…`);
+    const insumo = await leerArchivo(archivo, {
+      ambito: reunion?.id || "conversacion",
+      alProgreso: texto => {
+        leyendo.set(provisional, { nombre: archivo.name, progreso: texto });
+        pintarDocumentos();
+        if (enModoMeet) señalar(`«${archivo.name}»: ${texto}`);
+      }
+    });
+    leyendo.delete(provisional);
+    await guardarInsumo(insumo);
+    if (reunion) {
+      reunion.insumos ||= [];
+      reunion.insumos.push(fichaDe(insumo));
+      guardarReunion(reunion);
+    } else {
+      documentosConversacion.push(insumo);
+    }
+    pintarDocumentos();
+    entregarACatalina(insumo, Boolean(reunion));
+    const listo = insumo.estado === "error" ? `No pude leer «${insumo.nombre}»: ${insumo.avisos[0] || "error"}` : `Insumo listo: «${insumo.nombre}» (${resumenDeFicha(insumo)})`;
+    if (enModoMeet) señalar(listo, insumo.estado === "error" ? "problema" : "");
+    else if (insumo.estado === "error") mostrarAviso(listo);
+  }
+}
+
+function entregarACatalina(insumo, enReunion) {
+  if (connected && sesion?.anadirContexto) {
+    sesion.anadirContexto(mensajeDeInsumo(insumo, { enReunion }));
+    entregadosEnSesion.add(insumo.id);
+  } else {
+    pendientesDeEntrega.push({ insumo, enReunion });
+  }
+}
+
+// Al abrir la sesión: lo que se subió sin sesión se entrega entero, y de lo
+// subido en otras sesiones se da sólo el índice (se consulta con la
+// herramienta), para no llenar el contexto de la voz.
+function presentarDocumentos() {
+  if (!sesion?.anadirContexto) return;
+  while (pendientesDeEntrega.length) {
+    const { insumo, enReunion } = pendientesDeEntrega.shift();
+    sesion.anadirContexto(mensajeDeInsumo(insumo, { enReunion }));
+    entregadosEnSesion.add(insumo.id);
+  }
+  const previos = [...documentosConversacion, ...(reunionActual?.insumos || [])].filter(i => !entregadosEnSesion.has(i.id));
+  if (previos.length) {
+    sesion.anadirContexto(`[Sistema] Documentos aportados antes y disponibles: ${previos.map(i => `«${i.nombre}» (${resumenDeFicha(i)})`).join("; ")}. `
+      + "Si te preguntan por ellos, usa consultar_documentos antes de responder.");
+    previos.forEach(i => entregadosEnSesion.add(i.id));
+  }
+}
+
+async function quitarDocumento(id) {
+  const reunion = enModoMeet ? reunionActual : null;
+  const lista = reunion ? reunion.insumos : documentosConversacion;
+  const ficha = lista.find(i => i.id === id);
+  if (!ficha) return;
+  lista.splice(lista.indexOf(ficha), 1);
+  await borrarInsumo(id);
+  if (reunion) guardarReunion(reunion);
+  pintarDocumentos();
+  if (connected) sesion?.anadirContexto?.(`[Sistema] Se retiró el documento «${ficha.nombre}»: ya no lo uses como antecedente.`);
+}
+
+function pintarDocumentos() {
+  const lista = enModoMeet ? (reunionActual?.insumos || []) : documentosConversacion;
+  const nodos = [];
+  for (const [, l] of leyendo) nodos.push(tarjetaDeDocumento({ nombre: l.nombre }, l.progreso, "leyendo"));
+  for (const d of lista) {
+    const aviso = d.avisos?.[0] ? ` — ${d.avisos[0]}` : "";
+    nodos.push(tarjetaDeDocumento(d, `${resumenDeFicha(d)}${aviso}`, d.estado, () => quitarDocumento(d.id)));
+  }
+  ui.panelDocs.replaceChildren(...nodos);
+  ui.panelDocs.hidden = !nodos.length;
+  ui.insumosMeet.textContent = enModoMeet && lista.length ? `Insumos (${lista.length})` : "Insumos";
+}
+
+function tarjetaDeDocumento(d, ficha, estado, alQuitar) {
+  const nodo = document.createElement("div");
+  nodo.className = "doc";
+  const nombre = document.createElement("span");
+  nombre.className = "doc-nombre";
+  nombre.textContent = d.nombre;
+  nombre.title = d.nombre;
+  const detalle = document.createElement("span");
+  detalle.className = "doc-ficha";
+  detalle.dataset.estado = estado || "listo";
+  detalle.textContent = ficha;
+  nodo.append(nombre, detalle);
+  if (alQuitar) {
+    const quitar = document.createElement("button");
+    quitar.className = "doc-quitar";
+    quitar.setAttribute("aria-label", `Quitar ${d.nombre}`);
+    quitar.title = "Quitar este documento";
+    quitar.textContent = "×";
+    quitar.addEventListener("click", alQuitar);
+    nodo.append(quitar);
+  }
+  return nodo;
+}
+
+ui.adjuntar.addEventListener("click", () => ui.archivos.click());
+ui.insumosMeet.addEventListener("click", () => ui.archivos.click());
+ui.archivos.addEventListener("change", () => {
+  const archivos = [...ui.archivos.files];
+  ui.archivos.value = "";
+  if (!enModoMeet) fijarPanel(true);
+  aportarArchivos(archivos);
+});
+
+// Arrastrar y soltar en cualquier parte de la ventana.
+let arrastres = 0;
+const llevaArchivos = evento => [...(evento.dataTransfer?.types || [])].includes("Files");
+window.addEventListener("dragenter", evento => {
+  if (!llevaArchivos(evento)) return;
+  arrastres += 1;
+  ui.soltar.hidden = false;
+});
+window.addEventListener("dragleave", evento => {
+  if (!llevaArchivos(evento)) return;
+  arrastres = Math.max(0, arrastres - 1);
+  if (!arrastres) ui.soltar.hidden = true;
+});
+// Dentro del diálogo de la reunión manda su propio campo de archivos.
+const enDialogo = evento => Boolean(evento.target.closest?.("dialog"));
+window.addEventListener("dragover", evento => { if (llevaArchivos(evento) && !enDialogo(evento)) evento.preventDefault(); });
+window.addEventListener("drop", evento => {
+  if (!llevaArchivos(evento)) return;
+  arrastres = 0;
+  ui.soltar.hidden = true;
+  if (enDialogo(evento)) return;
+  evento.preventDefault();
+  if (!enModoMeet) fijarPanel(true);
+  aportarArchivos(evento.dataTransfer.files);
+});
+
+insumosDe("conversacion").then(lista => {
+  documentosConversacion = lista;
+  pintarDocumentos();
+});
 
 fijarSubtitulos(verSubtitulos);
 fijarPanel(verPanel);
