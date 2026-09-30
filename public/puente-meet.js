@@ -25,8 +25,10 @@ export async function conectarConReunion({ alTerminar } = {}) {
   try {
     captura = await navigator.mediaDevices.getDisplayMedia({
       // Chrome exige pedir vídeo para compartir el audio de una pestaña; el
-      // vídeo se desactiva en cuanto llega.
-      video: true,
+      // vídeo se desactiva en cuanto llega. Se pide mínimo —un cuadro por
+      // segundo, tamaño miniatura— porque capturar la reunión a resolución
+      // completa roba al equipo el tiempo que necesita la voz.
+      video: { frameRate: { max: 1 }, width: { max: 320 }, height: { max: 240 } },
       audio: {
         // Sin procesado: es audio de la reunión, no de un micrófono, y la
         // supresión de ruido lo degrada.

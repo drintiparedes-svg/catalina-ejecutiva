@@ -52,6 +52,8 @@ ve y oye a Catalina porque en Meet **presentas la pestaña de Catalina** con su 
 | El indicador dice «Se dejó de compartir la pestaña de la reunión» | Se pulsó «Dejar de compartir» en la barra de Chrome | Termina y vuelve a empezar (la reunión se puede continuar) |
 | Lo que dicen los demás no aparece en el acta | Alta fidelidad desactivada o sin clave de transcripción | Actívala; revisa las claves de OpenAI o Gemini |
 | Eco o voz duplicada | Parlantes en vez de audífonos | Usa audífonos |
+| La voz de Catalina se oye entrecortada | (1) Llegada irregular del audio (red o equipo cargado); (2) el audio de la reunión la interrumpía mientras hablaba | Corregido en la versión 2026-09-30: colchón de voz adaptativo y compuerta que corta el audio de la reunión mientras ella habla. Si persiste, abre la consola (F12) y ejecuta `catalina.session.diagnostico()`: `cortes` altos = red o equipo; `interrupciones` altas = ruido o eco de la llamada |
+| Los participantes no pueden interrumpirla hablando | Efecto buscado de la compuerta: mientras habla, Catalina no oye la videollamada (sí tu micrófono) | Interrúmpela tú por el micrófono o pulsa P; lo que dicen los demás igual queda grabado en el acta |
 
 ## Límites
 

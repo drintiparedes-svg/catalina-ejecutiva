@@ -8,7 +8,8 @@
     "check": "node --check server.mjs && node --check app.mjs && node --check api/index.mjs && node --check reunion.mjs && for f in public/*.js public/*/*.js public/vendor/lipsync-engine/*.js; do node --check \"$f\" || exit 1; done && node work/smoke.mjs",
     "package": "node work/package.mjs",
     "demo": "node work/build-demo.mjs work/banco-de-pruebas.html",
-    "test:reuniones": "node work/prueba-reuniones.mjs"
+    "test:reuniones": "node work/prueba-reuniones.mjs",
+    "test:voz": "node work/prueba-voz.mjs"
   },
   "optionalDependencies": {
     "@anthropic-ai/sdk": "^0.129.0"

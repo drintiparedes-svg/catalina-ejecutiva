@@ -2119,12 +2119,19 @@ function aplicarBocaAlineada(reading) {
   reading.alineada = true;
 }
 
+// En reunión la cara se dibuja a 30 cuadros y no a 60: la pestaña se presenta
+// en Meet, que la envía a 30 como mucho, y cada cuadro dibujado de más es
+// tiempo que el hilo principal le quita a la recepción de la voz.
+let ultimoCuadro = 0;
 function render(now) {
   const reading = connected ? voice.read(now) : null;
   if (reading) seguirFinDeTurno(reading, now);
-  if (reading) aplicarBocaAlineada(reading);
-  const pose = director.update(now, reading);
-  renderer.draw(ctx, viewport, pose);
+  if (!enModoMeet || now - ultimoCuadro >= 32) {
+    ultimoCuadro = now;
+    if (reading) aplicarBocaAlineada(reading);
+    const pose = director.update(now, reading);
+    renderer.draw(ctx, viewport, pose);
+  }
   requestAnimationFrame(render);
 }
 

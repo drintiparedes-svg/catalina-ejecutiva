@@ -4,6 +4,9 @@
 // la clave. Aquí sólo viven WebRTC, el canal de eventos y la traducción de los
 // errores a mensajes que se puedan leer en pantalla.
 
+// Tras callar, la reunión sigue cortada un momento: su voz vuelve con retraso.
+const RETENCION_MS = 700;
+
 export class RealtimeSession {
   constructor(handlers = {}) {
     this.handlers = handlers;
@@ -96,7 +99,10 @@ export class RealtimeSession {
 
   #onEvent(message) {
     const event = JSON.parse(message.data);
+    if (event.type === "output_audio_buffer.started") this.#alSonar(true);
+    if (event.type === "output_audio_buffer.stopped" || event.type === "output_audio_buffer.cleared") this.#alSonar(false);
     if (event.type === "input_audio_buffer.speech_started") {
+      if (this.hablando) this.interrupciones = (this.interrupciones || 0) + 1;
       this.transcript = "";
       this.#emit("onTranscript", "");
       this.#emit("onPhase", "listening");
@@ -188,7 +194,7 @@ export class RealtimeSession {
     const emisor = this.peer?.getSenders().find(s => s.track?.kind === "audio");
     this.mezcla?.close().catch(() => {});
     this.mezcla = null;
-    this.pistaMezclada = null;
+    this.pistaMezclada = this.compuertaExtra = null;
     if (!emisor || !this.micStream) return false;
     const pistaMic = this.micStream.getAudioTracks()[0];
     if (!flujo?.getAudioTracks?.().length) {
@@ -198,7 +204,11 @@ export class RealtimeSession {
     const ctx = new AudioContext();
     const destino = ctx.createMediaStreamDestination();
     ctx.createMediaStreamSource(this.micStream).connect(destino);
-    ctx.createMediaStreamSource(new MediaStream(flujo.getAudioTracks())).connect(destino);
+    // Compuerta: la reunión deja de llegarle mientras habla, para que ni su
+    // propia voz de vuelta ni el ruido de la llamada la interrumpan.
+    this.compuertaExtra = ctx.createGain();
+    this.compuertaExtra.gain.value = this.hablando ? 0 : 1;
+    ctx.createMediaStreamSource(new MediaStream(flujo.getAudioTracks())).connect(this.compuertaExtra).connect(destino);
     this.mezcla = ctx;
     this.pistaMezclada = destino.stream.getAudioTracks()[0];
     this.pistaMezclada.enabled = !this.muted;
@@ -206,10 +216,42 @@ export class RealtimeSession {
     return true;
   }
 
+  // Con WebRTC el audio no pasa por aquí: el inicio y el fin de su voz los
+  // anuncia el canal de datos (output_audio_buffer.*). Si el aviso de fin no
+  // llegara, la compuerta se reabre sola a los 30 s.
+  #alSonar(sonando) {
+    this.hablando = sonando;
+    clearTimeout(this.relojCompuerta);
+    if (sonando) {
+      this.#compuerta(false);
+      this.relojCompuerta = setTimeout(() => this.#alSonar(false), 30000);
+      return;
+    }
+    this.relojCompuerta = setTimeout(() => this.#compuerta(true), RETENCION_MS);
+  }
+
+  #compuerta(abierta) {
+    const ganancia = this.compuertaExtra?.gain;
+    if (!ganancia || !this.mezcla) return;
+    const ahora = this.mezcla.currentTime;
+    ganancia.cancelScheduledValues(ahora);
+    ganancia.setTargetAtTime(abierta ? 1 : 0, ahora, abierta ? .05 : .01);
+  }
+
+  diagnostico() {
+    return {
+      interrupciones: this.interrupciones || 0,
+      reunionMezclada: Boolean(this.compuertaExtra),
+      compuertaAbierta: this.compuertaExtra ? !this.hablando : null
+    };
+  }
+
   disconnect() {
     this.connected = false;
+    clearTimeout(this.relojCompuerta);
+    this.hablando = false;
     this.mezcla?.close().catch(() => {});
-    this.mezcla = this.pistaMezclada = null;
+    this.mezcla = this.pistaMezclada = this.compuertaExtra = null;
     this.channel?.close();
     this.peer?.close();
     this.micStream?.getTracks().forEach(track => track.stop());

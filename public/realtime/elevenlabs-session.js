@@ -23,6 +23,9 @@ import { VisemasAlineados } from "../audio/visemas-alineados.js";
 
 const SALIDA_HZ = 24000;    // frecuencia del reproductor; lo que llegue se ajusta
 const ENTRADA_HZ = 16000;   // lo que el agente espera recibir del micrófono
+// Tras callar, el audio de la reunión sigue cortado un momento más: lo que
+// vuelve por la videollamada llega con retraso y sería su propia voz.
+const RETENCION_MS = 700;
 const MUESTRAS_POR_ENVIO = 2048;
 
 export class ElevenLabsSession {
@@ -177,6 +180,8 @@ export class ElevenLabsSession {
 
     // El reloj de la boca. Llega cada 20 ms con las muestras ya reproducidas.
     this.reproductor.port.onmessage = ({ data }) => {
+      if (data?.tipo === "voz") this.#alSonar(data.sonando);
+      if (data?.tipo === "voz" || data?.tipo === "estadisticas") this.estadisticasVoz = { ...data, tipo: undefined };
       if (data?.tipo !== "reloj") return;
       if (data.reinicio) {
         this.encoladas = 0;
@@ -209,6 +214,10 @@ export class ElevenLabsSession {
     if (alineacion) this.visemas.agregar(alineacion, this.encoladas / SALIDA_HZ);
     this.encoladas += muestras.length;
 
+    // La compuerta de la reunión se cierra en cuanto llega su voz, sin esperar
+    // a que suene: el colchón del reproductor tarda unos 200 ms, y en ese rato
+    // el audio de la llamada ya podría interrumpirla.
+    if (!this.hablando) this.#alSonar(true);
     this.reproductor.port.postMessage({ tipo: "audio", muestras }, [muestras.buffer]);
   }
 
@@ -279,7 +288,11 @@ export class ElevenLabsSession {
       // final; se prefiere el trozo para que el texto acompañe a la voz.
       case "agent_chat_response_part": {
         const parte = mensaje.text_response_part ?? {};
-        if (parte.type === "start") this.transcript = "";
+        if (parte.type === "start") {
+          this.transcript = "";
+          // El texto de la respuesta llega un poco antes que su audio.
+          if (!this.hablando) this.#alSonar(true);
+        }
         if (parte.text) {
           this.transcript += parte.text;
           this.#emit("onTranscript", this.transcript);
@@ -313,6 +326,7 @@ export class ElevenLabsSession {
       }
 
       case "interruption": {
+        this.interrupciones = (this.interrupciones || 0) + 1;
         this.#callar();
         this.#emit("onPhase", "listening");
         this.#emit("onStatus", "Te escucho…");
@@ -385,13 +399,49 @@ export class ElevenLabsSession {
   // la videollamada aunque se usen audífonos. Sólo se envía al modelo cuando no
   // está en pausa, igual que el micrófono.
   mezclarEntrada(flujo) {
-    try { this.fuenteExtra?.disconnect(); } catch {}
-    this.fuenteExtra = null;
+    try { this.fuenteExtra?.disconnect(); this.compuertaExtra?.disconnect(); } catch {}
+    this.fuenteExtra = this.compuertaExtra = null;
     this.flujoExtra = flujo?.getAudioTracks?.().length ? flujo : null;
     if (!this.flujoExtra || !this.entrada || !this.nodoEntrada) return false;
     this.fuenteExtra = this.entrada.createMediaStreamSource(new MediaStream(this.flujoExtra.getAudioTracks()));
-    this.fuenteExtra.connect(this.nodoEntrada);
+    // La reunión pasa por una compuerta que se cierra mientras Catalina habla.
+    // Sin ella, cualquier voz o ruido de la videollamada —incluida su propia voz
+    // de vuelta— lo toma el agente como alguien hablándole encima, la
+    // interrumpe y la voz sale a trozos. El micrófono no pasa por aquí: quien
+    // la usa puede seguir cortándola.
+    this.compuertaExtra = this.entrada.createGain();
+    this.compuertaExtra.gain.value = this.hablando ? 0 : 1;
+    this.fuenteExtra.connect(this.compuertaExtra).connect(this.nodoEntrada);
     return true;
+  }
+
+  // El reproductor avisa cuándo empieza y termina de sonar su voz.
+  #alSonar(sonando) {
+    this.hablando = sonando;
+    clearTimeout(this.relojCompuerta);
+    if (sonando) return this.#compuerta(false);
+    this.relojCompuerta = setTimeout(() => this.#compuerta(true), RETENCION_MS);
+  }
+
+  #compuerta(abierta) {
+    const ganancia = this.compuertaExtra?.gain;
+    if (!ganancia || !this.entrada) return;
+    const ahora = this.entrada.currentTime;
+    ganancia.cancelScheduledValues(ahora);
+    ganancia.setTargetAtTime(abierta ? 1 : 0, ahora, abierta ? .05 : .01);
+    this.compuertaAbierta = abierta;
+  }
+
+  // Cómo va la voz: cortes del reproductor, interrupciones y estado de la
+  // compuerta. Sirve para saber si lo entrecortado viene de la red, del equipo
+  // o de la reunión. Desde la consola: `catalina.session.diagnostico()`.
+  diagnostico() {
+    return {
+      ...this.estadisticasVoz,
+      interrupciones: this.interrupciones || 0,
+      reunionMezclada: Boolean(this.fuenteExtra),
+      compuertaAbierta: this.fuenteExtra ? this.compuertaAbierta !== false : null
+    };
   }
 
   disconnect() {
@@ -401,7 +451,9 @@ export class ElevenLabsSession {
     try { this.socket?.close(); } catch {}
     this.nodoEntrada?.disconnect();
     try { this.fuenteExtra?.disconnect(); } catch {}
-    this.fuenteExtra = null;
+    clearTimeout(this.relojCompuerta);
+    this.fuenteExtra = this.compuertaExtra = null;
+    this.hablando = false;
     this.micStream?.getTracks().forEach(pista => pista.stop());
     this.entrada?.close().catch(() => {});
     this.salida?.close().catch(() => {});
