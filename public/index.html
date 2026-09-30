@@ -79,6 +79,18 @@
 
     <!-- Aviso al terminar una reunión: quedó guardada y desde aquí se abre la
          acta. Sin esto, la transcripción existía pero no había camino a ella. -->
+    <!-- Guía de la otra mitad del puente: se muestra unos segundos al conectar
+         con la videollamada y desaparece sola, porque esta pantalla es la que
+         verán los demás al presentarla. -->
+    <aside class="guia-meet" id="guiaMeet" hidden aria-live="polite">
+      <p class="reunion-aviso-eyebrow">Conectada a la reunión · falta un paso</p>
+      <ol>
+        <li>En la pestaña de Meet: <strong>Presentar ahora → Una pestaña</strong>.</li>
+        <li>Elige <strong>esta pestaña de Catalina</strong> y activa <strong>«Compartir también el audio de la pestaña»</strong>.</li>
+        <li>Vuelve aquí y pulsa <strong>P</strong> cuando quieras que intervenga.</li>
+      </ol>
+      <button class="reunion-aviso-cerrar" id="guiaMeetCerrar" aria-label="Cerrar la guía">&times;</button>
+    </aside>
     <aside class="reunion-aviso" id="reunionAviso" hidden aria-live="polite">
       <div>
         <p class="reunion-aviso-eyebrow">Reunión guardada</p>
@@ -103,15 +115,20 @@
         <label>Enlaces y documentos de referencia<textarea name="enlaces" rows="2" placeholder="Una referencia por línea (URL, documento, estudio)"></textarea></label>
 
         <fieldset>
+          <legend>Videollamada</legend>
+          <label class="casilla"><input type="checkbox" id="reunionPestana" checked>
+            <span><strong>Conectar con la videollamada (Meet, Zoom o Teams en el navegador)</strong> — Catalina oye a todos los participantes y la reunión queda grabada. Al empezar, elige la <strong>pestaña de la reunión</strong> y marca «Compartir audio de la pestaña». Con esto conviene usar audífonos.</span></label>
+          <p class="reunion-ayuda">Para que la reunión <strong>vea y oiga a Catalina</strong>: en Meet, «Presentar ahora» → «Una pestaña» → esta pestaña de Catalina → activa «Compartir también el audio de la pestaña». Luego pulsa P (o «Participar Catalina») cuando quieras que intervenga.</p>
+        </fieldset>
+        <fieldset>
           <legend>Calidad de la transcripción</legend>
           <label class="casilla"><input type="checkbox" id="reunionAlta" checked>
             <span><strong>Alta fidelidad</strong> — graba y transcribe con un modelo de voz dedicado, además del navegador. Recomendado. Coste aprox. 0,05–0,40 USD por hora según proveedor.</span></label>
-          <label class="casilla"><input type="checkbox" id="reunionPestana">
-            <span><strong>Incluir el audio de la pestaña del Meet</strong> — imprescindible si usas audífonos: sin esto sólo se oye tu micrófono. Al empezar, elige la pestaña del Meet y marca «Compartir audio de la pestaña».</span></label>
+          <p class="reunion-ayuda aviso" id="reunionPuenteAviso" hidden>Sin alta fidelidad, lo que digan los demás participantes no quedará en el acta: el reconocimiento del navegador sólo oye tu micrófono.</p>
           <label class="casilla" id="reunionContinuar" hidden><input type="checkbox" id="reunionContinuarCasilla">
             <span id="reunionContinuarTexto"></span></label>
         </fieldset>
-        <p class="reunion-ayuda">Durante la reunión, «Participar Catalina» (o la tecla P) la hace entrar a conversar con lo transcrito como memoria; para que oiga a quienes hablan por el Meet, la reunión debe sonar por altavoces, no por audífonos.</p>
+        <p class="reunion-ayuda">Durante la reunión, «Participar Catalina» (o la tecla P) la hace entrar a conversar con lo transcrito como memoria. Mientras no participa escucha en silencio; los demás participantes no pueden despertarla diciendo su nombre, así que actívala tú cuando le pidan su opinión.</p>
         <p class="reunion-ayuda">La transcripción se guarda sólo en este navegador. En alta fidelidad el audio se envía por tramos al proveedor de transcripción; no lo uses con datos identificables de pacientes sin la autorización que corresponda.</p>
         <div class="reunion-botones">
           <button type="button" id="reunionCancelar">Cancelar</button>
@@ -121,6 +138,6 @@
     </dialog>
   </main>
   <audio id="remoteAudio" autoplay></audio>
-  <script type="module" src="app.js?v=28"></script>
+  <script type="module" src="app.js?v=29"></script>
 </body>
 </html>

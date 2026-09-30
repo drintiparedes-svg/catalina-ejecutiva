@@ -180,8 +180,36 @@ export class RealtimeSession {
     return true;
   }
 
+  // Segunda fuente de audio: la pestaña de la reunión (Google Meet). Con
+  // WebRTC la pista que se envía es una sola, así que se mezcla micrófono y
+  // reunión en una pista nueva y se sustituye la del emisor. Sin fuente, se
+  // vuelve a la pista original del micrófono.
+  mezclarEntrada(flujo) {
+    const emisor = this.peer?.getSenders().find(s => s.track?.kind === "audio");
+    this.mezcla?.close().catch(() => {});
+    this.mezcla = null;
+    this.pistaMezclada = null;
+    if (!emisor || !this.micStream) return false;
+    const pistaMic = this.micStream.getAudioTracks()[0];
+    if (!flujo?.getAudioTracks?.().length) {
+      emisor.replaceTrack(pistaMic).catch(() => {});
+      return true;
+    }
+    const ctx = new AudioContext();
+    const destino = ctx.createMediaStreamDestination();
+    ctx.createMediaStreamSource(this.micStream).connect(destino);
+    ctx.createMediaStreamSource(new MediaStream(flujo.getAudioTracks())).connect(destino);
+    this.mezcla = ctx;
+    this.pistaMezclada = destino.stream.getAudioTracks()[0];
+    this.pistaMezclada.enabled = !this.muted;
+    emisor.replaceTrack(this.pistaMezclada).catch(() => {});
+    return true;
+  }
+
   disconnect() {
     this.connected = false;
+    this.mezcla?.close().catch(() => {});
+    this.mezcla = this.pistaMezclada = null;
     this.channel?.close();
     this.peer?.close();
     this.micStream?.getTracks().forEach(track => track.stop());
@@ -194,6 +222,7 @@ export class RealtimeSession {
   toggleMute() {
     this.muted = !this.muted;
     this.micStream?.getAudioTracks().forEach(track => { track.enabled = !this.muted; });
+    if (this.pistaMezclada) this.pistaMezclada.enabled = !this.muted;
     return this.muted;
   }
 
@@ -203,6 +232,7 @@ export class RealtimeSession {
   pausarEnvio(pausado) {
     this.muted = pausado;
     this.micStream?.getAudioTracks().forEach(track => { track.enabled = !pausado; });
+    if (this.pistaMezclada) this.pistaMezclada.enabled = !pausado;
     return this.muted;
   }
 }

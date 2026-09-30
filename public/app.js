@@ -12,7 +12,8 @@ import { GeminiSession } from "./realtime/gemini-session.js";
 import { ElevenLabsSession } from "./realtime/elevenlabs-session.js";
 import { dibujarRuta } from "./mapa.js";
 import { EscuchaDeReunion, escuchaDisponible } from "./escucha.js";
-import { GrabadoraDeReunion, grabadoraDisponible, audioDePestanaDisponible } from "./grabadora.js";
+import { GrabadoraDeReunion, grabadoraDisponible } from "./grabadora.js";
+import { conectarConReunion, puenteDisponible } from "./puente-meet.js";
 import {
   nuevaReunion, guardarReunion, leerReuniones, elegirReunion, consultarReunion, indiceDeReuniones,
   calidad, duracion, palabras, pedirMinuta, enviarMinutaPorCorreo, cabecerasDeClavePropia, transcripcionComoTexto
@@ -54,6 +55,9 @@ const ui = {
   participar: document.querySelector("#participar"),
   reunionTipo: document.querySelector("#reunionTipo"),
   reunionTipoAyuda: document.querySelector("#reunionTipoAyuda"),
+  reunionPuenteAviso: document.querySelector("#reunionPuenteAviso"),
+  guiaMeet: document.querySelector("#guiaMeet"),
+  guiaMeetCerrar: document.querySelector("#guiaMeetCerrar"),
   reunionDialogo: document.querySelector("#reunionDialogo"),
   reunionForm: document.querySelector("#reunionForm"),
   reunionCancelar: document.querySelector("#reunionCancelar"),
@@ -101,6 +105,7 @@ const manejadores = {
     // protocolo tiene que llegar antes.
     setTimeout(() => {
       presentarReunionesGuardadas();
+      if (puenteReunion) sesion.mezclarEntrada?.(puenteReunion.flujo);
       if (enModoMeet && reunionActual) {
         presentarReunionACatalina();
         memoriaEnviadaHasta = Math.max(0, reunionActual.navegador.length - 40);
@@ -481,12 +486,11 @@ function abrirDialogoDeReunion() {
     if (!hay) {
       ui.reunionAlta.checked = false;
       ui.reunionAlta.disabled = true;
-      ui.reunionPestana.checked = false;
-      ui.reunionPestana.disabled = true;
       ui.reunionAlta.title = "Falta una clave de OpenAI o Gemini en el servidor (o una clave propia en la página de Actas).";
     }
   }).catch(() => {});
-  ui.reunionPestana.disabled = !audioDePestanaDisponible();
+  ui.reunionPestana.disabled = !puenteDisponible();
+  avisarSinAltaFidelidad();
   ui.reunionDialogo.showModal();
 }
 
@@ -510,10 +514,16 @@ ui.reunionForm.addEventListener("submit", evento => {
   });
 });
 ui.reunionCancelar.addEventListener("click", () => ui.reunionDialogo.close());
-ui.reunionAlta.addEventListener("change", () => {
-  ui.reunionPestana.disabled = !ui.reunionAlta.checked || !audioDePestanaDisponible();
-  if (!ui.reunionAlta.checked) ui.reunionPestana.checked = false;
-});
+// Conectar con la reunión y la alta fidelidad son independientes: el puente
+// hace que Catalina oiga la videollamada; la alta fidelidad, que lo que dicen
+// los demás quede transcrito en el acta. Sin ella se avisa, porque el
+// reconocimiento del navegador sólo oye el micrófono.
+function avisarSinAltaFidelidad() {
+  const falta = ui.reunionPestana.checked && !ui.reunionAlta.checked;
+  ui.reunionPuenteAviso.hidden = !falta;
+}
+ui.reunionAlta.addEventListener("change", avisarSinAltaFidelidad);
+ui.reunionPestana.addEventListener("change", avisarSinAltaFidelidad);
 
 async function entrarEnModoMeet(opciones = {}) {
   ui.stage.classList.add("meet");
@@ -534,12 +544,28 @@ async function entrarEnModoMeet(opciones = {}) {
   memoriaEnviadaHasta = reunionActual.navegador.length;
   memoriaCaracteres = 0;
 
-  // Alta fidelidad primero: es la que necesita el gesto del clic.
+  // El puente con la videollamada primero: compartir una pestaña sólo se
+  // permite dentro del clic que lo pidió, antes de cualquier espera.
+  const pedidoPuente = opciones.pestana && puenteDisponible()
+    ? conectarConReunion({ alTerminar: () => cerrarPuente("Se dejó de compartir la pestaña de la reunión: Catalina ya no la oye (sigo grabando el micrófono)") })
+    : null;
+  let avisoAlta = "";
+  if (pedidoPuente) {
+    const r = await pedidoPuente;
+    if (r.ok) {
+      puenteReunion = r;
+      reunionActual.conectadaAMeet = true;
+      if (connected) sesion?.mezclarEntrada?.(r.flujo);
+      mostrarGuiaDePresentacion();
+    } else {
+      avisoAlta = r.error;
+    }
+  }
+
   const alta = opciones.alta && grabadoraDisponible()
-    ? grabadora.iniciar({ audioPestana: opciones.pestana })
+    ? grabadora.iniciar({ flujoReunion: puenteReunion?.flujo })
     : null;
 
-  let avisoAlta = "";
   if (alta) {
     reunionEnGrabacion = reunionActual;
     reunionActual.alta = true;
@@ -547,8 +573,6 @@ async function entrarEnModoMeet(opciones = {}) {
     if (!r.ok) {
       avisoAlta = r.error;
       reunionEnGrabacion = null;
-    } else if (r.aviso) {
-      avisoAlta = r.aviso;
     }
   }
 
@@ -569,8 +593,9 @@ async function entrarEnModoMeet(opciones = {}) {
   escucha.olvidar();
   if (escucha.empezar()) {
     const partes = ["Escuchando"];
-    if (reunionEnGrabacion) partes.push(grabadora.conPestana ? "alta fidelidad con audio del Meet" : "alta fidelidad (micrófono)");
-    partes.push(connected ? "di «Catalina» para hablarme" : "sólo transcribo: inicia la conversación si quieres que responda");
+    if (puenteReunion) partes.push("conectada a la videollamada");
+    if (reunionEnGrabacion) partes.push(grabadora.conPestana ? "alta fidelidad con audio de la reunión" : "alta fidelidad (micrófono)");
+    partes.push(connected ? (puenteReunion ? "P para que participe" : "di «Catalina» para hablarme") : "sólo transcribo: inicia la conversación si quieres que responda");
     señalar(avisoAlta || partes.join(" · "), avisoAlta ? "problema" : "");
     setStatus("En reunión");
     if (connected) presentarReunionACatalina();
@@ -586,6 +611,7 @@ async function salirDeModoMeet() {
   if (!enModoMeet) return;
   if (participando || participacionPendiente) desactivarParticipacion({ alSalir: true });
   enModoMeet = false;
+  cerrarPuente();
 
   escucha.parar();
   clearInterval(relojMemoria);
@@ -813,6 +839,30 @@ function registrarTurnoDeCatalina({ interrumpida = false } = {}) {
 let participando = false;
 let participacionPendiente = false;
 
+// Puente con la videollamada (puente-meet.js). Mientras existe, el audio de la
+// reunión entra al oído de Catalina junto con el micrófono y se graba en alta
+// fidelidad. Sólo llega al modelo cuando participa: el resto del tiempo su
+// entrada está en pausa, igual que el micrófono.
+let puenteReunion = null;
+
+function cerrarPuente(motivo = "") {
+  if (!puenteReunion) return;
+  const puente = puenteReunion;
+  puenteReunion = null;
+  sesion?.mezclarEntrada?.(null);
+  puente.detener();
+  if (motivo && enModoMeet) señalar(motivo, "problema");
+}
+
+// La otra mitad del puente la hace la videollamada: presentar la pestaña de
+// Catalina con su audio. El aviso se muestra sólo unos segundos, porque todo
+// lo que aparece en esta pantalla lo verán los demás al presentarla.
+function mostrarGuiaDePresentacion() {
+  ui.guiaMeet.hidden = false;
+  clearTimeout(mostrarGuiaDePresentacion.reloj);
+  mostrarGuiaDePresentacion.reloj = setTimeout(() => { ui.guiaMeet.hidden = true; }, 20000);
+}
+
 function alternarParticipacion() {
   if (!enModoMeet || !reunionActual) return;
   if (participando || participacionPendiente) desactivarParticipacion();
@@ -893,7 +943,7 @@ function mensajeDeParticipacion() {
     transcrito = transcrito.slice(0, 3000) + "\n[…parte intermedia omitida: consúltala con consultar_reunion…]\n" + transcrito.slice(-(MAX - 3000));
   }
   return [
-    `[Sistema] ${primera ? "Desde ahora participas" : "Vuelves a participar"} en directo en la reunión «${m.titulo}» (${plantillaDe(m.tipo).nombre}). Oyes la sala por el micrófono.`,
+    `[Sistema] ${primera ? "Desde ahora participas" : "Vuelves a participar"} en directo en la reunión «${m.titulo}» (${plantillaDe(m.tipo).nombre}). ${puenteReunion ? "Oyes a la persona que te conectó por su micrófono y a los demás participantes por la videollamada; todos te oyen a ti." : "Oyes la sala por el micrófono."}`,
     m.objetivo ? `Objetivo de la reunión: ${m.objetivo}.` : "Objetivo no declarado: dedúcelo de lo conversado y, si no está claro, pregúntalo.",
     m.participantes ? `Participantes: ${m.participantes}.` : "",
     m.agenda ? `Agenda: ${m.agenda}.` : "",
@@ -912,6 +962,7 @@ function mensajeDeParticipacion() {
 }
 
 ui.participar.addEventListener("click", alternarParticipacion);
+ui.guiaMeetCerrar.addEventListener("click", () => { ui.guiaMeet.hidden = true; });
 
 // Herramientas de docencia.
 //

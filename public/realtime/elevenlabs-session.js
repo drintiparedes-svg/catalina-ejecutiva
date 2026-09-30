@@ -244,6 +244,7 @@ export class ElevenLabsSession {
     mudo.gain.value = 0;
     nodo.connect(mudo).connect(this.entrada.destination);
     this.nodoEntrada = nodo;
+    if (this.flujoExtra) this.mezclarEntrada(this.flujoExtra);
   }
 
   #onMensaje(evento) {
@@ -379,12 +380,28 @@ export class ElevenLabsSession {
     return true;
   }
 
+  // Segunda fuente de audio: la pestaña de la reunión (Google Meet). Se suma
+  // al micrófono en el mismo procesador, así Catalina oye a quienes hablan por
+  // la videollamada aunque se usen audífonos. Sólo se envía al modelo cuando no
+  // está en pausa, igual que el micrófono.
+  mezclarEntrada(flujo) {
+    try { this.fuenteExtra?.disconnect(); } catch {}
+    this.fuenteExtra = null;
+    this.flujoExtra = flujo?.getAudioTracks?.().length ? flujo : null;
+    if (!this.flujoExtra || !this.entrada || !this.nodoEntrada) return false;
+    this.fuenteExtra = this.entrada.createMediaStreamSource(new MediaStream(this.flujoExtra.getAudioTracks()));
+    this.fuenteExtra.connect(this.nodoEntrada);
+    return true;
+  }
+
   disconnect() {
     this.cierreLimpio = true;
     this.connected = false;
     this.#callar();
     try { this.socket?.close(); } catch {}
     this.nodoEntrada?.disconnect();
+    try { this.fuenteExtra?.disconnect(); } catch {}
+    this.fuenteExtra = null;
     this.micStream?.getTracks().forEach(pista => pista.stop());
     this.entrada?.close().catch(() => {});
     this.salida?.close().catch(() => {});

@@ -490,8 +490,12 @@ objetivo, participantes, agenda, enlaces). Todo va a la minuta.
   hizo—. Al desactivarlo la reunión sigue grabándose; al reactivarlo recibe lo
   dicho mientras tanto. Lo que dice Catalina se guarda aparte y el acta lo
   presenta en «Intervenciones de Catalina (IA)», sin contarlo como decisión del
-  equipo. Para que oiga a quienes hablan por el Meet, la reunión debe sonar por
-  altavoces, no por audífonos.
+  equipo.
+- **Conexión con la videollamada** (puente de pestaña, `public/puente-meet.js`):
+  al empezar se comparte la pestaña de Meet con su audio; Catalina oye a todos
+  los participantes y la reunión se graba. En Meet se presenta la pestaña de
+  Catalina con su audio para que todos la vean y la oigan. Paso a paso en
+  [`docs/guia-catalina-en-meet.md`](docs/guia-catalina-en-meet.md).
 - **Cuenta propia.** Clave de API propia (se guarda sólo en el navegador) o,
   sin coste, copiar instrucciones + transcripción para pegarlas en el chat de
   una suscripción. Evaluación completa en
