@@ -1,4 +1,4 @@
-# Catalina Ejecutiva — jefa de gabinete con avatar
+# Catalina Ejecutiva — equipo del Dr. Paredes, con avatar
 
 Rama aparte de [catalina-avatar](https://github.com/drintiparedes-svg/catalina-avatar):
 la misma cara y el mismo motor de animación, con la voz y el cerebro de un

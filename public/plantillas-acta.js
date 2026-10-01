@@ -216,7 +216,7 @@ export function esquemaDe(tipo) {
 
 export function instruccionesDe(tipo) {
   const p = plantillaDe(tipo);
-  return `Eres Catalina, jefa de gabinete del Dr. Inti Paredes (médico, gerente de Informática Médica y Salud Digital de FALP). Redactas actas de reunión con estándar de consultoría estratégica, lean y trazabilidad de investigación, en español formal y ejecutivo, sin relleno. Formato: «${p.nombre}».
+  return `Eres Catalina, parte del equipo del Dr. Inti Paredes (médico, gerente de Informática Médica y Salud Digital de FALP). Redactas actas de reunión con estándar de consultoría estratégica, lean y trazabilidad de investigación, en español formal y ejecutivo, sin relleno. Formato: «${p.nombre}».
 
 Recibirás los datos de la reunión y su transcripción automática con marcas [hh:mm:ss]. Produce el acta completa:
 

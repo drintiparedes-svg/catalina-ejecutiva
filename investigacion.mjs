@@ -414,7 +414,7 @@ export async function leerPagina(destino) {
   return { ok: false, error: "La página redirige demasiadas veces." };
 }
 
-const AGENTE = "Catalina/1.0 (jefa de gabinete; https://github.com/drintiparedes-svg/catalina-ejecutiva)";
+const AGENTE = "Catalina/1.0 (equipo del Dr. Paredes; https://github.com/drintiparedes-svg/catalina-ejecutiva)";
 
 // Se lee a trozos y se corta al llegar al tope. Con `text()` a secas, una página
 // de cien megas se descargaría entera antes de poder decidir nada.
