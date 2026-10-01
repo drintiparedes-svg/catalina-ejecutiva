@@ -9,7 +9,8 @@
     "package": "node work/package.mjs",
     "demo": "node work/build-demo.mjs work/banco-de-pruebas.html",
     "test:reuniones": "node work/prueba-reuniones.mjs",
-    "test:voz": "node work/prueba-voz.mjs"
+    "test:voz": "node work/prueba-voz.mjs",
+    "test:live": "node work/prueba-live.mjs"
   },
   "optionalDependencies": {
     "@anthropic-ai/sdk": "^0.129.0"

@@ -272,6 +272,32 @@ labios funcione igual con los dos.
 En **Modo Meet** los subtítulos siguen visibles si están encendidos —son parte
 de lo que se quiere capturar— y el historial se oculta con el resto del mando.
 
+## Voz GPT-Live con razonamiento de Claude (prueba)
+
+Abre Catalina con `?voz=live` (por ejemplo `http://127.0.0.1:4173/?voz=live`).
+La voz es **GPT-Live** de OpenAI (`gpt-live-1`), que escucha y habla a la vez;
+el criterio, la evidencia y las herramientas son de **Claude Sonnet 5.5**. Para
+probar otra voz sin guardar nada, agrega `&vozLive=cedar` (voces integradas:
+marin, cedar, coral, sage, shimmer, verse y otras dieciséis). Necesita
+`OPENAI_API_KEY` con acceso a GPT-Live y `ANTHROPIC_API_KEY`, y `npm install`
+para el paquete de Anthropic.
+
+Cómo funciona: GPT-Live no llama herramientas; cuando hace falta pensar o
+buscar, *delega* (`session.delegation.created`). El navegador toma lo dicho
+desde la delegación anterior, se lo pasa a Claude por `/live/razonar`, ejecuta
+las herramientas que Claude pida —con el mismo código que las demás voces, así
+que láminas, mapas y referencias se ven igual— y devuelve el resultado con
+`session.commentary.append`; GPT-Live lo dice con sus palabras. La clave de
+OpenAI nunca sale del servidor, y el canal de datos del navegador sólo puede
+oír delegaciones y transcripciones y devolver resultados.
+
+Con `?voz=…` la voz va sola, sin relevo: si falla, se ve el motivo en vez de
+quedar tapado por otra voz. Modelo, voz, modelo de razonamiento y esfuerzo se
+cambian en el administrador (Modelos → GPT-Live + Claude). Prueba sin red:
+`node work/prueba-live.mjs`.
+
+Costo: USD 0,05 por minuto de voz más los tokens de Claude de cada delegación.
+
 ## Administrador
 
 En **`/admin.html`**. Cinco secciones: el banco de pruebas embebido, el

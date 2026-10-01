@@ -16,14 +16,17 @@ export class RealtimeSession {
     this.connected = false;
     this.muted = false;
     this.transcript = "";
+    // Ruta del servidor que presenta la oferta SDP a OpenAI. La sesión de
+    // GPT-Live (live-session.js) hereda todo el transporte y cambia esto.
+    this.ruta = "/session";
   }
 
-  #emit(name, ...args) {
+  emitir(name, ...args) {
     return this.handlers[name]?.(...args);
   }
 
   async connect() {
-    this.#emit("onStatus", "Solicitando acceso al micrófono…");
+    this.emitir("onStatus", "Solicitando acceso al micrófono…");
     try {
       assertVoiceEnvironment();
       this.micStream = await navigator.mediaDevices.getUserMedia({
@@ -36,10 +39,10 @@ export class RealtimeSession {
       });
 
       this.channel = this.peer.createDataChannel("oai-events");
-      this.channel.addEventListener("open", () => this.#onChannelOpen());
-      this.channel.addEventListener("message", message => this.#onEvent(message));
+      this.channel.addEventListener("open", () => this.alAbrirCanal());
+      this.channel.addEventListener("message", message => this.alRecibirEvento(message));
 
-      this.peer.addEventListener("track", event => this.#emit("onRemoteStream", event.streams[0]));
+      this.peer.addEventListener("track", event => this.emitir("onRemoteStream", event.streams[0]));
       this.peer.addEventListener("connectionstatechange", () => {
         if (["failed", "disconnected", "closed"].includes(this.peer?.connectionState)) {
           this.disconnect();
@@ -48,7 +51,7 @@ export class RealtimeSession {
 
       const offer = await this.peer.createOffer();
       await this.peer.setLocalDescription(offer);
-      const response = await fetch("/session", {
+      const response = await fetch(this.ruta, {
         method: "POST",
         headers: { "Content-Type": "application/sdp" },
         body: offer.sdp
@@ -67,11 +70,11 @@ export class RealtimeSession {
       // respaldo es app.js: aquí no se sabe si hay un plan B.
       error.mensaje = connectionErrorMessage(error);
       error.ayuda = connectionErrorHelp(error);
-      this.#emit("onFailure", error);
+      this.emitir("onFailure", error);
     }
   }
 
-  #onChannelOpen() {
+  alAbrirCanal() {
     // Refuerza la modalidad hablada. La transcripción sigue disponible como
     // subtítulo, pero la respuesta principal es audio.
     this.channel.send(JSON.stringify({
@@ -92,34 +95,34 @@ export class RealtimeSession {
       }
     }));
     this.connected = true;
-    this.#emit("onConnected");
-    this.#emit("onPhase", "listening");
-    this.#emit("onStatus", "Te escucho");
+    this.emitir("onConnected");
+    this.emitir("onPhase", "listening");
+    this.emitir("onStatus", "Te escucho");
   }
 
-  #onEvent(message) {
+  alRecibirEvento(message) {
     const event = JSON.parse(message.data);
-    if (event.type === "output_audio_buffer.started") this.#alSonar(true);
-    if (event.type === "output_audio_buffer.stopped" || event.type === "output_audio_buffer.cleared") this.#alSonar(false);
+    if (event.type === "output_audio_buffer.started") this.alSonar(true);
+    if (event.type === "output_audio_buffer.stopped" || event.type === "output_audio_buffer.cleared") this.alSonar(false);
     if (event.type === "input_audio_buffer.speech_started") {
       if (this.hablando) this.interrupciones = (this.interrupciones || 0) + 1;
       this.transcript = "";
-      this.#emit("onTranscript", "");
-      this.#emit("onPhase", "listening");
-      this.#emit("onStatus", "Te escucho…");
+      this.emitir("onTranscript", "");
+      this.emitir("onPhase", "listening");
+      this.emitir("onStatus", "Te escucho…");
     } else if (event.type === "response.created") {
-      this.#emit("onPhase", "thinking");
-      this.#emit("onStatus", "Pensando…");
+      this.emitir("onPhase", "thinking");
+      this.emitir("onStatus", "Pensando…");
     } else if (
       event.type === "response.output_audio.delta" ||
       event.type === "response.audio.delta"
     ) {
-      this.#emit("onPhase", "speaking");
-      this.#emit("onStatus", "Hablando");
+      this.emitir("onPhase", "speaking");
+      this.emitir("onStatus", "Hablando");
       const delta = event.delta || event.transcript || "";
       if (typeof delta === "string" && !looksLikeAudio(delta)) {
         this.transcript += delta;
-        this.#emit("onTranscript", this.transcript);
+        this.emitir("onTranscript", this.transcript);
       }
     } else if (
       event.type === "response.output_audio_transcript.delta" ||
@@ -127,20 +130,20 @@ export class RealtimeSession {
     ) {
       // Con WebRTC ésta es la única señal de que Catalina está hablando: el
       // audio va por la pista de medios y no se anuncia por el canal.
-      this.#emit("onPhase", "speaking");
-      this.#emit("onStatus", "Hablando");
+      this.emitir("onPhase", "speaking");
+      this.emitir("onStatus", "Hablando");
       this.transcript += event.delta || "";
-      this.#emit("onTranscript", this.transcript);
+      this.emitir("onTranscript", this.transcript);
     } else if (event.type === "response.function_call_arguments.done") {
       this.#atenderHerramienta(event);
     } else if (event.type === "response.done") {
       // El modelo genera por delante de la reproducción, así que aquí sólo se
       // anota que no habrá más texto; volver a escuchar lo decide el silencio
       // real del audio, en app.js.
-      this.#emit("onResponseDone");
+      this.emitir("onResponseDone");
     } else if (event.type === "error") {
       console.error("Realtime event", event);
-      this.#emit("onStatus", event.error?.message || "Ocurrió un error");
+      this.emitir("onStatus", event.error?.message || "Ocurrió un error");
     }
   }
 
@@ -150,7 +153,7 @@ export class RealtimeSession {
   async #atenderHerramienta(event) {
     let argumentos = {};
     try { argumentos = JSON.parse(event.arguments || "{}"); } catch {}
-    const resultado = await this.#emit("onToolCall", event.name, argumentos);
+    const resultado = await this.emitir("onToolCall", event.name, argumentos);
 
     if (this.channel?.readyState !== "open") return;
     this.channel.send(JSON.stringify({
@@ -219,12 +222,12 @@ export class RealtimeSession {
   // Con WebRTC el audio no pasa por aquí: el inicio y el fin de su voz los
   // anuncia el canal de datos (output_audio_buffer.*). Si el aviso de fin no
   // llegara, la compuerta se reabre sola a los 30 s.
-  #alSonar(sonando) {
+  alSonar(sonando) {
     this.hablando = sonando;
     clearTimeout(this.relojCompuerta);
     if (sonando) {
       this.#compuerta(false);
-      this.relojCompuerta = setTimeout(() => this.#alSonar(false), 30000);
+      this.relojCompuerta = setTimeout(() => this.alSonar(false), 30000);
       return;
     }
     this.relojCompuerta = setTimeout(() => this.#compuerta(true), RETENCION_MS);
@@ -257,8 +260,8 @@ export class RealtimeSession {
     this.micStream?.getTracks().forEach(track => track.stop());
     this.peer = this.channel = this.micStream = null;
     this.muted = false;
-    this.#emit("onDisconnected");
-    this.#emit("onPhase", "idle");
+    this.emitir("onDisconnected");
+    this.emitir("onPhase", "idle");
   }
 
   toggleMute() {

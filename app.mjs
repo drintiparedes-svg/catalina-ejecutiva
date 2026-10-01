@@ -18,11 +18,14 @@ import {
 import {
   estadoReuniones, clavePropiaDe, transcribirTramo, generarMinuta, correoDeMinuta, adjuntosSeguros, promptManual
 } from "./reunion.mjs";
+import {
+  sesionDeVoz, vozValida, instruccionesDeRazonamiento, herramientasParaClaude, historiaValida, pasoDeRazonamiento
+} from "./razonamiento.mjs";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // Se sube a mano con cada arreglo que el usuario tiene que descargar.
-export const VERSION = "2026-09-30.26";
+export const VERSION = "2026-10-01.1";
 
 const root = fileURLToPath(new URL("./public", import.meta.url));
 // El .env se lee de forma síncrona a propósito. Con `await` aquí arriba, en el
@@ -67,7 +70,9 @@ export async function atender(req, res) {
         proveedores: {
           elevenlabs: hasElevenLabsKey() && hasElevenLabsAgent(),
           openai: hasApiKey(),
-          gemini: hasGeminiKey()
+          gemini: hasGeminiKey(),
+          // GPT-Live necesita las dos claves: OpenAI pone la voz y Claude piensa.
+          live: hasApiKey() && hasAnthropicKey()
         },
         // La web abierta usa Gemini para buscar; sin esa clave, las láminas y la
         // bibliografía siguen (Commons y PubMed son abiertos) pero no la web.
@@ -89,6 +94,14 @@ export async function atender(req, res) {
 
     if (req.method === "POST" && req.url === "/session") {
       return await createRealtimeSession(req, res);
+    }
+
+    if (req.method === "POST" && (req.url === "/live/session" || req.url.startsWith("/live/session?"))) {
+      return await createLiveSession(req, res);
+    }
+
+    if (req.method === "POST" && req.url === "/live/razonar") {
+      return await razonarParaLive(req, res);
     }
 
     if (req.method === "POST" && req.url === "/gemini/token") {
@@ -816,6 +829,108 @@ async function createRealtimeSession(req, res) {
   }
   res.writeHead(200, { "Content-Type": "application/sdp" });
   res.end(responseBody);
+}
+
+// GPT-Live.
+//
+// Mismo esquema que /session: el navegador manda su oferta SDP y el servidor la
+// presenta a OpenAI con la clave, que así nunca sale de aquí. Lo distinto es la
+// sesión: GPT-Live sólo recibe cómo hablar (la persona, sin las herramientas),
+// y delega en el navegador cuando hay que pensar; ese razonamiento lo hace
+// Claude en /live/razonar.
+async function createLiveSession(req, res) {
+  if (!hasApiKey()) {
+    return json(res, 503, { error: "Falta OPENAI_API_KEY en el archivo .env", code: "API_KEY_MISSING" });
+  }
+  if (!hasAnthropicKey()) {
+    return json(res, 503, { error: "Falta ANTHROPIC_API_KEY en el archivo .env", code: "ANTHROPIC_KEY_MISSING" });
+  }
+
+  const config = await cargarConfig();
+  const ajustes = config.modelos?.live || {};
+  // La voz se puede probar desde la dirección (?vozLive=cedar) sin guardar nada;
+  // sólo se acepta una de las voces integradas.
+  const pedida = new URL(req.url, "http://localhost").searchParams.get("voz");
+  const sdp = await readBody(req);
+  if (!sdp.trim().startsWith("v=")) {
+    return json(res, 400, { error: "Oferta SDP no válida", code: "LIVE_SESSION_ERROR" });
+  }
+
+  const upstream = await fetch("https://api.openai.com/v1/live/sessions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${process.env.OPENAI_API_KEY.trim()}`,
+      "Content-Type": "application/json",
+      "OpenAI-Safety-Identifier": "catalina-local-owner"
+    },
+    body: JSON.stringify({
+      session: sesionDeVoz({
+        modelo: ajustes.modelo,
+        voz: vozValida(pedida) || ajustes.voz,
+        instrucciones: componerInstrucciones(config)
+      }),
+      transport: { type: "webrtc", sdp }
+    })
+  });
+  const cuerpo = await upstream.text();
+  let datos = {};
+  try { datos = JSON.parse(cuerpo); } catch {}
+
+  if (!upstream.ok) {
+    console.error("OpenAI Live:", upstream.status, cuerpo);
+    if (upstream.status === 401 || upstream.status === 403) {
+      return json(res, upstream.status, {
+        error: "OpenAI rechazó la clave o la cuenta no tiene acceso a GPT-Live.",
+        code: "API_KEY_INVALID"
+      });
+    }
+    if (upstream.status === 429) {
+      return json(res, upstream.status, { error: "La API alcanzó un límite de uso o necesita facturación activa.", code: "API_RATE_LIMIT" });
+    }
+    return json(res, upstream.status, {
+      error: datos.error?.message || "OpenAI rechazó la sesión de GPT-Live",
+      code: "LIVE_SESSION_ERROR"
+    });
+  }
+  if (!datos.transport?.sdp) {
+    console.error("OpenAI Live: respuesta sin SDP", cuerpo);
+    return json(res, 502, { error: "OpenAI no devolvió la respuesta de audio", code: "LIVE_SESSION_ERROR" });
+  }
+  res.writeHead(200, { "Content-Type": "application/sdp" });
+  res.end(datos.transport.sdp);
+}
+
+// Un paso del razonamiento de GPT-Live. El navegador manda la historia de
+// Claude; el servidor pone las instrucciones y las herramientas (no se aceptan
+// del navegador) y devuelve lo que Claude contestó o las herramientas que pide.
+async function razonarParaLive(req, res) {
+  if (!hasAnthropicKey()) {
+    return json(res, 503, { ok: false, error: "Falta ANTHROPIC_API_KEY en el archivo .env", code: "ANTHROPIC_KEY_MISSING" });
+  }
+  const crudo = await readBody(req);
+  // La historia crece con cada delegación; pasado este tamaño el navegador
+  // empieza una nueva. Esto es sólo el tope duro.
+  if (crudo.length > 1_500_000) {
+    return json(res, 413, { ok: false, error: "Historia demasiado larga", code: "LIVE_HISTORY_TOO_LONG" });
+  }
+  let pedido = {};
+  try { pedido = JSON.parse(crudo); } catch {}
+  if (!historiaValida(pedido.mensajes)) {
+    return json(res, 400, { ok: false, error: "Historia no válida", code: "LIVE_HISTORY_INVALID" });
+  }
+
+  const config = await cargarConfig();
+  const ajustes = config.modelos?.live || {};
+  const resultado = await pasoDeRazonamiento({
+    clave: process.env.ANTHROPIC_API_KEY.trim(),
+    modelo: ajustes.razonamiento,
+    esfuerzo: ajustes.esfuerzo,
+    sistema: instruccionesDeRazonamiento(await instruccionesDeSesion(config)),
+    herramientas: herramientasParaClaude(todasLasHerramientas(config)),
+    mensajes: pedido.mensajes
+  });
+  if (!resultado.ok) return json(res, resultado.estado || 502, resultado);
+  return json(res, 200, resultado);
 }
 
 // Respaldo con Gemini.
@@ -1930,6 +2045,11 @@ function json(res, status, value) {
 
 function hasApiKey() {
   const key = process.env.OPENAI_API_KEY?.trim() || "";
+  return key.length > 24 && !key.includes("reemplaza-esto");
+}
+
+function hasAnthropicKey() {
+  const key = process.env.ANTHROPIC_API_KEY?.trim() || "";
   return key.length > 24 && !key.includes("reemplaza-esto");
 }
 

@@ -10,6 +10,7 @@ import { VoiceTracker } from "./audio/voice-tracker.js";
 import { RealtimeSession } from "./realtime/session.js";
 import { GeminiSession } from "./realtime/gemini-session.js";
 import { ElevenLabsSession } from "./realtime/elevenlabs-session.js";
+import { LiveSession } from "./realtime/live-session.js";
 import { dibujarRuta } from "./mapa.js";
 import { EscuchaDeReunion, escuchaDisponible } from "./escucha.js";
 import { GrabadoraDeReunion, grabadoraDisponible } from "./grabadora.js";
@@ -196,7 +197,8 @@ const manejadores = {
 const sesiones = {
   elevenlabs: new ElevenLabsSession(manejadores),
   openai: new RealtimeSession(manejadores),
-  gemini: new GeminiSession(manejadores)
+  gemini: new GeminiSession(manejadores),
+  live: new LiveSession(manejadores)
 };
 
 // ElevenLabs va primero: es el agente de esta versión —oído, cerebro y voz
@@ -214,12 +216,19 @@ const MOTIVOS_DE_RELEVO = new Set([
   "ELEVENLABS_KEY_MISSING", "ELEVENLABS_AGENT_MISSING", "ELEVENLABS_SESSION_ERROR"
 ]);
 
-const disponible = { elevenlabs: false, openai: false, gemini: false };
+const disponible = { elevenlabs: false, openai: false, gemini: false, live: false };
+
+// Prueba de una voz concreta desde la dirección: ?voz=live (GPT-Live con
+// razonamiento de Claude), ?voz=openai, etc. Va sola, sin relevo, para que un
+// fallo se vea en vez de quedar tapado por otra voz.
+const VOZ_PEDIDA = new URLSearchParams(location.search).get("voz");
+const vozDePrueba = VOZ_PEDIDA && Object.hasOwn(sesiones, VOZ_PEDIDA) ? VOZ_PEDIDA : null;
 let proveedor = null;
 let sesion = null;
 let ultimoFallo = null;   // el motivo del último corte, para no perderlo al desconectar
 
 function proveedoresUtiles() {
+  if (vozDePrueba) return disponible[vozDePrueba] ? [vozDePrueba] : [];
   return ORDEN.filter(nombre => disponible[nombre]);
 }
 
@@ -227,7 +236,9 @@ async function conectar() {
   const cadena = proveedoresUtiles();
   if (!cadena.length) {
     setStatus("No hay ninguna voz configurada");
-    mostrarAviso("Falta la clave de ElevenLabs, de OpenAI o de Gemini para poder conversar.");
+    mostrarAviso(vozDePrueba === "live"
+      ? "GPT-Live necesita OPENAI_API_KEY (con acceso a gpt-live-1) y ANTHROPIC_API_KEY en el servidor."
+      : "Falta la clave de ElevenLabs, de OpenAI o de Gemini para poder conversar.");
     ui.connect.disabled = false;
     return;
   }
@@ -2030,6 +2041,7 @@ fetch("/health")
     disponible.elevenlabs = Boolean(estado.proveedores?.elevenlabs);
     disponible.openai = Boolean(estado.proveedores?.openai);
     disponible.gemini = Boolean(estado.proveedores?.gemini);
+    disponible.live = Boolean(estado.proveedores?.live);
   })
   .catch(() => {});
 

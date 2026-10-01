@@ -144,6 +144,19 @@ code { padding: 1px 5px; border-radius: 5px; background: rgba(255,255,255,.08); 
         <div><label for="idiomaGemini">Idioma</label><input id="idiomaGemini" type="text"></div>
       </div>
     </div>
+
+    <div class="tarjeta">
+      <strong>GPT-Live + Claude (prueba)</strong>
+      <p class="ayuda">Voz de OpenAI (GPT-Live) que delega el razonamiento y las herramientas en Claude.
+        Sólo se usa abriendo Catalina con <code>?voz=live</code>; para probar otra voz sin guardar,
+        agrega <code>&amp;vozLive=cedar</code>. Necesita OPENAI_API_KEY y ANTHROPIC_API_KEY.</p>
+      <div class="fila">
+        <div><label for="modeloLive">Modelo de voz</label><input id="modeloLive" type="text"></div>
+        <div><label for="vozLive">Voz</label><input id="vozLive" type="text"></div>
+        <div><label for="razonamientoLive">Razonamiento (Claude)</label><input id="razonamientoLive" type="text"></div>
+        <div><label for="esfuerzoLive">Esfuerzo (low, medium, high)</label><input id="esfuerzoLive" type="text"></div>
+      </div>
+    </div>
   </section>
 
   <section id="conectores" hidden>
@@ -198,6 +211,10 @@ function pintar() {
   $("#modeloGemini").value = config.modelos?.gemini?.modelo ?? "";
   $("#vozGemini").value = config.modelos?.gemini?.voz ?? "";
   $("#idiomaGemini").value = config.modelos?.gemini?.idioma ?? "";
+  $("#modeloLive").value = config.modelos?.live?.modelo ?? "";
+  $("#vozLive").value = config.modelos?.live?.voz ?? "";
+  $("#razonamientoLive").value = config.modelos?.live?.razonamiento ?? "";
+  $("#esfuerzoLive").value = config.modelos?.live?.esfuerzo ?? "";
   pintarPuntos("permitido");
   pintarPuntos("prohibido");
   pintarConocimiento();
@@ -410,9 +427,11 @@ $("#instrucciones").addEventListener("input", evento => {
 
 for (const [id, ruta] of Object.entries({
   modeloOpenai: ["openai", "modelo"], vozOpenai: ["openai", "voz"],
-  modeloGemini: ["gemini", "modelo"], vozGemini: ["gemini", "voz"], idiomaGemini: ["gemini", "idioma"]
+  modeloGemini: ["gemini", "modelo"], vozGemini: ["gemini", "voz"], idiomaGemini: ["gemini", "idioma"],
+  modeloLive: ["live", "modelo"], vozLive: ["live", "voz"], razonamientoLive: ["live", "razonamiento"], esfuerzoLive: ["live", "esfuerzo"]
 })) {
   $("#" + id).addEventListener("input", evento => {
+    config.modelos[ruta[0]] ??= {};
     config.modelos[ruta[0]][ruta[1]] = evento.target.value;
   });
 }

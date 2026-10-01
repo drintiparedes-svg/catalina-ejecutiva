@@ -125,6 +125,11 @@ export const CONFIG_POR_DEFECTO = {
   modelos: {
     openai: { modelo: "gpt-realtime-2.1", voz: "marin" },
     gemini: { modelo: "models/gemini-3.1-flash-live-preview", voz: "Kore", idioma: "es-US" },
+    // GPT-Live: la voz de OpenAI y el razonamiento de Claude. GPT-Live conversa
+    // —escucha y habla a la vez— y, cuando hace falta pensar o usar una
+    // herramienta, delega en la aplicación, que se lo pasa a Claude. En prueba:
+    // sólo entra abriendo Catalina con ?voz=live.
+    live: { modelo: "gpt-live-1", voz: "marin", razonamiento: "claude-sonnet-5-5", esfuerzo: "low" },
     // ElevenLabs. El modelo y las herramientas viven en su agente, no aquí; el
     // identificador de ese agente y la clave, en el entorno. Lo que queda es lo
     // que sí tiene sentido ajustar sin tocar código: cómo suena y en qué idioma
