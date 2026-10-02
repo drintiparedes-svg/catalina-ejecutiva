@@ -515,6 +515,7 @@ const SECCIONES = {
         bl.card("PROCESO", COLOR.mute, bl.lista([
           `Transcripción ${calidad.fuente}: cobertura estimada ${calidad.cobertura}%, ${calidad.palabras.toLocaleString("es")} ${calidad.palabras === 1 ? "palabra" : "palabras"}${calidad.huecos ? `, ${calidad.huecos} tramo(s) sin audio` : ""}.`,
           A(r.catalina).length ? `Intervenciones de Catalina registradas por separado: ${r.catalina.length}.` : "",
+          ...continuidadDelActa(r),
           A(r.insumos).length ? `Documentos aportados como insumo: ${r.insumos.length}; su texto se entregó al modelo delimitado y separado de la transcripción.` : "",
           tz.modelo ? `Acta redactada con ${tz.proveedor}/${tz.modelo} (nivel ${tz.nivel}, formato «${plantilla.nombre}») el ${new Date(tz.generadaEn).toLocaleString("es-CL", { dateStyle: "long", timeStyle: "short" })}.`.replace(/\.\.$/, ".") : "",
           A(r.evidencia).length ? `Búsqueda bibliográfica automática por pregunta el ${new Date(r.evidenciaFecha || Date.now()).toLocaleDateString("es-CL")}; referencias sin lectura crítica.` : "",
@@ -536,6 +537,20 @@ const SECCIONES = {
     };
   }
 };
+
+// Audio que no se pudo grabar y tramos recuperados después: la minuta tiene
+// que declarar dónde falta información y por qué.
+function continuidadDelActa(r) {
+  const huecos = A(r.continuidad?.huecos);
+  const porCausa = {};
+  for (const h of huecos) porCausa[h.causa] = (porCausa[h.causa] || 0) + Math.max(0, h.hasta - h.desde);
+  const minutos = ms => ms >= 60000 ? `${Math.round(ms / 60000)} min` : `${Math.round(ms / 1000)} s`;
+  const recuperados = A(r.hd).filter(s => s.recuperado).length;
+  return [
+    huecos.length ? `Audio no grabado: ${Object.entries(porCausa).map(([c, ms]) => `${c} (${minutos(ms)})`).join("; ")}. Esos tramos no están en la transcripción.` : "",
+    recuperados ? `${recuperados} tramo(s) de alta fidelidad se transcribieron después de la reunión con el audio guardado localmente.` : ""
+  ];
+}
 
 function bloquesRiesgo(m, conN3 = true) {
   return [

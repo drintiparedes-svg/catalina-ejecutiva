@@ -12,10 +12,14 @@ import { GeminiSession } from "./realtime/gemini-session.js";
 import { ElevenLabsSession } from "./realtime/elevenlabs-session.js";
 import { dibujarRuta } from "./mapa.js";
 import { EscuchaDeReunion, escuchaDisponible } from "./escucha.js";
-import { GrabadoraDeReunion, grabadoraDisponible } from "./grabadora.js";
+import { GrabadoraDeReunion, grabadoraDisponible, microfonos, esBluetooth, aWavBase64 } from "./grabadora.js";
+import { Vigilia, resumenDeContinuidad, duracionLegible } from "./continuidad.js";
+import {
+  guardarTramo, actualizarTramo, recuperarReunion, borrarAudioDe, purgarAntiguos, reunionesConPendientes
+} from "./archivo-audio.js";
 import { conectarConReunion, puenteDisponible } from "./puente-meet.js";
 import {
-  nuevaReunion, guardarReunion, leerReuniones, elegirReunion, consultarReunion, indiceDeReuniones,
+  nuevaReunion, guardarReunion, leerReuniones, cerrarInterrumpidas, elegirReunion, consultarReunion, indiceDeReuniones,
   calidad, duracion, palabras, pedirMinuta, enviarMinutaPorCorreo, cabecerasDeClavePropia, transcripcionComoTexto
 } from "./reuniones.js";
 import { PLANTILLAS, plantillaDe } from "./plantillas-acta.js";
@@ -81,7 +85,9 @@ const ui = {
   panelDocs: document.querySelector("#panelDocs"),
   insumosMeet: document.querySelector("#insumosMeet"),
   soltar: document.querySelector("#soltar"),
-  reunionArchivos: document.querySelector("#reunionArchivos")
+  reunionArchivos: document.querySelector("#reunionArchivos"),
+  reunionMicrofono: document.querySelector("#reunionMicrofono"),
+  reunionMicAviso: document.querySelector("#reunionMicAviso")
 };
 
 const director = new PerformanceDirector();
@@ -425,6 +431,22 @@ const escucha = new EscuchaDeReunion({
 
 const grabadora = new GrabadoraDeReunion({
   transcribir: (audio, meta) => pedirTranscripcion(audio, meta),
+  // Cada tramo con voz se guarda aquí antes de enviarse (archivo-audio.js).
+  archivo: {
+    guardar: (pcm, meta) => guardarTramo(reunionEnGrabacion?.id, pcm, meta),
+    actualizar: actualizarTramo
+  },
+  alEvento: evento => registrarContinuidad(evento),
+  alHueco: hueco => {
+    const r = reunionEnGrabacion || reunionActual;
+    if (!r) return;
+    r.continuidad ||= { eventos: [], huecos: [] };
+    r.continuidad.huecos.push(hueco);
+    guardarPronto(r);
+  },
+  // Latido del reconocimiento del navegador: llega con cada bloque de audio y
+  // no depende de temporizadores, que Chrome frena en segundo plano.
+  alBloque: () => escucha.latido(),
   alSegmento: segmento => {
     if (!reunionEnGrabacion) return;
     reunionEnGrabacion.hd.push(segmento);
@@ -435,10 +457,79 @@ const grabadora = new GrabadoraDeReunion({
     if (!reunionEnGrabacion) return;
     reunionEnGrabacion.hdFallidos.push(fallo);
     guardarPronto(reunionEnGrabacion);
-    if (enModoMeet) señalar(`Un tramo no se transcribió en alta fidelidad (${fallo.error}); queda el del navegador`, "problema");
+    if (enModoMeet) señalar(fallo.respaldado
+      ? `Un tramo no se transcribió (${fallo.error}); el audio quedó guardado y se reintentará`
+      : `Un tramo no se transcribió en alta fidelidad (${fallo.error}); queda el del navegador`, "problema");
   },
-  alEstado: (texto, estado) => { if (estado === "problema") señalar(texto, estado); }
+  alEstado: (texto, estado) => {
+    if (estado === "problema") { señalar(texto, estado); marcarTitulo("problema"); }
+    if (estado === "aviso") señalar(texto, "problema");
+    if (estado === "recuperado") { señalar(texto, ""); marcarTitulo("grabando"); }
+  }
 });
+
+// ── Continuidad de la grabación ─────────────────────────────────────────────
+//
+// Las reuniones presenciales en un notebook se cortaban por el ahorro de
+// energía: pantalla que se apaga y equipo que se suspende, audífonos
+// Bluetooth que se desconectan, audio pausado por el sistema. Aquí se
+// mantiene la pantalla encendida, se registra cada interrupción con su causa
+// y, al volver la red o al terminar, se completa lo que quedó sin transcribir
+// con el audio guardado.
+const vigilia = new Vigilia({ alEvento: evento => registrarContinuidad(evento) });
+const TITULO = document.title;
+const MAX_EVENTOS = 400;
+
+function registrarContinuidad(evento) {
+  const r = reunionEnGrabacion || reunionActual;
+  if (!r) return;
+  r.continuidad ||= { eventos: [], huecos: [] };
+  if (r.continuidad.eventos.length < MAX_EVENTOS) r.continuidad.eventos.push(evento);
+  guardarPronto(r);
+  if (evento.tipo === "pestana-visible") grabadora.reanimar();
+  if (evento.tipo === "red-recuperada") completarTranscripcion(reunionEnGrabacion, { soloFallidos: true });
+  if (evento.tipo === "red-caida" && enModoMeet) señalar("Sin internet: sigo grabando y guardo el audio para transcribirlo al volver la red", "problema");
+}
+
+// La pestaña dice si se está grabando: se ve en la barra de pestañas aunque
+// se esté mirando otra cosa.
+function marcarTitulo(estado) {
+  document.title = estado === "grabando" ? `● Grabando · ${TITULO}` : estado === "problema" ? `⚠ Sin grabar · ${TITULO}` : TITULO;
+}
+
+// Vuelve a transcribir los tramos guardados que no se transcribieron. Durante
+// la reunión sólo los fallidos (los pendientes están en la cola en curso).
+let completando = null;
+async function completarTranscripcion(reunion, { soloFallidos = false, silencioso = false } = {}) {
+  if (!reunion || completando || !navigator.onLine) return null;
+  completando = recuperarReunion(reunion, {
+    transcribir: (audio, meta) => pedirTranscripcion(audio, meta),
+    aWav: aWavBase64,
+    estados: soloFallidos ? ["fallido"] : ["pendiente", "fallido"],
+    alProgreso: texto => { if (!silencioso && reunion === reunionActual) señalar(texto); }
+  }).catch(error => { console.warn("Completar transcripción:", error); return null; });
+  const balance = await completando;
+  completando = null;
+  if (balance?.intentados) {
+    guardarReunion(reunion);
+    console.info(`Transcripción completada de «${reunion.meta.titulo}»:`, balance);
+  }
+  return balance;
+}
+
+// Al abrir la aplicación: se borra el audio con más de 7 días y se completan
+// las reuniones que quedaron con tramos sin transcribir (pestaña cerrada a
+// mitad de reunión, red caída al terminar).
+async function completarPendientesAlAbrir() {
+  for (const r of cerrarInterrumpidas(reunionActual?.id)) console.info(`Reunión interrumpida cerrada: «${r.meta.titulo}»`);
+  await purgarAntiguos();
+  if (!navigator.onLine) return;
+  for (const id of await reunionesConPendientes()) {
+    const r = leerReuniones().find(x => x.id === id);
+    if (r && r.id !== reunionActual?.id) await completarTranscripcion(r, { silencioso: true });
+  }
+}
+setTimeout(completarPendientesAlAbrir, 4000);
 
 async function pedirTranscripcion(audio, { previo }) {
   const r = await fetch("/reunion/transcribir", {
@@ -462,6 +553,7 @@ let reunionActual = null;       // la que se está escuchando ahora
 let reunionEnGrabacion = null;  // la que recibe los tramos de alta fidelidad (puede terminar después)
 let relojGuardado = null;
 let relojMemoria = null;
+let relojVivo = null;
 let memoriaEnviadaHasta = 0;    // índice del último segmento pasado a Catalina
 let memoriaCaracteres = 0;
 
@@ -502,6 +594,7 @@ function abrirDialogoDeReunion() {
   }).catch(() => {});
   ui.reunionPestana.disabled = !puenteDisponible();
   avisarSinAltaFidelidad();
+  llenarMicrofonos();
   ui.reunionDialogo.showModal();
 }
 
@@ -522,11 +615,42 @@ ui.reunionForm.addEventListener("submit", evento => {
     alta: ui.reunionAlta.checked,
     pestana: ui.reunionPestana.checked,
     continuar: ui.reunionContinuarCasilla.checked,
-    archivos: [...(ui.reunionArchivos.files || [])]
+    archivos: [...(ui.reunionArchivos.files || [])],
+    microfono: ui.reunionMicrofono.value
   });
   ui.reunionArchivos.value = "";
 });
 ui.reunionCancelar.addEventListener("click", () => ui.reunionDialogo.close());
+
+// Micrófono para grabar. En una reunión presencial importa: el de unos
+// audífonos Bluetooth capta sobre todo a quien los lleva, pasa a calidad
+// telefónica y se desconecta cuando el sistema ahorra energía o los AirPods
+// saltan a otro equipo. Se recomienda el del notebook o uno con cable.
+const CLAVE_MICROFONO = "catalina.microfono.v1";
+async function llenarMicrofonos() {
+  const lista = await microfonos();
+  let guardado = "";
+  try { guardado = localStorage.getItem(CLAVE_MICROFONO) || ""; } catch {}
+  const opciones = [{ id: "", nombre: "El del sistema (predeterminado)" }, ...lista.filter(d => d.id !== "default")];
+  const predeterminado = lista.find(d => d.id === "default");
+  ui.reunionMicrofono.replaceChildren(...opciones.map(d => {
+    const o = document.createElement("option");
+    o.value = d.id;
+    o.textContent = d.id === "" && predeterminado ? `El del sistema (${predeterminado.nombre.replace(/^(predeterminado|default)\s*-\s*/i, "")})` : d.nombre;
+    return o;
+  }));
+  ui.reunionMicrofono.value = opciones.some(d => d.id === guardado) ? guardado : "";
+  ui.reunionMicrofono.dataset.predeterminado = predeterminado?.nombre || "";
+  avisarMicrofono();
+}
+function avisarMicrofono() {
+  const elegido = ui.reunionMicrofono.selectedOptions[0]?.textContent || "";
+  ui.reunionMicAviso.hidden = !esBluetooth(elegido);
+}
+ui.reunionMicrofono.addEventListener("change", () => {
+  try { localStorage.setItem(CLAVE_MICROFONO, ui.reunionMicrofono.value); } catch {}
+  avisarMicrofono();
+});
 // Conectar con la reunión y la alta fidelidad son independientes: el puente
 // hace que Catalina oiga la videollamada; la alta fidelidad, que lo que dicen
 // los demás quede transcrito en el acta. Sin ella se avisa, porque el
@@ -576,8 +700,16 @@ async function entrarEnModoMeet(opciones = {}) {
     }
   }
 
+  // Que la pantalla no se apague (y con ella el equipo) mientras se graba.
+  vigilia.activar();
+  // Señal de vida: si la pestaña se cierra a mitad, al reabrir se sabe hasta
+  // cuándo hubo reunión.
+  clearInterval(relojVivo);
+  relojVivo = setInterval(() => { if (reunionActual) { reunionActual.meta.vivo = Date.now(); guardarPronto(); } }, 30000);
+  reunionActual.continuidad ||= { eventos: [], huecos: [] };
+
   const alta = opciones.alta && grabadoraDisponible()
-    ? grabadora.iniciar({ flujoReunion: puenteReunion?.flujo })
+    ? grabadora.iniciar({ flujoReunion: puenteReunion?.flujo, dispositivo: opciones.microfono || "" })
     : null;
 
   if (alta) {
@@ -587,6 +719,9 @@ async function entrarEnModoMeet(opciones = {}) {
     if (!r.ok) {
       avisoAlta = r.error;
       reunionEnGrabacion = null;
+    } else {
+      marcarTitulo("grabando");
+      if (esBluetooth(r.microfono)) avisoAlta = `Grabando con ${r.microfono}: en una reunión presencial capta sobre todo tu voz. Para la sala, usa el micrófono del notebook`;
     }
   }
 
@@ -616,6 +751,8 @@ async function entrarEnModoMeet(opciones = {}) {
     if (puenteReunion) partes.push("conectada a la videollamada");
     if (reunionEnGrabacion) partes.push(grabadora.conPestana ? "alta fidelidad con audio de la reunión" : "alta fidelidad (micrófono)");
     partes.push(connected ? (puenteReunion ? "P para que participe" : "di «Catalina» para hablarme") : "sólo transcribo: inicia la conversación si quieres que responda");
+    if (reunionEnGrabacion) partes.push(grabadora.nombreMicrofono());
+    if (!vigilia.disponible) partes.push("sin bloqueo de reposo: desactiva el reposo del equipo");
     señalar(avisoAlta || partes.join(" · "), avisoAlta ? "problema" : "");
     setStatus("En reunión");
     if (connected) presentarReunionACatalina();
@@ -632,6 +769,8 @@ async function salirDeModoMeet() {
   if (participando || participacionPendiente) desactivarParticipacion({ alSalir: true });
   enModoMeet = false;
   cerrarPuente();
+  vigilia.desactivar();
+  clearInterval(relojVivo);
 
   escucha.parar();
   clearInterval(relojMemoria);
@@ -660,8 +799,13 @@ async function salirDeModoMeet() {
     await grabadora.detener();
     reunionEnGrabacion = null;
     guardarReunion(reunion);
+    // Lo que no se transcribió durante la reunión se completa ahora con el
+    // audio guardado.
+    mostrarAvisoDeReunion(reunion, "Completando la transcripción con el audio guardado…");
+    await completarTranscripcion(reunion, { silencioso: true });
     mostrarAvisoDeReunion(reunion);
   }
+  marcarTitulo("");
   if (connected) {
     sesion?.anadirContexto?.(`[Sistema] La reunión «${reunion.meta.titulo}» terminó: ${Math.round(duracion(reunion) / 60000)} minutos, `
       + `${palabras(reunion)} palabras transcritas. Para responder sobre su contenido usa consultar_reunion; para el acta, generar_minuta.`);
@@ -749,12 +893,15 @@ async function atenderLlamado(peticion, contexto) {
 function mostrarAvisoDeReunion(reunion, estado = "") {
   const q = calidad(reunion);
   ui.reunionAvisoTitulo.textContent = reunion.meta.titulo;
+  const c = resumenDeContinuidad(reunion.continuidad, duracion(reunion));
   ui.reunionAvisoDetalle.textContent = estado || [
     `${Math.round(duracion(reunion) / 60000)} min`,
     `${q.palabras} palabras`,
     `transcripción ${q.fuente}`,
-    q.huecos ? `${q.huecos} hueco(s) sin audio` : "sin huecos detectados"
-  ].join(" · ");
+    `cobertura ${q.cobertura}%`,
+    c.huecos ? `audio perdido: ${c.porCausa.map(p => `${p.causa} ${duracionLegible(p.ms)}`).join("; ")}` : (q.huecos ? `${q.huecos} hueco(s) sin transcribir` : "sin huecos detectados"),
+    q.tramosRecuperados ? `${q.tramosRecuperados} tramo(s) recuperados del audio guardado` : ""
+  ].filter(Boolean).join(" · ");
   ui.reunionAvisoAbrir.href = `minuta.html?id=${encodeURIComponent(reunion.id)}`;
   ui.reunionAvisoAbrir.textContent = reunion.minuta ? "Ver acta" : "Generar acta";
   ui.reunionAviso.hidden = false;
@@ -803,7 +950,11 @@ function generarMinutaHerramienta(argumentos) {
   // esperar, y Catalina tiene que poder seguir conversando mientras tanto.
   const tipo = PLANTILLAS[argumentos.tipo] ? argumentos.tipo : null;
   if (tipo) fuente.meta.tipo = tipo;
-  minutaEnCurso = insumosDeReunion(fuente)
+  // Primero se completa la transcripción con el audio guardado; después se
+  // redacta. Con el acta generada, el audio se borra (salvo lo que aún no se
+  // pudo transcribir, que se conserva hasta los 7 días).
+  minutaEnCurso = (fuente.id === reunionEnGrabacion?.id ? Promise.resolve() : completarTranscripcion(fuente, { silencioso: true }))
+    .then(() => insumosDeReunion(fuente))
     .then(docs => pedirMinuta(fuente, { nivel, tipo, insumos: insumosParaMinuta(docs) }))
     .then(async r => {
     minutaEnCurso = null;
@@ -815,6 +966,7 @@ function generarMinutaHerramienta(argumentos) {
     fuente.minuta = r.minuta;
     fuente.trazabilidad = r.trazabilidad;
     guardarReunion(fuente);
+    if (fuente.id !== reunionEnGrabacion?.id) borrarAudioDe(fuente.id, { conservarPendientes: true });
     mostrarAvisoDeReunion(fuente, "Acta lista · ábrela para revisarla y exportarla a PDF, HTML o correo");
     let enviado = "";
     if (argumentos.enviar_por_correo) {
@@ -2345,6 +2497,11 @@ function render(now) {
 window.catalina = {
   director,
   voice,
+  // Continuidad de la grabación: `catalina.grabadora.estadisticas`,
+  // `catalina.reunion?.continuidad`.
+  grabadora,
+  vigilia,
+  get reunion() { return reunionActual; },
   sesiones,
   manejadores,
   get session() { return sesion; },

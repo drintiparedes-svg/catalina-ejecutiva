@@ -9,12 +9,28 @@
 //     términos técnicos y no admite contexto.
 //
 // Esta grabadora captura el micrófono y, si se autoriza, el audio de la
-// pestaña de la reunión (compartir pestaña con «Compartir audio»), los mezcla,
-// y cada 20–40 s envía un tramo al servidor para transcribirlo con un modelo
-// de voz dedicado. Los tramos se cortan en silencios para no partir frases, los
-// que son sólo silencio no se envían (no se paga por ellos), y los que fallan
-// se reintentan y, si aun así fallan, quedan anotados para que la minuta use
-// en ese tramo lo que entendió el navegador.
+// pestaña de la reunión, los mezcla y cada 20–40 s envía un tramo al servidor
+// para transcribirlo con un modelo de voz dedicado. Los tramos se cortan en
+// silencios, los que son sólo silencio no se envían y los que fallan se
+// reintentan.
+//
+// Continuidad: reuniones presenciales en un notebook. Lo que cortaba la
+// transcripción no era el modelo sino el equipo ahorrando energía:
+//
+//   · Audífonos Bluetooth o micrófonos USB que el sistema desconecta: la pista
+//     del micrófono terminaba y la grabación seguía «grabando» silencio sin
+//     avisar. Ahora se vigila la pista (ended, mute, devicechange, silencio
+//     digital) y se reconecta sola, a otro micrófono si el elegido no está.
+//   · El contexto de audio pausado por el sistema: se detecta y se reanuda.
+//   · Captura en el hilo principal (ScriptProcessor), que pierde bloques si la
+//     pestaña va en segundo plano o el equipo va justo: ahora corre en un
+//     AudioWorklet (audio/captura-pcm.js), con el anterior como respaldo.
+//   · Equipo suspendido: no se puede grabar, pero se detecta comparando el
+//     reloj de audio con el de pared y queda registrado como hueco con su
+//     causa, en vez de una cobertura del 100 % falsa.
+//   · Tramos perdidos por la red: cada tramo con voz se guarda en este
+//     navegador antes de enviarlo (archivo-audio.js) y se puede volver a
+//     transcribir después.
 //
 // Coste orientativo: unos pocos centavos de dólar por hora con Gemini Flash, o
 // alrededor de 0,36 USD/h con gpt-4o-transcribe (tarifas públicas a sept. 2026,
@@ -26,20 +42,44 @@ const TRAMO_MAX_S = 40;
 const SILENCIO_RMS = 0.012;         // por debajo, se considera silencio
 const VOZ_RMS = 0.02;               // un tramo sin nada por encima de esto no se envía
 const REINTENTOS = 3;
+const HUECO_MIN_MS = 2500;          // desfase entre relojes que cuenta como audio perdido
+const SILENCIO_DIGITAL_MS = 8000;   // ceros exactos durante esto = micrófono sin señal
+const MUTE_MS = 3000;               // una pista silenciada por el sistema tanto tiempo se reconecta
 
 export const grabadoraDisponible = () => Boolean(window.AudioContext && navigator.mediaDevices?.getUserMedia);
 export const audioDePestanaDisponible = () => Boolean(navigator.mediaDevices?.getDisplayMedia);
 
+// Micrófonos disponibles, para elegir en el diálogo. Las etiquetas sólo
+// aparecen con el permiso ya concedido.
+export async function microfonos() {
+  try {
+    const lista = await navigator.mediaDevices.enumerateDevices();
+    return lista.filter(d => d.kind === "audioinput" && d.deviceId !== "communications")
+      .map(d => ({ id: d.deviceId, nombre: d.label || "Micrófono", bluetooth: esBluetooth(d.label) }));
+  } catch { return []; }
+}
+export const esBluetooth = nombre => /airpods|bluetooth|hands-?free|headset|buds|beats|bose|jabra|sony wh|wf-|manos libres/i.test(String(nombre || ""));
+
+const esperar = ms => new Promise(ok => setTimeout(ok, ms));
+
 export class GrabadoraDeReunion {
-  constructor({ transcribir, alSegmento, alFallo, alEstado } = {}) {
+  constructor({ transcribir, alSegmento, alFallo, alEstado, alEvento, alHueco, alBloque, archivo = null } = {}) {
     this.transcribir = transcribir;     // async (wavBase64, meta) => {ok, texto, proveedor}
     this.alSegmento = alSegmento;
     this.alFallo = alFallo;
     this.alEstado = alEstado;
+    this.alEvento = alEvento;           // ({tipo, momento, detalle}) — registro de continuidad
+    this.alHueco = alHueco;             // ({desde, hasta, causa}) — audio que no se pudo grabar
+    this.alBloque = alBloque;           // latido: llega con cada bloque de audio
+    this.archivo = archivo;             // {guardar(pcm, meta) → id, actualizar(id, cambios)}
     this.activa = false;
     this.flujos = [];
     this.ctx = null;
     this.nodo = null;
+    this.mezcla = null;
+    this.mic = null;                    // MediaStream del micrófono en uso
+    this.fuenteMic = null;
+    this.dispositivo = "";              // deviceId preferido ("" = el del sistema)
     this.muestras = [];
     this.largo = 0;
     this.inicioTramo = 0;
@@ -49,6 +89,12 @@ export class GrabadoraDeReunion {
     this.pendientes = 0;
     this.previo = "";
     this.conPestana = false;
+    this.reconectando = false;
+    this.micPerdidoDesde = 0;
+    this.sinSenalDesde = 0;
+    this.cerosDesde = 0;
+    this.ultimaSuspension = 0;
+    this.estadisticas = { reconexiones: 0, huecos: 0, msPerdidos: 0, bloques: 0, captura: "" };
   }
 
   // Tiene que llamarse dentro del gesto del usuario (un clic): el navegador
@@ -56,38 +102,32 @@ export class GrabadoraDeReunion {
   // El audio de la reunión llega ya capturado (puente-meet.js): la pestaña se
   // comparte una sola vez y ese mismo audio sirve para grabar y para que
   // Catalina oiga. Esta grabadora no lo detiene al terminar: es del puente.
-  async iniciar({ flujoReunion = null } = {}) {
+  async iniciar({ flujoReunion = null, dispositivo = "" } = {}) {
     if (this.activa) return { ok: true };
+    this.dispositivo = dispositivo || "";
     let mic;
     try {
-      mic = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 }
-      });
+      mic = await this.#abrirMicrofono();
     } catch (error) {
       return { ok: false, error: "No se pudo abrir el micrófono para grabar." };
     }
-    this.flujos.push(mic);
+
     this.conPestana = Boolean(flujoReunion?.getAudioTracks?.().length);
-    const fuentes = [mic, ...(this.conPestana ? [flujoReunion] : [])];
     if (this.conPestana) {
       flujoReunion.getAudioTracks()[0].addEventListener("ended", () => {
         this.conPestana = false;
-        this.alEstado?.("Se dejó de compartir la pestaña de la reunión: sigo grabando sólo el micrófono", "problema");
+        this.#evento("pestana-perdida", "se dejó de compartir la pestaña de la reunión");
+        this.alEstado?.("Se dejó de compartir la pestaña de la reunión: sigo grabando sólo el micrófono", "aviso");
       });
     }
 
     this.ctx = new AudioContext();
-    const mezcla = this.ctx.createGain();
-    for (const flujo of fuentes) {
-      if (!flujo.getAudioTracks().length) continue;
-      this.ctx.createMediaStreamSource(new MediaStream(flujo.getAudioTracks())).connect(mezcla);
-    }
-    // ScriptProcessor está en desuso pero funciona en todos los navegadores y
-    // es lo que ya usa la voz de Gemini en este proyecto; un AudioWorklet
-    // exigiría otro archivo sólo para esto.
-    this.nodo = this.ctx.createScriptProcessor(4096, 1, 1);
-    this.nodo.onaudioprocess = evento => this.#recibir(evento.inputBuffer.getChannelData(0));
-    mezcla.connect(this.nodo);
+    this.ctx.onstatechange = () => this.#alCambiarContexto();
+    this.mezcla = this.ctx.createGain();
+    this.#conectarMicrofono(mic);
+    if (this.conPestana) this.ctx.createMediaStreamSource(new MediaStream(flujoReunion.getAudioTracks())).connect(this.mezcla);
+
+    await this.#prepararCaptura();
     // El nodo tiene que llegar al destino para que el navegador lo procese; se
     // conecta a través de una ganancia cero para no oír el eco.
     const mudo = this.ctx.createGain();
@@ -95,9 +135,139 @@ export class GrabadoraDeReunion {
     this.nodo.connect(mudo).connect(this.ctx.destination);
 
     this.activa = true;
+    this.inicioPared = 0;
     this.#reiniciarTramo();
-    return { ok: true, conPestana: this.conPestana };
+    this.alDispositivos = () => this.#revisarDispositivos();
+    navigator.mediaDevices.addEventListener?.("devicechange", this.alDispositivos);
+    this.#evento("inicio", `micrófono: ${this.nombreMicrofono()}; captura: ${this.estadisticas.captura}`);
+    return { ok: true, conPestana: this.conPestana, microfono: this.nombreMicrofono() };
   }
+
+  nombreMicrofono() {
+    return this.mic?.getAudioTracks()[0]?.label || "micrófono del sistema";
+  }
+
+  // AudioWorklet si se puede; ScriptProcessor si el navegador no lo tiene.
+  async #prepararCaptura() {
+    try {
+      await this.ctx.audioWorklet.addModule(new URL("./audio/captura-pcm.js", import.meta.url));
+      this.nodo = new AudioWorkletNode(this.ctx, "captura-pcm", { numberOfInputs: 1, numberOfOutputs: 1, channelCount: 1, channelCountMode: "explicit" });
+      this.nodo.port.onmessage = ({ data }) => this.#recibir(data.muestras, data.frame);
+      this.estadisticas.captura = "hilo de audio";
+    } catch (error) {
+      console.warn("Grabadora: sin AudioWorklet, uso ScriptProcessor", error);
+      this.nodo = this.ctx.createScriptProcessor(4096, 1, 1);
+      this.nodo.onaudioprocess = evento => this.#recibir(evento.inputBuffer.getChannelData(0), Math.round(evento.playbackTime * this.ctx.sampleRate));
+      this.estadisticas.captura = "hilo principal (respaldo)";
+    }
+    this.mezcla.connect(this.nodo);
+  }
+
+  // ── Micrófono: apertura, vigilancia y reconexión ────────────────────────────
+
+  async #abrirMicrofono() {
+    const base = { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 };
+    if (this.dispositivo) {
+      const disponibles = await microfonos();
+      if (disponibles.some(d => d.id === this.dispositivo)) {
+        try { return await navigator.mediaDevices.getUserMedia({ audio: { ...base, deviceId: { exact: this.dispositivo } } }); }
+        catch {}
+      }
+    }
+    return await navigator.mediaDevices.getUserMedia({ audio: base });
+  }
+
+  #conectarMicrofono(mic) {
+    try { this.fuenteMic?.disconnect(); } catch {}
+    this.mic?.getTracks().forEach(p => p.stop());
+    this.flujos = this.flujos.filter(f => f !== this.mic);
+    this.mic = mic;
+    this.flujos.push(mic);
+    this.fuenteMic = this.ctx ? this.ctx.createMediaStreamSource(mic) : null;
+    if (this.fuenteMic && this.mezcla) this.fuenteMic.connect(this.mezcla);
+    const pista = mic.getAudioTracks()[0];
+    if (!pista) return;
+    pista.addEventListener("ended", () => { if (pista === this.mic?.getAudioTracks()[0]) this.#reconectarMicrofono("el micrófono se desconectó"); });
+    pista.addEventListener("mute", () => {
+      if (pista !== this.mic?.getAudioTracks()[0]) return;
+      this.#evento("mic-silenciado", "el sistema silenció el micrófono");
+      clearTimeout(this.relojMute);
+      this.relojMute = setTimeout(() => { if (pista.muted && this.activa) this.#reconectarMicrofono("el sistema dejó el micrófono silenciado"); }, MUTE_MS);
+    });
+    pista.addEventListener("unmute", () => { clearTimeout(this.relojMute); this.#evento("mic-reactivado", ""); });
+  }
+
+  // Se vuelve a abrir el micrófono hasta conseguirlo, con espera creciente. Si
+  // el elegido ya no está (audífonos apagados), se usa el del sistema.
+  async #reconectarMicrofono(motivo) {
+    if (this.reconectando || !this.activa) return;
+    this.reconectando = true;
+    this.micPerdidoDesde ||= Date.now();
+    this.#evento("mic-perdido", motivo);
+    this.alEstado?.(`No estoy grabando: ${motivo}. Reconectando…`, "problema");
+    let espera = 1000;
+    while (this.activa) {
+      try {
+        const mic = await this.#abrirMicrofono();
+        if (mic.getAudioTracks()[0]?.readyState === "live") {
+          this.#conectarMicrofono(mic);
+          break;
+        }
+        mic.getTracks().forEach(p => p.stop());
+      } catch {}
+      await esperar(espera);
+      espera = Math.min(espera * 2, 5000);
+    }
+    this.reconectando = false;
+    if (!this.activa) return;
+    this.estadisticas.reconexiones += 1;
+    this.#cerrarHueco("micPerdidoDesde", `micrófono desconectado (${motivo})`);
+    this.#evento("mic-recuperado", this.nombreMicrofono());
+    this.alEstado?.(`Grabando de nuevo con ${this.nombreMicrofono()}`, "recuperado");
+  }
+
+  async #revisarDispositivos() {
+    if (!this.activa) return;
+    const pista = this.mic?.getAudioTracks()[0];
+    const disponibles = await microfonos();
+    this.#evento("dispositivos", disponibles.map(d => d.nombre).join(", "));
+    if (!pista || pista.readyState === "ended") this.#reconectarMicrofono("el micrófono ya no está disponible");
+  }
+
+  #alCambiarContexto() {
+    const estado = this.ctx?.state;
+    if (!this.activa || !estado) return;
+    this.#evento("audio-" + estado, "");
+    if (estado !== "running") {
+      this.ultimaSuspension = Date.now();
+      this.alEstado?.("El sistema pausó el audio: reanudando…", "problema");
+      this.reanimar();
+    }
+  }
+
+  // Reanuda el contexto si el sistema lo pausó. La app también lo llama al
+  // volver a la pestaña o al despertar el equipo.
+  reanimar() {
+    if (this.activa && this.ctx && this.ctx.state !== "running" && this.ctx.state !== "closed") {
+      this.ctx.resume().catch(() => {});
+    }
+    if (this.activa && this.mic?.getAudioTracks()[0]?.readyState === "ended") this.#reconectarMicrofono("el micrófono se desconectó");
+  }
+
+  #evento(tipo, detalle) {
+    this.alEvento?.({ tipo, momento: Date.now(), detalle });
+  }
+
+  #cerrarHueco(campo, causa, hasta = Date.now()) {
+    const desde = this[campo];
+    this[campo] = 0;
+    if (!desde || hasta - desde < 1000) return;
+    this.estadisticas.huecos += 1;
+    this.estadisticas.msPerdidos += hasta - desde;
+    this.alHueco?.({ desde, hasta, causa });
+  }
+
+  // ── Captura y tramos ─────────────────────────────────────────────────────
 
   #reiniciarTramo() {
     this.muestras = [];
@@ -107,8 +277,12 @@ export class GrabadoraDeReunion {
     this.inicioTramo = Date.now();
   }
 
-  #recibir(entrada) {
+  #recibir(entrada, frame) {
     if (!this.activa) return;
+    this.estadisticas.bloques += 1;
+    this.#vigilarContinuidad(entrada, frame);
+    this.alBloque?.();
+
     const bajada = remuestrear(entrada, this.ctx.sampleRate, HZ);
     this.muestras.push(bajada);
     this.largo += bajada.length;
@@ -125,6 +299,66 @@ export class GrabadoraDeReunion {
     if ((segundos >= TRAMO_MIN_S && this.silencioFinal >= .4) || segundos >= TRAMO_MAX_S) this.#cerrarTramo();
   }
 
+  // Dos señales de audio perdido:
+  //   · Reloj: si el de audio avanza menos que el de pared, el audio se detuvo
+  //     (equipo suspendido o contexto pausado). Se usa el mínimo de una
+  //     ventana de bloques para no confundir un retraso del hilo principal
+  //     —los bloques llegan tarde pero llegan— con audio perdido.
+  //   · Silencio digital: ceros exactos durante segundos. Un micrófono vivo
+  //     siempre tiene algo de ruido; ceros exactos son un micrófono apagado o
+  //     silenciado por el sistema.
+  #vigilarContinuidad(entrada, frame) {
+    const ahora = Date.now();
+    const audioMs = frame / this.ctx.sampleRate * 1000;
+    if (!this.inicioPared) {
+      this.inicioPared = ahora - audioMs;
+      this.desfaseBase = 0;
+      this.ventana = [];
+      this.ultimoNormal = ahora;
+    }
+    const desfase = ahora - this.inicioPared - audioMs;
+    this.ventana.push(desfase);
+    if (this.ventana.length > 12) this.ventana.shift();
+    const minimo = Math.min(...this.ventana);
+    if (this.ventana.length >= 6 && minimo - this.desfaseBase > HUECO_MIN_MS) {
+      const perdido = minimo - this.desfaseBase;
+      const causa = this.ultimaSuspension && ahora - this.ultimaSuspension < perdido + 10000
+        ? "el sistema pausó el audio"
+        : "equipo suspendido o en reposo (pantalla apagada o tapa cerrada)";
+      this.estadisticas.huecos += 1;
+      this.estadisticas.msPerdidos += perdido;
+      this.alHueco?.({ desde: this.ultimoNormal, hasta: this.ultimoNormal + perdido, causa });
+      this.#evento("audio-detenido", `${Math.round(perdido / 1000)} s sin audio: ${causa}`);
+      this.desfaseBase = minimo;
+      this.ventana = [minimo];
+    } else if (minimo < this.desfaseBase) {
+      this.desfaseBase = minimo;   // deriva normal entre relojes
+    }
+    if (desfase - this.desfaseBase < 1000) this.ultimoNormal = ahora;
+
+    // Silencio digital (sólo si el micrófono no está ya marcado como perdido).
+    if (this.reconectando) return;
+    let cero = true;
+    for (let i = 0; i < entrada.length; i += 64) if (entrada[i] !== 0) { cero = false; break; }
+    if (cero) {
+      this.cerosDesde ||= ahora;
+      if (!this.sinSenalDesde && ahora - this.cerosDesde > SILENCIO_DIGITAL_MS) {
+        this.sinSenalDesde = this.cerosDesde;
+        this.#evento("sin-senal", this.nombreMicrofono());
+        this.alEstado?.(`El micrófono (${this.nombreMicrofono()}) no entrega sonido. Revisa que no esté silenciado`, "problema");
+        // Puede ser un dispositivo dormido: se intenta reabrir.
+        this.#reconectarMicrofono("el micrófono no entrega sonido");
+      }
+    } else {
+      this.cerosDesde = 0;
+      if (this.sinSenalDesde) {
+        this.#cerrarHueco("sinSenalDesde", "micrófono sin señal (silenciado o dormido)");
+        this.#evento("senal-recuperada", this.nombreMicrofono());
+        this.alEstado?.("Grabando de nuevo", "recuperado");
+      }
+    }
+  }
+
   #cerrarTramo() {
     if (!this.largo) return;
     const desde = this.inicioTramo;
@@ -135,14 +369,18 @@ export class GrabadoraDeReunion {
     // Sólo silencio: no se paga por transcribirlo ni se arriesga a que el
     // modelo «oiga» frases inventadas, que es lo que hacen con el silencio.
     if (pico < VOZ_RMS) return;
-    this.#encolar(pcm, desde, hasta);
+    // Primero al respaldo local, sin esperar a la cola: si la pestaña se
+    // cierra o la red cae, el audio ya está a salvo.
+    const idArchivo = this.archivo?.guardar(pcm, { desde, hasta, hz: HZ }) ?? null;
+    this.#encolar(pcm, desde, hasta, idArchivo);
   }
 
-  #encolar(pcm, desde, hasta) {
+  #encolar(pcm, desde, hasta, idArchivo) {
     this.pendientes += 1;
     this.alEstado?.(`Transcribiendo en alta fidelidad · ${this.pendientes} en cola`, "");
     this.cola = this.cola.then(async () => {
       const wav = aWavBase64(pcm, HZ);
+      const id = await Promise.resolve(idArchivo).catch(() => null);
       let ultimoError = "";
       for (let intento = 1; intento <= REINTENTOS; intento += 1) {
         try {
@@ -160,9 +398,17 @@ export class GrabadoraDeReunion {
         } catch (error) {
           ultimoError = error?.message || "fallo de red";
         }
-        await new Promise(ok => setTimeout(ok, 1500 * intento));
+        await esperar(1500 * intento);
       }
-      if (ultimoError) this.alFallo?.({ desde, hasta, error: ultimoError });
+      if (ultimoError) {
+        // Primero se anota el fallo y después se marca el tramo como
+        // reintentable: si la recuperación corre entre medio, encuentra el
+        // fallo y lo reemplaza, en vez de dejar fallo y tramo recuperado a la vez.
+        this.alFallo?.({ desde, hasta, error: ultimoError, respaldado: Boolean(id) });
+        await this.archivo?.actualizar(id, { estado: "fallido", error: ultimoError, intentos: REINTENTOS });
+      } else {
+        await this.archivo?.actualizar(id, { estado: "transcrito" });
+      }
       this.pendientes -= 1;
       if (!this.pendientes) this.alEstado?.(this.activa ? "Alta fidelidad al día" : "Transcripción completa", "");
     });
@@ -173,12 +419,21 @@ export class GrabadoraDeReunion {
   async detener() {
     if (!this.activa) return;
     this.#cerrarTramo();
+    // Un hueco abierto (micrófono perdido o sin señal) se cierra al terminar.
+    this.#cerrarHueco("micPerdidoDesde", "micrófono desconectado");
+    this.#cerrarHueco("sinSenalDesde", "micrófono sin señal (silenciado o dormido)");
     this.activa = false;
+    clearTimeout(this.relojMute);
+    navigator.mediaDevices.removeEventListener?.("devicechange", this.alDispositivos);
+    try { this.nodo?.port?.postMessage("parar"); } catch {}
     try { this.nodo?.disconnect(); } catch {}
     this.flujos.forEach(f => f.getTracks().forEach(p => p.stop()));
     this.flujos = [];
+    this.mic = this.fuenteMic = null;
+    if (this.ctx) this.ctx.onstatechange = null;
     await this.ctx?.close().catch(() => {});
-    this.ctx = this.nodo = null;
+    this.ctx = this.nodo = this.mezcla = null;
+    this.#evento("fin", "");
     await this.cola;
   }
 }

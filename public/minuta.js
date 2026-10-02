@@ -8,8 +8,11 @@
 import {
   leerReuniones, obtenerReunion, guardarReunion, borrarReunion, nuevaReunion,
   transcripcionComoTexto, datosParaMinuta, calidad, duracion, pedirMinuta, enviarMinutaPorCorreo,
-  minutaAMarkdown, nombreDeArchivo, leerClavePropia, guardarClavePropia
+  minutaAMarkdown, nombreDeArchivo, leerClavePropia, guardarClavePropia, cabecerasDeClavePropia
 } from "./reuniones.js";
+import { resumenDeArchivo, recuperarReunion, borrarAudioDe, purgarAntiguos, DIAS_DE_CONSERVACION } from "./archivo-audio.js";
+import { aWavBase64 } from "./grabadora.js";
+import { resumenDeContinuidad, duracionLegible } from "./continuidad.js";
 import { actaHTML, onePagerHTML, dibujarDiagramas, documentoAutonomo, ESTILOS_ACTA, esc, tipoDelActa } from "./acta.js";
 import { PLANTILLAS, plantillaDe } from "./plantillas-acta.js";
 import { leerArchivo, guardarInsumo, borrarInsumo, insumosDeReunion, insumosParaMinuta, fichaDe, resumenDeFicha } from "./insumos.js";
@@ -77,8 +80,11 @@ function pintarDetalle() {
     `${q.palabras.toLocaleString("es")} palabras`,
     `<span class="chip">transcripción ${esc(q.fuente)}</span>`,
     `<span class="chip ${claseCobertura}" title="Porcentaje del tiempo con audio transcrito">cobertura ${q.cobertura}%</span>`,
-    q.huecos ? `<span class="chip aviso">${q.huecos} hueco(s) sin audio</span>` : ""
+    q.huecos ? `<span class="chip aviso">${q.huecos} hueco(s) sin audio</span>` : "",
+    ...resumenDeContinuidad(r.continuidad, duracion(r)).porCausa.map(p => `<span class="chip aviso" title="Audio que no se pudo grabar">${esc(p.causa)}: ${esc(duracionLegible(p.ms))}</span>`),
+    q.tramosRecuperados ? `<span class="chip bien" title="Tramos que fallaron en vivo y se transcribieron después con el audio guardado">${q.tramosRecuperados} tramo(s) recuperados</span>` : ""
   ].filter(Boolean).join(" · ");
+  pintarAudioLocal();
 
   $("#fTitulo").value = r.meta.titulo;
   $("#fObjetivo").value = r.meta.objetivo || "";
@@ -94,6 +100,54 @@ function pintarDetalle() {
   pintarInsumos();
   pintarActa();
 }
+
+// ── Audio guardado: completar la transcripción ──────────────────────────────
+
+async function pintarAudioLocal() {
+  const r = seleccionada;
+  if (!r) return;
+  const a = await resumenDeArchivo(r.id);
+  if (r !== seleccionada) return;
+  $("#audioLocal").hidden = !a.tramos;
+  if (!a.tramos) return;
+  const megas = (a.bytes / 1024 / 1024).toFixed(1);
+  const enCurso = !r.meta.fin;
+  $("#audioEstado").className = a.pendientes ? "estado mal" : "estado";
+  $("#audioEstado").textContent = a.pendientes
+    ? `${a.pendientes} tramo(s) de audio guardado sin transcribir${enCurso ? " · se completan al terminar la reunión" : ""}.`
+    : `Audio guardado en este navegador: ${a.tramos} tramo(s), ${megas} MB. Se borra al generar el acta o a los ${DIAS_DE_CONSERVACION} días.`;
+  $("#completar").hidden = !a.pendientes || enCurso;
+}
+
+async function completarTranscripcion(r) {
+  const estado = $("#audioEstado");
+  $("#completar").disabled = true;
+  const balance = await recuperarReunion(r, {
+    aWav: aWavBase64,
+    transcribir: async (audio, meta) => {
+      const x = await fetch("/reunion/transcribir", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...cabecerasDeClavePropia(["openai", "gemini"]) },
+        body: JSON.stringify({ audio, previo: meta.previo, idioma: "es" })
+      });
+      return await x.json().catch(() => ({ ok: false, error: `El servidor respondió ${x.status}` }));
+    },
+    alProgreso: texto => { estado.className = "estado"; estado.textContent = texto; }
+  });
+  $("#completar").disabled = false;
+  guardarReunion(r);
+  return balance;
+}
+
+$("#completar").addEventListener("click", async () => {
+  const r = obtenerReunion(seleccionada.id) || seleccionada;
+  const b = await completarTranscripcion(r);
+  seleccionada = r;
+  pintarDetalle();
+  const estado = $("#audioEstado");
+  estado.className = b.fallidos ? "estado mal" : "estado bien";
+  estado.textContent = `Recuperados ${b.recuperados} tramo(s)${b.vacios ? `, ${b.vacios} sin voz` : ""}${b.fallidos ? `; ${b.fallidos} siguen sin transcribir (revisa la conexión o la clave y reintenta)` : ""}.`;
+});
 
 // ── Documentos aportados como insumo ────────────────────────────────────────
 
@@ -182,6 +236,7 @@ $("#guardarDatos").addEventListener("click", () => {
 $("#borrar").addEventListener("click", () => {
   if (!confirm(`¿Borrar «${seleccionada.meta.titulo}» con su transcripción y su acta? No se puede deshacer.`)) return;
   A(seleccionada.insumos).forEach(f => borrarInsumo(f.id));
+  borrarAudioDe(seleccionada.id);
   borrarReunion(seleccionada.id);
   seleccionada = null;
   history.replaceState(null, "", location.pathname);
@@ -202,6 +257,11 @@ $("#generar").addEventListener("click", async () => {
   boton.disabled = true;
   estado.className = "estado";
   const inicio = Date.now();
+  // Lo que quedó sin transcribir se completa antes de redactar.
+  if (r.meta.fin && (await resumenDeArchivo(r.id)).pendientes) {
+    estado.textContent = "Completando la transcripción con el audio guardado…";
+    await completarTranscripcion(r);
+  }
   const reloj = setInterval(() => { estado.textContent = `Redactando el acta (${nivel})… ${Math.round((Date.now() - inicio) / 1000)} s`; }, 1000);
   const insumos = insumosParaMinuta(await insumosDeReunion(r));
   const resultado = await pedirMinuta(r, { nivel, tipo, insumos, motor: proveedor ? { proveedor, modelo } : null });
@@ -219,8 +279,13 @@ $("#generar").addEventListener("click", async () => {
   actual.minuta = resultado.minuta;
   actual.trazabilidad = resultado.trazabilidad;
   delete actual.evidencia;
+  // Si se completó la transcripción, la copia de la página la tiene.
+  if (r.hd.length > A(actual.hd).length) { actual.hd = r.hd; actual.hdFallidos = r.hdFallidos; }
   guardarReunion(actual);
   seleccionada = actual;
+  // Con el acta generada se borra el audio (decisión del usuario), salvo lo
+  // que aún no se pudo transcribir, que se conserva hasta los 7 días.
+  if (actual.meta.fin) await borrarAudioDe(actual.id, { conservarPendientes: true });
   const t = resultado.trazabilidad;
   estado.className = "estado bien";
   estado.textContent = `Acta lista en ${t.segundos} s con ${t.proveedor}/${t.modelo}.${t.advertencias?.length ? " " + t.advertencias.join(" ") : ""}`;
@@ -433,6 +498,7 @@ window.addEventListener("storage", evento => {
   if (cambio) pintarActa();
 });
 
+purgarAntiguos();
 pintarLista();
 pintarClavePropia();
 pintarProveedores();

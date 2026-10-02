@@ -10,7 +10,8 @@
     "demo": "node work/build-demo.mjs work/banco-de-pruebas.html",
     "test:reuniones": "node work/prueba-reuniones.mjs",
     "test:voz": "node work/prueba-voz.mjs",
-    "test:insumos": "node work/prueba-insumos.mjs"
+    "test:insumos": "node work/prueba-insumos.mjs",
+    "test:continuidad": "node work/prueba-continuidad.mjs"
   },
   "optionalDependencies": {
     "@anthropic-ai/sdk": "^0.129.0"

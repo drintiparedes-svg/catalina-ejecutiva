@@ -539,11 +539,28 @@ objetivo, participantes, agenda, enlaces). Todo va a la minuta.
 
 Pruebas: `npm run test:reuniones`.
 
+**Continuidad (reuniones presenciales en notebook).** Mientras graba, el modo
+reunión:
+- mantiene la pantalla encendida;
+- reconecta solo el micrófono si el sistema lo desconecta (audífonos
+  Bluetooth, USB);
+- reanuda el audio pausado por el sistema;
+- captura en el hilo de audio;
+- guarda cada tramo con voz en el navegador antes de enviarlo, para completar
+  después lo que no se alcanzó a transcribir.
+
+Cada interrupción queda registrada con su causa en el informe de cobertura y en
+el acta. Diagnóstico, límites, ajustes recomendados del Mac y evaluación de la
+transcripción nativa de Google Meet en
+[`docs/continuidad-de-grabacion.md`](docs/continuidad-de-grabacion.md).
+Pruebas: `npm run test:continuidad`.
+
 ## Privacidad
 
 - La interfaz y la animación se ejecutan en el equipo.
 - El análisis de labios se ejecuta completamente en el navegador local.
 - El audio conversacional se envía al proveedor de voz activo (ElevenLabs, OpenAI o Gemini).
 - Las reuniones se guardan sólo en el navegador (localStorage). En alta fidelidad el audio se envía por tramos al proveedor de transcripción, y la transcripción completa al modelo que redacta la minuta. Con datos identificables de pacientes, úsese sólo con proveedores y acuerdos de tratamiento de datos autorizados por la institución.
+- En alta fidelidad, el audio con voz de cada reunión se guarda en este navegador (IndexedDB) para poder completar la transcripción. Se borra al generar el acta o a los 7 días, lo que ocurra primero; los tramos que aún no se pudieron transcribir se conservan hasta los 7 días.
 - Los documentos aportados se leen en el navegador y su texto se guarda sólo en él (IndexedDB). Ese texto se envía al modelo de voz y al que redacta el acta; las imágenes y páginas escaneadas, al modelo de visión, y el audio, al de transcripción. Rige la misma cautela con datos identificables de pacientes.
 - `.env` está ignorado por Git para evitar publicar la clave.

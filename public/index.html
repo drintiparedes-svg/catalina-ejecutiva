@@ -134,6 +134,9 @@
           <legend>Calidad de la transcripción</legend>
           <label class="casilla"><input type="checkbox" id="reunionAlta" checked>
             <span><strong>Alta fidelidad</strong> — graba y transcribe con un modelo de voz dedicado, además del navegador. Recomendado. Coste aprox. 0,05–0,40 USD por hora según proveedor.</span></label>
+          <label>Micrófono para grabar<select id="reunionMicrofono"></select></label>
+          <p class="reunion-ayuda aviso" id="reunionMicAviso" hidden>Es un micrófono Bluetooth: en una reunión presencial capta sobre todo la voz de quien lo lleva, baja a calidad telefónica y se desconecta cuando el equipo ahorra energía o los audífonos cambian a otro dispositivo. Para la sala, elige el micrófono del notebook o uno con cable.</p>
+          <p class="reunion-ayuda">Mientras graba, Catalina mantiene la pantalla encendida (si esta pestaña está a la vista), reconecta el micrófono si se desconecta y guarda el audio en este navegador para completar después lo que no se alcance a transcribir. No puede grabar con la tapa cerrada ni con el equipo en reposo: déjalo conectado al cargador y abierto.</p>
           <p class="reunion-ayuda aviso" id="reunionPuenteAviso" hidden>Sin alta fidelidad, lo que digan los demás participantes no quedará en el acta: el reconocimiento del navegador sólo oye tu micrófono.</p>
           <label class="casilla" id="reunionContinuar" hidden><input type="checkbox" id="reunionContinuarCasilla">
             <span id="reunionContinuarTexto"></span></label>
@@ -148,6 +151,6 @@
     </dialog>
   </main>
   <audio id="remoteAudio" autoplay></audio>
-  <script type="module" src="app.js?v=31"></script>
+  <script type="module" src="app.js?v=33"></script>
 </body>
 </html>
