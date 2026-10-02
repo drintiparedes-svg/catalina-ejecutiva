@@ -28,8 +28,11 @@ body {
 .vignette { position: absolute; inset: 0; pointer-events: none; background: linear-gradient(180deg, rgba(0,0,0,.15), transparent 45%, rgba(0,0,0,.6)); }
 
 .identity { position: absolute; top: calc(32px + env(safe-area-inset-top)); left: calc(36px + env(safe-area-inset-left)); display: flex; align-items: flex-start; gap: 13px; text-shadow: 0 2px 16px #000; }
-.signal { width: 9px; height: 9px; margin-top: 8px; border-radius: 50%; background: #708292; box-shadow: 0 0 16px currentColor; transition: .25s; }
-.signal.online { color: #73f5ff; background: currentColor; animation: pulse 1.8s infinite; }
+/* El rayo es la marca de Catalina y su señal de estado: gris en reposo, cian
+   y con un brillo que respira mientras está en línea. */
+.signal { flex: none; width: 16px; height: 16px; margin-top: 3px; color: #708292; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linejoin: round; transition: color .25s, filter .25s; }
+.signal.online { color: #73f5ff; fill: rgba(115,245,255,.18); animation: destello 2.4s ease-in-out infinite; }
+@keyframes destello { 0%, 100% { filter: drop-shadow(0 0 2px rgba(115,245,255,.45)); } 50% { filter: drop-shadow(0 0 9px rgba(115,245,255,.85)); } }
 .eyebrow { margin: 0 0 3px; color: #a9d8ec; font-size: 10px; font-weight: 700; letter-spacing: .22em; }
 h1 { margin: 0; font-size: clamp(26px, 4vw, 44px); font-weight: 420; letter-spacing: -.035em; }
 .status { margin: 4px 0 0; color: #d1e5ef; font-size: 13px; }
@@ -187,6 +190,12 @@ button:active:not(:disabled) { transform: scale(.97); }
 button:disabled { opacity: .42; cursor: default; }
 /* Con el dedo, 44 px es el mínimo para acertar sin mirar. */
 @media (pointer: coarse) { button { min-height: 44px; } }
+/* Iconos de línea: mismo trazo en toda la interfaz. */
+button, .boton-enlace { display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
+.ico { flex: none; width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; opacity: .9; }
+.ico use { pointer-events: none; }
+button.primary .ico { color: #d6f6ff; }
+.panel-adjuntar .ico, .doc-quitar .ico { width: 14px; height: 14px; }
 button.primary { border-color: rgba(109,228,255,.45); background: linear-gradient(135deg, rgba(25,134,173,.85), rgba(39,82,126,.9)); }
 .exit-meet { display: none; position: absolute; right: calc(16px + env(safe-area-inset-right)); bottom: calc(16px + env(safe-area-inset-bottom)); opacity: 0; }
 
@@ -196,7 +205,7 @@ button.primary { border-color: rgba(109,228,255,.45); background: linear-gradien
 .meet .identity, .meet .controls, .meet .panel { display: none; }
 /* La imagen sí se queda en modo Meet: es contenido, como los subtítulos. */
 .meet .caption { bottom: calc(44px + env(safe-area-inset-bottom)); }
-.meet .exit-meet { display: block; }
+.meet .exit-meet { display: inline-flex; }
 .meet:hover .exit-meet { opacity: .45; }
 
 @keyframes pulse { 50% { box-shadow: 0 0 24px 4px rgba(115,245,255,.5); } }
@@ -218,6 +227,10 @@ button.primary { border-color: rgba(109,228,255,.45); background: linear-gradien
   }
   #connect, #mute { grid-column: span 3; }
   #toggleCaption, #togglePanel, #meetMode { grid-column: span 2; }
+  /* En el teléfono los interruptores quedan sólo con su icono (llevan
+     aria-label y title); las acciones principales conservan el texto. */
+  #toggleCaption .etq, #togglePanel .etq, #meetMode .etq { display: none; }
+  #toggleCaption .ico, #togglePanel .ico, #meetMode .ico { width: 20px; height: 20px; }
   button { padding: 0 8px; font-size: 13px; white-space: nowrap; }
 
   /* El panel no cabe al lado: ocupa el ancho completo por encima de los
@@ -329,7 +342,7 @@ button.primary { border-color: rgba(109,228,255,.45); background: linear-gradien
    puntero (la ventana puede estar capturada por OBS), y siempre visible
    mientras participa, para que se vea que su micrófono está abierto. */
 .participar { display: none; position: absolute; right: calc(190px + env(safe-area-inset-right)); bottom: calc(16px + env(safe-area-inset-bottom)); opacity: 0; transition: opacity .2s; }
-.meet .participar { display: block; }
+.meet .participar { display: inline-flex; }
 .meet:hover .participar { opacity: .85; }
 .meet .participar[aria-pressed="true"] { opacity: 1; border-color: rgba(109,228,255,.55); background: rgba(109,228,255,.18); color: #d6f6ff; }
 .reunion-dialogo select { width: 100%; padding: 9px 11px; border: 1px solid rgba(184,226,246,.2); border-radius: 10px; background: rgba(255,255,255,.05); color: #f4fbff; font: inherit; font-size: 14px; font-weight: 400; }
@@ -366,7 +379,7 @@ button.primary { border-color: rgba(109,228,255,.45); background: linear-gradien
 .doc-quitar { grid-column: 2; grid-row: 1 / span 2; min-height: 24px; padding: 0 8px; border-radius: 7px; border-color: transparent; background: transparent; color: rgba(209,229,239,.55); font-size: 15px; line-height: 1; }
 .doc-quitar:hover { color: #ffd0d0; background: rgba(255,120,120,.1); }
 .insumos-meet { display: none; position: absolute; right: calc(372px + env(safe-area-inset-right)); bottom: calc(16px + env(safe-area-inset-bottom)); opacity: 0; transition: opacity .2s; }
-.meet .insumos-meet { display: block; }
+.meet .insumos-meet { display: inline-flex; }
 .meet:hover .insumos-meet { opacity: .85; }
 @media (max-width: 650px) { .insumos-meet { right: auto; left: calc(190px + env(safe-area-inset-left)); } }
 .soltar { position: absolute; inset: 12px; z-index: 40; display: grid; place-items: center; border: 2px dashed rgba(109,228,255,.6); border-radius: 18px; background: rgba(5,11,18,.78); pointer-events: none; }

@@ -14,6 +14,7 @@ import { dibujarRuta } from "./mapa.js";
 import { EscuchaDeReunion, escuchaDisponible } from "./escucha.js";
 import { GrabadoraDeReunion, grabadoraDisponible, microfonos, esBluetooth, aWavBase64 } from "./grabadora.js";
 import { Vigilia, resumenDeContinuidad, duracionLegible } from "./continuidad.js";
+import { conCancelacionDeEco } from "./audio/eco.js";
 import {
   guardarTramo, actualizarTramo, recuperarReunion, borrarAudioDe, purgarAntiguos, reunionesConPendientes
 } from "./archivo-audio.js";
@@ -91,6 +92,19 @@ const ui = {
 };
 
 const director = new PerformanceDirector();
+let rutaDeEco = null;
+const RETRASO_RUTA_DE_ECO = .055;   // s, medido en Chromium (e2e-conversación)
+
+// Cambia el texto de un botón con icono sin borrar el icono. `icono`, si se
+// da, cambia también el dibujo (micrófono abierto o tachado, rayo o detener).
+function etiquetar(boton, texto, icono) {
+  const etiqueta = boton.querySelector(".etq");
+  if (!etiqueta) { boton.textContent = texto; return; }
+  etiqueta.textContent = texto;
+  if (boton.hasAttribute("aria-label") && !boton.id.startsWith("toggle") && boton.id !== "meetMode") boton.setAttribute("aria-label", texto);
+  if (icono) boton.querySelector(".ico use")?.setAttribute("href", `#i-${icono}`);
+}
+function cerrarRutaDeEco() { rutaDeEco?.cerrar(); rutaDeEco = null; }
 const voice = new VoiceTracker();
 let renderer = null;
 let viewport = { width: 0, height: 0, pixelRatio: 1 };
@@ -101,15 +115,30 @@ let connected = false;
 const manejadores = {
   // Se analiza la voz que llega de la API, no el micrófono: la boca debe
   // seguir lo que Catalina dice.
-  onRemoteStream: stream => {
-    ui.audio.srcObject = stream;
+  onRemoteStream: async stream => {
+    // ElevenLabs y Gemini suenan por Web Audio, que el cancelador de eco de
+    // Chrome no ve: su voz volvía por el micrófono y la interrumpía. Pasa por
+    // una conexión WebRTC local para que el cancelador la conozca (eco.js).
+    // OpenAI ya llega por WebRTC.
+    // Si Chrome concedió la cancelación de eco de todo el sistema
+    // (echoCancellation "all", Chrome 141+), la voz ya es referencia y suena
+    // directa: el rodeo sólo añadiría latencia (~55 ms medidos).
+    cerrarRutaDeEco();
+    const ecoDelSistema = sesion?.micStream?.getAudioTracks?.()[0]?.getSettings?.().echoCancellation === "all";
+    const salida = proveedor === "openai" || ecoDelSistema ? { stream, enRuta: false, cerrar() {} } : await conCancelacionDeEco(stream);
+    if (ecoDelSistema) console.info("Cancelación de eco del sistema activa: la voz suena directa");
+    rutaDeEco = salida;
+    // La boca sigue a lo que de verdad suena: la intensidad se analiza sobre la
+    // salida final y la alineación se retrasa lo que tarda el rodeo.
+    voice.attach(salida.stream);
+    if (sesion) sesion.retrasoBoca = salida.enRuta ? RETRASO_RUTA_DE_ECO : 0;
+    ui.audio.srcObject = salida.stream;
     ui.audio.muted = false;
     ui.audio.volume = 1;
     ui.audio.play().catch(error => {
       console.warn("El navegador bloqueó temporalmente la reproducción de voz", error);
       setStatus("Pulsa la pantalla para activar la voz");
     });
-    voice.attach(stream);
   },
   onConnected: () => {
     connected = true;
@@ -136,7 +165,7 @@ const manejadores = {
     }, 1500);
     mostrarAviso("");   // si el intento anterior falló, su aviso ya no aplica
     ui.signal.classList.add("online");
-    ui.connect.textContent = "Finalizar";
+    etiquetar(ui.connect, "Finalizar", "detener");
     ui.connect.disabled = false;
     ui.mute.disabled = false;
   },
@@ -152,11 +181,12 @@ const manejadores = {
     }
     voice.destroy();
     ui.audio.srcObject = null;
+    cerrarRutaDeEco();
     ui.signal.classList.remove("online");
-    ui.connect.textContent = "Iniciar conversación";
+    etiquetar(ui.connect, "Iniciar conversación", "rayo");
     ui.connect.disabled = false;
     ui.mute.disabled = true;
-    ui.mute.textContent = "Silenciar micrófono";
+    etiquetar(ui.mute, "Silenciar micrófono", "mic");
     // Si la sesión cayó por un fallo, se conserva su mensaje: decir «Lista para
     // comenzar» encima lo borraría justo cuando hace falta leerlo.
     setStatus(ultimoFallo?.mensaje || "Lista para comenzar");
@@ -183,8 +213,11 @@ const manejadores = {
   // apagados: son cosas que la persona necesita leer para poder seguir.
   onHelp: mostrarAviso,
   onNota: anotarNota,
-  onTranscript: text => {
+  onTranscript: (text, { correccion = false } = {}) => {
     hayActividad();
+    // Lo que de verdad alcanzó a decir una respuesta interrumpida: reemplaza el
+    // texto del turno anterior, no abre uno nuevo (antes quedaba repetido).
+    if (correccion) return corregirUltimoTurno(text);
     // Texto vacío = la respuesta anterior se cortó (alguien habló encima): lo
     // que alcanzó a decir también forma parte de la reunión.
     if (!text) registrarTurnoDeCatalina({ interrumpida: true });
@@ -306,7 +339,7 @@ async function atenderFallo(error) {
     // El botón vuelve a estar listo para reintentar aunque la sesión no llegue
     // a llamar a onDisconnected (p. ej. si falló antes de conectar del todo).
     connected = false;
-    ui.connect.textContent = "Iniciar conversación";
+    etiquetar(ui.connect, "Iniciar conversación", "rayo");
     ui.connect.disabled = false;
     ui.mute.disabled = true;
     return;
@@ -349,7 +382,7 @@ ui.connect.addEventListener("click", () => {
 });
 ui.mute.addEventListener("click", () => {
   const muted = sesion?.toggleMute();
-  ui.mute.textContent = muted ? "Activar micrófono" : "Silenciar micrófono";
+  etiquetar(ui.mute, muted ? "Activar micrófono" : "Silenciar micrófono", muted ? "mic-off" : "mic");
   setStatus(muted ? "Micrófono silenciado" : "Te escucho");
 });
 ui.meetMode.addEventListener("click", () => abrirDialogoDeReunion());
@@ -743,7 +776,7 @@ async function entrarEnModoMeet(opciones = {}) {
   if (connected && sesion && !sesion.muted) {
     sesion.pausarEnvio(true);
     micCortadoPorMeet = true;
-    ui.mute.textContent = "Activar micrófono";
+    etiquetar(ui.mute, "Activar micrófono", "mic-off");
   }
   escucha.olvidar();
   if (escucha.empezar()) {
@@ -778,7 +811,7 @@ async function salirDeModoMeet() {
   // Sólo se devuelve el micrófono si fue este modo quien lo quitó.
   if (micCortadoPorMeet && sesion?.muted) {
     sesion.pausarEnvio(false);
-    ui.mute.textContent = "Silenciar micrófono";
+    etiquetar(ui.mute, "Silenciar micrófono", "mic");
   }
   micCortadoPorMeet = false;
   setStatus(connected ? "Te escucho" : "Lista para comenzar");
@@ -1067,7 +1100,7 @@ function alternarParticipacion() {
 function activarParticipacion() {
   participacionPendiente = true;
   ui.participar.setAttribute("aria-pressed", "true");
-  ui.participar.textContent = "Catalina participa · detener";
+  etiquetar(ui.participar, "Catalina participa · detener");
   // 1. Lo transcrito hasta ahora queda guardado antes de abrir la conversación.
   reunionActual.estadisticas = { ...escucha.estadisticas };
   reunionActual.participacion ||= [];
@@ -1101,7 +1134,7 @@ function prepararParticipacion() {
   // 3. Micrófono abierto: oye la sala y habla cuando aporta.
   sesion.pausarEnvio(false);
   micCortadoPorMeet = false;
-  ui.mute.textContent = "Silenciar micrófono";
+  etiquetar(ui.mute, "Silenciar micrófono", "mic");
   señalar("Catalina participa · conversa con la sala (P para detener)", "respondiendo");
 }
 
@@ -1109,7 +1142,7 @@ function desactivarParticipacion({ alSalir = false } = {}) {
   participando = false;
   participacionPendiente = false;
   ui.participar.setAttribute("aria-pressed", "false");
-  ui.participar.textContent = "Participar Catalina";
+  etiquetar(ui.participar, "Participar Catalina");
   const tramo = reunionActual?.participacion?.at(-1);
   if (tramo && !tramo.hasta) tramo.hasta = Date.now();
   registrarTurnoDeCatalina({ interrumpida: true });
@@ -1119,7 +1152,7 @@ function desactivarParticipacion({ alSalir = false } = {}) {
   if (connected && sesion && !sesion.muted) {
     sesion.pausarEnvio(true);
     micCortadoPorMeet = true;
-    ui.mute.textContent = "Activar micrófono";
+    etiquetar(ui.mute, "Activar micrófono", "mic-off");
   }
   señalar("Escuchando · Catalina ya no participa (sigue grabando)");
 }
@@ -2069,6 +2102,21 @@ const PREFS = "catalina.vista";
 let verSubtitulos = false;
 let verPanel = false;
 let turnoVivo = null;   // { nodo, texto } del turno que Catalina está diciendo
+let ultimoTurno = null; // el último cerrado: { nodo, texto, cerradoEn }
+
+// Corrección de una respuesta interrumpida: el proveedor dice qué alcanzó a
+// decir. Se reescribe el último turno de Catalina (en pantalla y en el acta de
+// la reunión) en vez de abrir uno nuevo con el mismo texto.
+function corregirUltimoTurno(texto) {
+  const limpio = sinEtiquetas(texto);
+  const objetivo = turnoVivo || (ultimoTurno && Date.now() - ultimoTurno.cerradoEn < 30000 ? ultimoTurno : null);
+  if (objetivo) objetivo.texto.textContent = limpio;
+  const anterior = reunionActual?.catalina?.at(-1);
+  if (anterior && Date.now() - anterior.momento < 120000) {
+    anterior.texto = `${limpio} (interrumpida)`;
+    guardarPronto();
+  }
+}
 let avisoActivo = false;
 
 try {
@@ -2211,7 +2259,10 @@ function cerrarTurno() {
   // Un turno sin texto no deja rastro: pasa cuando la respuesta se interrumpe
   // antes de que llegue el primer delta.
   if (!turnoVivo.texto.textContent.trim()) turnoVivo.nodo.remove();
-  else turnoVivo.nodo.dataset.vivo = "false";
+  else {
+    turnoVivo.nodo.dataset.vivo = "false";
+    ultimoTurno = { ...turnoVivo, cerradoEn: Date.now() };
+  }
   turnoVivo = null;
 }
 
@@ -2309,7 +2360,7 @@ function pintarDocumentos() {
   }
   ui.panelDocs.replaceChildren(...nodos);
   ui.panelDocs.hidden = !nodos.length;
-  ui.insumosMeet.textContent = enModoMeet && lista.length ? `Insumos (${lista.length})` : "Insumos";
+  etiquetar(ui.insumosMeet, enModoMeet && lista.length ? `Insumos (${lista.length})` : "Insumos");
 }
 
 function tarjetaDeDocumento(d, ficha, estado, alQuitar) {
@@ -2501,6 +2552,8 @@ window.catalina = {
   // `catalina.reunion?.continuidad`.
   grabadora,
   vigilia,
+  // true si la voz suena por la ruta con cancelación de eco (audio/eco.js).
+  get eco() { return Boolean(rutaDeEco?.enRuta); },
   get reunion() { return reunionActual; },
   sesiones,
   manejadores,

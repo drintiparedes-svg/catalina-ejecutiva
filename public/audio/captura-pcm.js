@@ -12,10 +12,13 @@
 
 const BLOQUE = 4096;
 
+// El tamaño del bloque se elige al crear el nodo: 4096 para la grabadora (pocos
+// mensajes) y ~20 ms para la conversación (menos espera antes de enviar).
 class CapturaPcm extends AudioWorkletProcessor {
-  constructor() {
+  constructor(opciones) {
     super();
-    this.bloque = new Float32Array(BLOQUE);
+    this.tamano = Math.max(128, Number(opciones?.processorOptions?.bloque) || BLOQUE);
+    this.bloque = new Float32Array(this.tamano);
     this.n = 0;
     this.inicio = 0;
     this.activo = true;
@@ -35,9 +38,9 @@ class CapturaPcm extends AudioWorkletProcessor {
       }
       if (this.n === 0) this.inicio = currentFrame + i;
       this.bloque[this.n++] = valor;
-      if (this.n === BLOQUE) {
+      if (this.n === this.tamano) {
         this.port.postMessage({ muestras: this.bloque, frame: this.inicio }, [this.bloque.buffer]);
-        this.bloque = new Float32Array(BLOQUE);
+        this.bloque = new Float32Array(this.tamano);
         this.n = 0;
       }
     }

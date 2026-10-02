@@ -8,14 +8,32 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <meta name="theme-color" content="#050b12">
   <title>Catalina — Avatar conversacional</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%23050b12'/%3E%3Cpath d='M13.2 2.6 4.6 13.4a.6.6 0 0 0 .47.98H11l-1.2 7.1c-.1.6.66.93 1.04.45l8.6-10.8a.6.6 0 0 0-.47-.98H13l1.2-7.1c.1-.6-.66-.93-1.04-.45Z' fill='none' stroke='%2373f5ff' stroke-width='1.6' stroke-linejoin='round'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+  <!-- Iconografía. Trazo fino (1,6 px), extremos redondeados, retícula de 24:
+       la misma familia visual en todo, con el rayo como marca de Catalina. Se
+       dibujan aquí una vez y cada botón las reutiliza con <use>. -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+    <defs>
+      <symbol id="i-rayo" viewBox="0 0 24 24"><path d="M13.2 2.6 4.6 13.4a.6.6 0 0 0 .47.98H11l-1.2 7.1c-.1.6.66.93 1.04.45l8.6-10.8a.6.6 0 0 0-.47-.98H13l1.2-7.1c.1-.6-.66-.93-1.04-.45Z"/></symbol>
+      <symbol id="i-detener" viewBox="0 0 24 24"><rect x="6.5" y="6.5" width="11" height="11" rx="2.2"/></symbol>
+      <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11.5" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21M9 21h6"/></symbol>
+      <symbol id="i-mic-off" viewBox="0 0 24 24"><path d="M15 9.3V6a3 3 0 0 0-5.7-1.3M9 9v2.5a3 3 0 0 0 4.8 2.4M18.5 11a6.4 6.4 0 0 1-.9 3.3M5.5 11a6.5 6.5 0 0 0 10 5.5M12 17.5V21M9 21h6M3.5 3.5l17 17"/></symbol>
+      <symbol id="i-subtitulos" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M7 12.5h4M13.5 12.5H17M7 15.5h7"/></symbol>
+      <symbol id="i-historial" viewBox="0 0 24 24"><path d="M9 6.5h11M9 12h11M9 17.5h11"/><circle cx="4.75" cy="6.5" r=".9"/><circle cx="4.75" cy="12" r=".9"/><circle cx="4.75" cy="17.5" r=".9"/></symbol>
+      <symbol id="i-reunion" viewBox="0 0 24 24"><rect x="2.75" y="6.5" width="13" height="11" rx="2.2"/><path d="m15.75 10.5 5.5-3.2v9.4l-5.5-3.2"/></symbol>
+      <symbol id="i-actas" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z"/><path d="M14 3v5h5M9 13h6M9 16.5h4"/></symbol>
+      <symbol id="i-clip" viewBox="0 0 24 24"><path d="m20.5 11.2-8.3 8.3a5.2 5.2 0 0 1-7.4-7.4l8.6-8.6a3.5 3.5 0 0 1 4.9 4.9l-8.6 8.6a1.75 1.75 0 0 1-2.5-2.5l7.9-7.9"/></symbol>
+      <symbol id="i-salir" viewBox="0 0 24 24"><path d="M9.5 20.5H6a2 2 0 0 1-2-2v-13a2 2 0 0 1 2-2h3.5M15.5 16.5 20 12l-4.5-4.5M20 12H9.5"/></symbol>
+    </defs>
+  </svg>
   <main class="stage" id="stage">
     <canvas id="avatar" aria-label="Avatar animado de Catalina"></canvas>
     <div class="vignette"></div>
     <section class="identity" aria-live="polite">
-      <span class="signal" id="signal"></span>
+      <svg class="signal" id="signal" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-rayo"/></svg>
       <div>
         <p class="eyebrow">ASISTENTE CONVERSACIONAL</p>
         <h1>Catalina</h1>
@@ -28,7 +46,7 @@
       <header class="panel-head">
         <span class="panel-title">Conversación</span>
         <span class="panel-acciones">
-          <button class="panel-adjuntar" id="adjuntar" title="Sube documentos como insumo para Catalina: PDF, Word, PowerPoint, Excel, imágenes, Markdown, audio… (también puedes arrastrarlos aquí)">Adjuntar</button>
+          <button class="panel-adjuntar" id="adjuntar" title="Sube documentos como insumo para Catalina: PDF, Word, PowerPoint, Excel, imágenes, Markdown, audio… (también puedes arrastrarlos aquí)"><svg class="ico" aria-hidden="true"><use href="#i-clip"/></svg><span class="etq">Adjuntar</span></button>
           <button class="panel-close" id="panelClose" aria-label="Cerrar el historial">&minus;</button>
         </span>
       </header>
@@ -61,12 +79,12 @@
     </aside>
 
     <nav class="controls" aria-label="Controles">
-      <button class="primary" id="connect">Iniciar conversación</button>
-      <button id="mute" disabled>Silenciar micrófono</button>
-      <button id="toggleCaption" aria-pressed="false" title="Muestra lo que dice Catalina sobre el vídeo">Subtítulos</button>
-      <button id="togglePanel" aria-pressed="false" title="Abre el historial de la conversación">Historial</button>
-      <button id="meetMode" title="Empieza a escuchar y transcribir una reunión; oculta los controles para capturar la ventana">Modo Meet</button>
-      <a class="boton-enlace" href="minuta.html" target="_blank" rel="noopener" title="Abre las reuniones que Catalina escuchó en Modo Meet: genera su acta (minuta lean) y expórtala a PDF, HTML, Markdown o correo">Actas</a>
+      <button class="primary" id="connect"><svg class="ico" aria-hidden="true"><use href="#i-rayo"/></svg><span class="etq">Iniciar conversación</span></button>
+      <button id="mute" disabled><svg class="ico" aria-hidden="true"><use href="#i-mic"/></svg><span class="etq">Silenciar micrófono</span></button>
+      <button id="toggleCaption" aria-pressed="false" aria-label="Subtítulos" title="Muestra lo que dice Catalina sobre el vídeo"><svg class="ico" aria-hidden="true"><use href="#i-subtitulos"/></svg><span class="etq">Subtítulos</span></button>
+      <button id="togglePanel" aria-pressed="false" aria-label="Historial" title="Abre el historial de la conversación"><svg class="ico" aria-hidden="true"><use href="#i-historial"/></svg><span class="etq">Historial</span></button>
+      <button id="meetMode" aria-label="Modo Meet" title="Empieza a escuchar y transcribir una reunión; oculta los controles para capturar la ventana"><svg class="ico" aria-hidden="true"><use href="#i-reunion"/></svg><span class="etq">Modo Meet</span></button>
+      <a class="boton-enlace" href="minuta.html" target="_blank" rel="noopener" title="Abre las reuniones que Catalina escuchó en Modo Meet: genera su acta (minuta lean) y expórtala a PDF, HTML, Markdown o correo"><svg class="ico" aria-hidden="true"><use href="#i-actas"/></svg><span class="etq">Actas</span></a>
     </nav>
     <!-- Señal de escucha del modo reunión. Es lo único que se ve en ese modo
          aparte de la cara: sin ella no hay forma de saber si está oyendo. -->
@@ -78,12 +96,12 @@
     <!-- Participación de Catalina: por defecto escucha en silencio y contesta
          sólo si la llaman por su nombre. Con este botón (o la tecla P) pasa a
          conversar con la sala, con lo transcrito hasta ahora como memoria. -->
-    <button class="participar" id="participar" aria-pressed="false" title="Catalina guarda lo transcrito, lo usa como memoria y entra a conversar: sintetiza, aporta literatura, detecta vacíos, propone acuerdos y pregunta lo que nadie preguntó. La reunión sigue grabándose al desactivarlo. Tecla P.">Participar Catalina</button>
-    <button class="insumos-meet" id="insumosMeet" title="Sube documentos como insumo de la reunión (cualquier formato). Catalina los usa como antecedente y van al acta. También puedes arrastrarlos a la pantalla.">Insumos</button>
+    <button class="participar" id="participar" aria-pressed="false" title="Catalina guarda lo transcrito, lo usa como memoria y entra a conversar: sintetiza, aporta literatura, detecta vacíos, propone acuerdos y pregunta lo que nadie preguntó. La reunión sigue grabándose al desactivarlo. Tecla P."><svg class="ico" aria-hidden="true"><use href="#i-rayo"/></svg><span class="etq">Participar Catalina</span></button>
+    <button class="insumos-meet" id="insumosMeet" title="Sube documentos como insumo de la reunión (cualquier formato). Catalina los usa como antecedente y van al acta. También puedes arrastrarlos a la pantalla."><svg class="ico" aria-hidden="true"><use href="#i-clip"/></svg><span class="etq">Insumos</span></button>
     <input type="file" id="archivos" multiple hidden>
     <!-- Zona para soltar archivos: aparece al arrastrar sobre la ventana. -->
     <div class="soltar" id="soltar" hidden><p>Suelta los archivos para aportarlos como insumo</p></div>
-    <button class="exit-meet" id="exitMeet" aria-label="Terminar la reunión y salir del modo Meet">Terminar reunión</button>
+    <button class="exit-meet" id="exitMeet" aria-label="Terminar la reunión y salir del modo Meet"><svg class="ico" aria-hidden="true"><use href="#i-salir"/></svg><span class="etq">Terminar reunión</span></button>
 
     <!-- Aviso al terminar una reunión: quedó guardada y desde aquí se abre la
          acta. Sin esto, la transcripción existía pero no había camino a ella. -->
@@ -151,6 +169,6 @@
     </dialog>
   </main>
   <audio id="remoteAudio" autoplay></audio>
-  <script type="module" src="app.js?v=33"></script>
+  <script type="module" src="app.js?v=34"></script>
 </body>
 </html>

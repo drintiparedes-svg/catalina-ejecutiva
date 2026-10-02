@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <meta name="theme-color" content="#050b12">
   <title>Actas de reunión — Catalina</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%23050b12'/%3E%3Cpath d='M13.2 2.6 4.6 13.4a.6.6 0 0 0 .47.98H11l-1.2 7.1c-.1.6.66.93 1.04.45l8.6-10.8a.6.6 0 0 0-.47-.98H13l1.2-7.1c.1-.6-.66-.93-1.04-.45Z' fill='none' stroke='%2373f5ff' stroke-width='1.6' stroke-linejoin='round'/%3E%3C/svg%3E">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -40,6 +41,8 @@
     select option { background: #0a1622; }
     input:focus, select:focus, textarea:focus { outline: 2px solid rgba(109,228,255,.45); outline-offset: 1px; }
     label { display: flex; flex-direction: column; gap: 5px; color: var(--etiqueta); font-size: 12px; font-weight: 600; }
+    .marca { display: flex; align-items: center; gap: 7px; }
+    .rayo { width: 13px; height: 13px; fill: rgba(115,245,255,.18); stroke: #73f5ff; stroke-width: 1.6; stroke-linejoin: round; filter: drop-shadow(0 0 4px rgba(115,245,255,.5)); }
     .eyebrow { margin: 0; color: var(--etiqueta); font-size: 10px; font-weight: 700; letter-spacing: .22em; text-transform: uppercase; }
 
     .cabecera { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 26px clamp(16px, 3vw, 36px) 8px; }
@@ -113,7 +116,7 @@
 <body>
   <header class="cabecera">
     <div>
-      <p class="eyebrow">CATALINA · ACTAS DE REUNIÓN</p>
+      <p class="eyebrow marca"><svg class="rayo" viewBox="0 0 24 24" aria-hidden="true"><path d="M13.2 2.6 4.6 13.4a.6.6 0 0 0 .47.98H11l-1.2 7.1c-.1.6.66.93 1.04.45l8.6-10.8a.6.6 0 0 0-.47-.98H13l1.2-7.1c.1-.6-.66-.93-1.04-.45Z"/></svg>CATALINA · ACTAS DE REUNIÓN</p>
       <h1>Actas</h1>
       <p class="explica">Aquí quedan las reuniones que Catalina escuchó en <strong>Modo Meet</strong>. Elige una reunión, completa sus datos, genera su <strong>acta</strong> (one pager + documento completo en el formato de su tipo: creativa, ejecutiva, operacional o académica) y expórtala a PDF, HTML, Markdown o correo.</p>
     </div>

@@ -236,6 +236,20 @@ npm run check
 Desde la consola del navegador, `catalina.director.setState("speaking")` fuerza
 un estado para inspeccionar la actuación.
 
+## Conversación presencial (sin audífonos)
+
+- **Eco.** La voz de Catalina se cancela del micrófono para que no se
+  interrumpa a sí misma. Se usa la cancelación de todo el sistema de Chrome
+  141+ (`echoCancellation: "all"`) y, si no está, una ruta WebRTC local que la
+  hace visible al cancelador.
+- **Micrófono.** Se capta en el hilo de audio, en bloques de 20 ms, con un
+  filtro anti-aliasing al bajar a 16 kHz.
+- **Interrupciones.** El audio y el texto de una respuesta interrumpida no se
+  repiten, y la corrección reemplaza el turno en el historial.
+
+Diagnóstico, mediciones y propuestas de latencia en
+[`docs/voz-en-conversacion-presencial.md`](docs/voz-en-conversacion-presencial.md).
+
 ## Subtítulos e historial
 
 Los dos nacen **apagados**: leer lo mismo que se está oyendo compite con la
