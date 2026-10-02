@@ -298,6 +298,16 @@ cambian en el administrador (Modelos → GPT-Live + Claude). Prueba sin red:
 
 Costo: USD 0,05 por minuto de voz más los tokens de Claude de cada delegación.
 
+**Ajustes (ícono de engranaje en la barra de controles).** Muestra qué voz y
+qué modelos están en uso, permite elegir el proveedor de voz y la voz de
+GPT-Live (se aplica recargando con `?voz=…&vozLive=…`, sin guardar nada), lista
+los modelos configurados y, con GPT-Live + Claude, el consumo en vivo: minutos
+de voz (los que informa OpenAI en `session.usage.updated`), tokens de Claude
+por tipo (entrada, salida, caché) y el costo estimado. Las tarifas están en
+`config.mjs` → `precios`, con su fuente; son referenciales y la factura real es
+la de cada proveedor. Para las demás voces se muestra la duración, no un costo
+inventado.
+
 ## Administrador
 
 En **`/admin.html`**. Cinco secciones: el banco de pruebas embebido, el

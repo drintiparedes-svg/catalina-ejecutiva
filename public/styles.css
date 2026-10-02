@@ -213,11 +213,15 @@ button.primary { border-color: rgba(109,228,255,.45); background: linear-gradien
      debajo. */
   .controls {
     left: 12px; right: 12px; transform: none; width: auto; max-width: none;
-    display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px;
+    display: grid; grid-template-columns: repeat(12, 1fr); gap: 8px;
     bottom: calc(12px + env(safe-area-inset-bottom));
   }
-  #connect, #mute { grid-column: span 3; }
-  #toggleCaption, #togglePanel, #meetMode { grid-column: span 2; }
+  /* Doce columnas para que el engranaje de ajustes quepa en la segunda fila
+     sin abrir una tercera. */
+  #connect, #mute { grid-column: span 6; }
+  #toggleCaption, #togglePanel { grid-column: span 3; }
+  #meetMode { grid-column: span 4; }
+  #abrirAjustes { grid-column: span 2; min-width: 0; }
   button { padding: 0 8px; font-size: 13px; white-space: nowrap; }
 
   /* El panel no cabe al lado: ocupa el ancho completo por encima de los
@@ -350,3 +354,31 @@ button.primary { border-color: rgba(109,228,255,.45); background: linear-gradien
 .guia-meet ol { margin: 0; padding-left: 20px; }
 .guia-meet .reunion-aviso-cerrar { position: absolute; top: 8px; right: 8px; }
 .reunion-ayuda.aviso { color: #FFB340; }
+
+/* Ajustes. Reusa la caja del diálogo de reunión; aquí sólo lo propio. */
+.boton-icono { display: inline-flex; align-items: center; justify-content: center; min-width: 42px; padding: 0 11px; }
+.ajustes-cuerpo { display: flex; flex-direction: column; gap: 16px; padding: 18px 22px 20px; overflow-y: auto; max-height: calc(100dvh - 34px); }
+.ajustes-cabecera { display: flex; align-items: center; justify-content: space-between; }
+.ajustes h2 { margin: 0; font-size: 20px; font-weight: 520; letter-spacing: -.01em; }
+.ajustes h3 { margin: 0 0 8px; color: #a9d8ec; font-size: 11px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+.ajustes section { display: flex; flex-direction: column; gap: 9px; padding: 12px 13px; border: 1px solid rgba(184,226,246,.16); border-radius: 12px; }
+.ajustes section h3 { margin-bottom: 0; }
+.ajustes select {
+  width: 100%; padding: 9px 11px; border: 1px solid rgba(184,226,246,.2); border-radius: 10px;
+  background: rgba(10,24,36,.95); color: #f4fbff; font: inherit; font-size: 14px; font-weight: 400;
+}
+.ajustes a { color: #8fe3ff; }
+.ajustes-datos { display: grid; grid-template-columns: minmax(120px, auto) 1fr; gap: 6px 14px; margin: 0; font-size: 13px; }
+.ajustes-datos dt { color: rgba(209,229,239,.66); }
+.ajustes-datos dd { margin: 0; color: #f4fbff; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.ajustes-datos .total { font-weight: 650; color: #d6f6ff; }
+.ajustes-tabla { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.ajustes-tabla th, .ajustes-tabla td { padding: 6px 6px; border-bottom: 1px solid rgba(184,226,246,.1); text-align: left; vertical-align: top; overflow-wrap: break-word; }
+.ajustes-tabla td:last-child, .ajustes-tabla th:last-child { white-space: nowrap; }
+.ajustes-tabla th { color: rgba(209,229,239,.66); font-weight: 600; }
+.ajustes-tabla tr.activo td { color: #d6f6ff; background: rgba(109,228,255,.08); }
+@media (max-width: 520px) {
+  .ajustes-cuerpo { padding: 14px 14px 16px; }
+  .ajustes-datos { grid-template-columns: 1fr; gap: 2px; }
+  .ajustes-datos dd { margin-bottom: 6px; }
+}

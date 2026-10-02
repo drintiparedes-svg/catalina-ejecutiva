@@ -279,6 +279,49 @@ await caso("si Claude falla, la voz recibe un aviso y no queda esperando", async
   assert.match(respuesta.content, /clave de Claude/);
 });
 
+await caso("/ajustes expone modelos, voces y precios sin claves", async () => {
+  const r = await fetchReal(base + "/ajustes").then(r => r.json());
+  assert.equal(r.modelos.live.modelo, "gpt-live-1");
+  assert.equal(r.modelos.live.razonamiento, "claude-sonnet-5-5");
+  assert.equal(r.vocesLive.length, 22);
+  assert.equal(r.precios.gptLive.usdPorMinuto, 0.05);
+  assert.equal(r.precios.claude["claude-sonnet-5-5"].salida, 10);
+  const texto = JSON.stringify(r);
+  assert.ok(!texto.includes(process.env.OPENAI_API_KEY) && !texto.includes(process.env.ANTHROPIC_API_KEY));
+});
+
+await caso("costo de Claude: tokens × tarifa por millón, y null sin tarifa", async () => {
+  const { costoDeClaude } = await import("../razonamiento.mjs");
+  const precio = { entrada: 2, salida: 10, lecturaCache: 0.2, escrituraCache: 2.5 };
+  // 10.000 entrada (0,02) + 1.000 salida (0,01) + 100.000 caché leída (0,02) + 4.000 escrita (0,01)
+  assert.equal(costoDeClaude({ entrada: 10000, salida: 1000, lecturaCache: 100000, escrituraCache: 4000 }, precio), 0.06);
+  assert.equal(costoDeClaude({ entrada: 1 }, undefined), null);
+});
+
+await caso("/live/razonar devuelve uso y costo; la sesión los acumula", async () => {
+  respuestasClaude = [{ ...mensajeClaude([{ type: "text", text: "Hola." }], "end_turn"),
+    usage: { input_tokens: 1000, output_tokens: 200, cache_read_input_tokens: 5000, cache_creation_input_tokens: 0 } }];
+  const enviados = [];
+  const sesion = new LiveSession({});
+  sesion.channel = { readyState: "open", send: t => enviados.push(JSON.parse(t)), close() {} };
+  const fetchSimulado = globalThis.fetch;
+  globalThis.fetch = (url, o) => fetchSimulado(String(url).startsWith("/") ? base + url : url, o);
+  sesion.alRecibirEvento({ data: JSON.stringify({ type: "session.started" }) });
+  sesion.alRecibirEvento({ data: JSON.stringify({ type: "session.usage.updated", usage: { seconds: 90 } }) });
+  sesion.alRecibirEvento({ data: JSON.stringify({ type: "session.delegation.created", delegation: { id: "d", target: "client" } }) });
+  await new Promise(r => setTimeout(r, 400));
+  await sesion.cola;
+  globalThis.fetch = fetchSimulado;
+  const c = sesion.consumo();
+  assert.equal(c.segundosVoz, 90);
+  assert.equal(c.segundosMedidosPorOpenAI, true);
+  assert.equal(c.claude.pasos, 1);
+  assert.equal(c.claude.entrada, 1000);
+  assert.equal(c.claude.lecturaCache, 5000);
+  // 1000×2 + 200×10 + 5000×0,2 = 5000 → USD 0,005
+  assert.equal(Math.round(c.claude.usd * 1e6) / 1e6, 0.005);
+});
+
 servidor.close();
 console.log(fallos ? `\n${fallos} prueba(s) fallaron` : "\nTodo en orden");
 process.exit(fallos ? 1 : 0);

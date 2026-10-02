@@ -98,6 +98,7 @@ const manejadores = {
   },
   onConnected: () => {
     connected = true;
+    conexion = { proveedor, inicio: Date.now(), fin: null };
     ultimoFallo = null;
     hayActividad();
     calentarUbicacion();   // deja lista la zona antes de que nadie pregunte
@@ -126,6 +127,7 @@ const manejadores = {
   },
   onDisconnected: () => {
     connected = false;
+    cerrarConsumoDeConexion();
     pararRelojes();
     // El historial se conserva: sirve para releer lo dicho al terminar. Lo que
     // se va es el subtítulo, que sólo tiene sentido mientras Catalina habla.
@@ -2044,6 +2046,244 @@ fetch("/health")
     disponible.live = Boolean(estado.proveedores?.live);
   })
   .catch(() => {});
+
+// Ajustes.
+//
+// Un panel para saber con qué se está hablando —proveedor, modelos, voz— y
+// cuánto lleva la sesión. Elegir otra voz no guarda nada: se recarga con la
+// voz en la dirección (?voz=…&vozLive=…), igual que al probar a mano.
+const NOMBRES_DE_VOZ = {
+  live: "GPT-Live + Claude",
+  elevenlabs: "ElevenLabs (agente)",
+  gemini: "Gemini Live",
+  openai: "OpenAI Realtime"
+};
+const aj = {
+  dialogo: document.querySelector("#ajustes"),
+  abrir: document.querySelector("#abrirAjustes"),
+  cerrar: document.querySelector("#ajustesCerrar"),
+  enUso: document.querySelector("#ajustesEnUso"),
+  proveedor: document.querySelector("#ajustesProveedor"),
+  vozLive: document.querySelector("#ajustesVozLive"),
+  vozLiveFila: document.querySelector("#ajustesVozLiveFila"),
+  direccion: document.querySelector("#ajustesDireccion"),
+  aplicar: document.querySelector("#ajustesAplicar"),
+  consumo: document.querySelector("#ajustesConsumo"),
+  consumoNota: document.querySelector("#ajustesConsumoNota"),
+  modelos: document.querySelector("#ajustesModelos"),
+  precios: document.querySelector("#ajustesPrecios")
+};
+let conexion = null;            // la conversación en curso o la última
+let ajustesServidor = null;     // lo que devuelve /ajustes
+let relojAjustes = null;
+// Lo gastado en conversaciones anteriores de esta pestaña (sólo lo medible).
+const acumulado = { usd: 0, sesiones: 0 };
+
+function cerrarConsumoDeConexion() {
+  if (!conexion || conexion.fin) return;
+  conexion.fin = Date.now();
+  const c = costoDeConexion();
+  if (c?.total != null) {
+    acumulado.usd += c.total;
+    acumulado.sesiones += 1;
+  }
+}
+
+function vozLiveEnUso() {
+  const pedida = new URLSearchParams(location.search).get("vozLive");
+  const voces = ajustesServidor?.vocesLive || [];
+  return voces.includes(pedida) ? pedida : ajustesServidor?.modelos?.live?.voz || "marin";
+}
+
+// Costo de la conversación en curso (o la última). Sólo GPT-Live + Claude se
+// mide; para las demás voces se devuelve null en vez de un número inventado.
+function costoDeConexion() {
+  if (!conexion || conexion.proveedor !== "live") return null;
+  const datos = sesiones.live.consumo?.();
+  if (!datos) return null;
+  const porMinuto = ajustesServidor?.precios?.gptLive?.usdPorMinuto;
+  const voz = Number.isFinite(porMinuto) ? datos.segundosVoz / 60 * porMinuto : null;
+  const claude = datos.claude.sinPrecio ? null : datos.claude.usd;
+  return { datos, voz, claude, total: voz != null && claude != null ? voz + claude : null };
+}
+
+function usd(valor) {
+  if (valor == null) return "sin precio configurado";
+  return "USD " + (valor < 0.01 ? valor.toFixed(4) : valor.toFixed(3));
+}
+
+function duracionTexto(segundos) {
+  const s = Math.max(0, Math.round(segundos));
+  return `${Math.floor(s / 60)} min ${String(s % 60).padStart(2, "0")} s`;
+}
+
+function miles(n) {
+  return Number(n || 0).toLocaleString("es-CL");
+}
+
+function pintarDatos(dl, pares) {
+  dl.replaceChildren(...pares.flatMap(([etiqueta, valor, clase]) => {
+    const dt = document.createElement("dt");
+    dt.textContent = etiqueta;
+    const dd = document.createElement("dd");
+    dd.textContent = valor;
+    if (clase) dd.className = clase;
+    return [dt, dd];
+  }));
+}
+
+function describirVoz(nombre) {
+  const m = ajustesServidor?.modelos || {};
+  if (nombre === "live") return {
+    modelo: m.live?.modelo || "gpt-live-1",
+    voz: vozLiveEnUso(),
+    razonamiento: `${m.live?.razonamiento || "claude-sonnet-5-5"} (esfuerzo ${m.live?.esfuerzo || "low"})`
+  };
+  if (nombre === "openai") return { modelo: m.openai?.modelo || "—", voz: m.openai?.voz || "—", razonamiento: "el mismo modelo de voz" };
+  if (nombre === "gemini") return { modelo: m.gemini?.modelo || "—", voz: m.gemini?.voz || "—", razonamiento: "el mismo modelo de voz" };
+  if (nombre === "elevenlabs") return { modelo: "agente de ElevenLabs (se define en su panel)", voz: m.elevenlabs?.voz || "la del agente", razonamiento: "el LLM configurado en el agente" };
+  return null;
+}
+
+function pintarEnUso() {
+  const activa = connected ? proveedor : null;
+  const prevista = activa || proveedoresUtiles()[0] || null;
+  const d = describirVoz(prevista);
+  pintarDatos(aj.enUso, [
+    ["Estado", connected ? "Conversación activa" : "Sin conversación"],
+    [connected ? "Proveedor" : "Proveedor al iniciar", prevista ? NOMBRES_DE_VOZ[prevista] : "ninguno disponible"],
+    ...(d ? [["Modelo de voz", d.modelo], ["Voz", d.voz], ["Razonamiento", d.razonamiento]] : []),
+    ["Modo", vozDePrueba ? `prueba (?voz=${vozDePrueba}), sin relevo` : "automático, con relevo"],
+    ["Versión", ajustesServidor?.version || "—"]
+  ]);
+}
+
+function pintarConsumo() {
+  if (!conexion) {
+    pintarDatos(aj.consumo, [["Duración", "—"]]);
+    aj.consumoNota.textContent = "Inicia una conversación para medir su consumo.";
+    return;
+  }
+  const segundos = ((conexion.fin || Date.now()) - conexion.inicio) / 1000;
+  const c = costoDeConexion();
+  if (!c) {
+    pintarDatos(aj.consumo, [
+      ["Proveedor", NOMBRES_DE_VOZ[conexion.proveedor] || conexion.proveedor],
+      ["Duración", duracionTexto(segundos)]
+    ]);
+    aj.consumoNota.textContent = "El costo en tokens se mide por ahora sólo con GPT-Live + Claude. Para esta voz, revisa el panel de facturación del proveedor.";
+    return;
+  }
+  const { datos, voz, claude, total } = c;
+  const k = datos.claude;
+  pintarDatos(aj.consumo, [
+    ["Duración", duracionTexto(segundos)],
+    ["Voz GPT-Live", `${(datos.segundosVoz / 60).toFixed(1)} min · ${usd(voz)}`],
+    ["Consultas a Claude", `${miles(datos.delegaciones)} delegaciones · ${miles(k.pasos)} pasos`],
+    ["Tokens Claude", `entrada ${miles(k.entrada)} · salida ${miles(k.salida)} · caché ${miles(k.lecturaCache)} leídos, ${miles(k.escrituraCache)} escritos`],
+    ["Costo Claude", usd(claude)],
+    ["Total estimado", usd(total), "total"],
+    ...(acumulado.sesiones ? [["Antes en esta pestaña", `${usd(acumulado.usd)} (${acumulado.sesiones} conversación${acumulado.sesiones === 1 ? "" : "es"})`]] : [])
+  ]);
+  aj.consumoNota.textContent = (datos.segundosMedidosPorOpenAI
+    ? "Minutos de voz informados por OpenAI. "
+    : "Minutos de voz según el reloj (OpenAI aún no informa los suyos). ")
+    + "Estimación referencial con la tabla de precios del servidor; la factura real es la de cada proveedor.";
+}
+
+function pintarModelos() {
+  const m = ajustesServidor?.modelos || {};
+  const filas = [["Proveedor", "Modelo", "Voz", "Estado"]];
+  for (const nombre of ["live", "elevenlabs", "gemini", "openai"]) {
+    const d = describirVoz(nombre) || {};
+    const modelo = nombre === "live" ? `${d.modelo} + ${m.live?.razonamiento || "claude-sonnet-5-5"}` : d.modelo;
+    filas.push([NOMBRES_DE_VOZ[nombre], modelo || "—", d.voz || "—", disponible[nombre] ? "disponible" : "sin clave", nombre]);
+  }
+  aj.modelos.replaceChildren(...filas.map((fila, i) => {
+    const tr = document.createElement("tr");
+    if (i && connected && fila[4] === proveedor) tr.className = "activo";
+    for (const celda of fila.slice(0, 4)) {
+      const td = document.createElement(i ? "td" : "th");
+      td.textContent = celda;
+      tr.append(td);
+    }
+    return tr;
+  }));
+  const p = ajustesServidor?.precios || {};
+  const claude = Object.entries(p.claude || {}).filter(([, v]) => typeof v === "object")
+    .map(([modelo, v]) => `${modelo}: USD ${v.entrada} entrada / ${v.salida} salida por millón`).join("; ");
+  aj.precios.textContent = [
+    p.gptLive ? `GPT-Live: USD ${p.gptLive.usdPorMinuto} por minuto (${p.gptLive.fuente}).` : "",
+    claude ? `Claude — ${claude}. ${p.claude.fuente || ""}` : ""
+  ].filter(Boolean).join(" ");
+}
+
+function pintarSelectores() {
+  const actual = vozDePrueba || "auto";
+  const opciones = [["auto", "Automático (ElevenLabs → Gemini → OpenAI)"], ...Object.entries(NOMBRES_DE_VOZ)];
+  aj.proveedor.replaceChildren(...opciones.map(([valor, texto]) => {
+    const op = new Option(valor === "auto" || disponible[valor] ? texto : `${texto} — sin clave en el servidor`, valor);
+    op.disabled = valor !== "auto" && !disponible[valor];
+    op.selected = valor === actual;
+    return op;
+  }));
+  const voces = ajustesServidor?.vocesLive || [vozLiveEnUso()];
+  aj.vozLive.replaceChildren(...voces.map(v => {
+    const op = new Option(v, v);
+    op.selected = v === vozLiveEnUso();
+    return op;
+  }));
+  actualizarDireccion();
+}
+
+function direccionElegida() {
+  const url = new URL(location.href);
+  const elegido = aj.proveedor.value;
+  if (elegido === "auto") url.searchParams.delete("voz");
+  else url.searchParams.set("voz", elegido);
+  if (elegido === "live" && aj.vozLive.value !== (ajustesServidor?.modelos?.live?.voz || "marin")) {
+    url.searchParams.set("vozLive", aj.vozLive.value);
+  } else {
+    url.searchParams.delete("vozLive");
+  }
+  return url;
+}
+
+function actualizarDireccion() {
+  aj.vozLiveFila.hidden = aj.proveedor.value !== "live";
+  const url = direccionElegida();
+  aj.direccion.textContent = url.pathname + url.search;
+  aj.aplicar.disabled = url.href === location.href;
+}
+
+async function abrirAjustes() {
+  try {
+    ajustesServidor = await fetch("/ajustes").then(r => r.json());
+  } catch {
+    ajustesServidor ??= null;
+  }
+  pintarSelectores();
+  pintarModelos();
+  pintarEnUso();
+  pintarConsumo();
+  if (!aj.dialogo.open) aj.dialogo.showModal();
+  clearInterval(relojAjustes);
+  relojAjustes = setInterval(() => {
+    if (!aj.dialogo.open) return clearInterval(relojAjustes);
+    pintarEnUso();
+    pintarConsumo();
+  }, 1000);
+}
+
+aj.abrir.addEventListener("click", abrirAjustes);
+aj.cerrar.addEventListener("click", () => aj.dialogo.close());
+aj.dialogo.addEventListener("close", () => clearInterval(relojAjustes));
+aj.proveedor.addEventListener("change", actualizarDireccion);
+aj.vozLive.addEventListener("change", actualizarDireccion);
+aj.aplicar.addEventListener("click", () => {
+  if (connected && !confirm("Cambiar de voz termina la conversación en curso. ¿Continuar?")) return;
+  location.assign(direccionElegida().href);
+});
 
 // Va después de fijar la vista: el aviso necesita que el estado ya exista, y
 // además debe poder pasar por encima de unos subtítulos apagados.

@@ -122,6 +122,19 @@ export const CONFIG_POR_DEFECTO = {
   // razonable; si crece mucho habrá que pasar a recuperar por embeddings.
   conocimiento: [],
 
+  // Precios para estimar el costo de la sesión en el panel de ajustes (USD).
+  // Son referenciales: cambian sin aviso y la factura real es la del proveedor.
+  // Fuente y fecha van junto a cada uno para saber cuándo revisarlos.
+  precios: {
+    gptLive: { usdPorMinuto: 0.05, fuente: "Anuncio de GPT-Live-1 (sep. 2026), según prensa especializada; verificar en openai.com/pricing" },
+    claude: {
+      "claude-sonnet-5-5": { entrada: 2, salida: 10, lecturaCache: 0.2, escrituraCache: 2.5 },
+      "claude-opus-5-5": { entrada: 4, salida: 20, lecturaCache: 0.2, escrituraCache: 5 },
+      "claude-haiku-4-5": { entrada: 1, salida: 5, lecturaCache: 0.1, escrituraCache: 1.25 },
+      fuente: "Tarifas de la API de Anthropic por millón de tokens (sep. 2026); la escritura en caché es 1,25 × la entrada"
+    }
+  },
+
   modelos: {
     openai: { modelo: "gpt-realtime-2.1", voz: "marin" },
     gemini: { modelo: "models/gemini-3.1-flash-live-preview", voz: "Kore", idioma: "es-US" },

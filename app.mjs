@@ -19,13 +19,14 @@ import {
   estadoReuniones, clavePropiaDe, transcribirTramo, generarMinuta, correoDeMinuta, adjuntosSeguros, promptManual
 } from "./reunion.mjs";
 import {
-  sesionDeVoz, vozValida, instruccionesDeRazonamiento, herramientasParaClaude, historiaValida, pasoDeRazonamiento
+  sesionDeVoz, vozValida, instruccionesDeRazonamiento, herramientasParaClaude, historiaValida, pasoDeRazonamiento,
+  costoDeClaude, VOCES_LIVE
 } from "./razonamiento.mjs";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // Se sube a mano con cada arreglo que el usuario tiene que descargar.
-export const VERSION = "2026-10-01.1";
+export const VERSION = "2026-10-02.1";
 
 const root = fileURLToPath(new URL("./public", import.meta.url));
 // El .env se lee de forma síncrona a propósito. Con `await` aquí arriba, en el
@@ -94,6 +95,25 @@ export async function atender(req, res) {
 
     if (req.method === "POST" && req.url === "/session") {
       return await createRealtimeSession(req, res);
+    }
+
+    // Lo que muestra el panel de ajustes: modelos y voces configurados y la
+    // tabla de precios. Nada secreto: ni claves ni direcciones de conectores.
+    if (req.method === "GET" && req.url === "/ajustes") {
+      const config = await cargarConfig();
+      const m = config.modelos || {};
+      return json(res, 200, {
+        ok: true,
+        version: VERSION,
+        modelos: {
+          live: { voz: m.live?.voz, modelo: m.live?.modelo, razonamiento: m.live?.razonamiento, esfuerzo: m.live?.esfuerzo },
+          openai: { modelo: m.openai?.modelo, voz: m.openai?.voz },
+          gemini: { modelo: m.gemini?.modelo, voz: m.gemini?.voz, idioma: m.gemini?.idioma },
+          elevenlabs: { voz: m.elevenlabs?.voz || "la del agente", idioma: m.elevenlabs?.idioma }
+        },
+        vocesLive: VOCES_LIVE,
+        precios: config.precios || {}
+      });
     }
 
     if (req.method === "POST" && (req.url === "/live/session" || req.url.startsWith("/live/session?"))) {
@@ -930,6 +950,10 @@ async function razonarParaLive(req, res) {
     mensajes: pedido.mensajes
   });
   if (!resultado.ok) return json(res, resultado.estado || 502, resultado);
+  // El costo se calcula aquí, con la tabla de precios del servidor, para que el
+  // panel de ajustes muestre lo que lleva la sesión.
+  const modeloUsado = String(resultado.modelo || ajustes.razonamiento || "").replace(/-\d{8}$/, "");
+  resultado.costoUSD = costoDeClaude(resultado.uso, config.precios?.claude?.[modeloUsado]);
   return json(res, 200, resultado);
 }
 

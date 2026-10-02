@@ -57,6 +57,11 @@ export class LiveSession extends RealtimeSession {
     this.cola = Promise.resolve();
     this.delegaciones = 0;
     this.fallosDeRazonamiento = 0;
+    // Consumo de esta sesión, para el panel de ajustes.
+    this.inicioSesion = null;
+    this.finSesion = null;
+    this.segundosVoz = null;   // lo que informa OpenAI (session.usage.updated)
+    this.claude = { pasos: 0, entrada: 0, salida: 0, lecturaCache: 0, escrituraCache: 0, usd: 0, sinPrecio: false };
     clearTimeout(this.relojTurno);
   }
 
@@ -83,6 +88,7 @@ export class LiveSession extends RealtimeSession {
       case "session.started":
         this.iniciada = true;
         this.connected = true;
+        this.inicioSesion = Date.now();
         this.emitir("onConnected");
         this.emitir("onPhase", "listening");
         this.emitir("onStatus", "Te escucho (GPT-Live + Claude)");
@@ -99,6 +105,10 @@ export class LiveSession extends RealtimeSession {
 
       case "session.delegation.created":
         if (evento.delegation?.target === "client") this.#recibirDelegacion(evento.delegation.id);
+        break;
+
+      case "session.usage.updated":
+        if (Number.isFinite(evento.usage?.seconds)) this.segundosVoz = evento.usage.seconds;
         break;
 
       case "session.closed":
@@ -239,7 +249,28 @@ export class LiveSession extends RealtimeSession {
       }
       throw error;
     }
+    this.#sumarConsumo(datos);
     return datos;
+  }
+
+  #sumarConsumo({ uso, costoUSD }) {
+    const c = this.claude;
+    c.pasos += 1;
+    for (const clave of ["entrada", "salida", "lecturaCache", "escrituraCache"]) c[clave] += uso?.[clave] || 0;
+    if (Number.isFinite(costoUSD)) c.usd += costoUSD;
+    else c.sinPrecio = true;
+  }
+
+  // Lo que lleva la sesión: segundos de voz (los de OpenAI si ya llegaron; si
+  // no, el reloj desde que empezó) y tokens y costo de Claude.
+  consumo() {
+    const reloj = this.inicioSesion ? ((this.finSesion || Date.now()) - this.inicioSesion) / 1000 : 0;
+    return {
+      segundosVoz: this.segundosVoz ?? reloj,
+      segundosMedidosPorOpenAI: this.segundosVoz != null,
+      delegaciones: this.delegaciones,
+      claude: { ...this.claude }
+    };
   }
 
   async #ejecutar(llamada) {
@@ -309,6 +340,7 @@ export class LiveSession extends RealtimeSession {
   disconnect() {
     // Cierre ordenado: OpenAI termina lo pendiente y cobra sólo hasta aquí.
     if (this.iniciada) this.#enviar({ type: "session.close" });
+    if (this.inicioSesion && !this.finSesion) this.finSesion = Date.now();
     this.iniciada = false;
     clearTimeout(this.relojTurno);
     super.disconnect();

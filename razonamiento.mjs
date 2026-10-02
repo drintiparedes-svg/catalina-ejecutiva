@@ -41,7 +41,9 @@ const EVENTOS_AL_NAVEGADOR = [
   "session.started", "session.closed", "error",
   "session.delegation.created",
   "session.input_transcript.delta", "session.output_transcript.delta",
-  "session.commentary.appended", "session.thinking.appended"
+  "session.commentary.appended", "session.thinking.appended",
+  // Segundos de voz acumulados: con esto el panel de ajustes calcula el costo.
+  "session.usage.updated"
 ];
 
 // Cómo y cuándo delegar. Va al final de las instrucciones de la voz: el resto
@@ -172,8 +174,29 @@ export async function pasoDeRazonamiento({ clave, modelo, esfuerzo, sistema, her
     llamadas: mensaje.stop_reason === "tool_use" ? llamadas : [],
     fin: mensaje.stop_reason !== "tool_use",
     motivo: mensaje.stop_reason,
-    modelo: mensaje.model
+    modelo: mensaje.model,
+    uso: resumirUso(mensaje.usage)
   };
+}
+
+// Tokens de un paso, con los nombres que usa el panel de ajustes.
+function resumirUso(uso = {}) {
+  return {
+    entrada: uso.input_tokens || 0,
+    salida: uso.output_tokens || 0,
+    lecturaCache: uso.cache_read_input_tokens || 0,
+    escrituraCache: uso.cache_creation_input_tokens || 0
+  };
+}
+
+// Costo en USD de un paso según la tabla de precios (por millón de tokens).
+// Sin precio para el modelo, devuelve null: mejor «sin dato» que un número
+// inventado.
+export function costoDeClaude(uso, precio) {
+  if (!uso || !precio) return null;
+  const usd = (uso.entrada * precio.entrada + uso.salida * precio.salida
+    + uso.lecturaCache * precio.lecturaCache + uso.escrituraCache * precio.escrituraCache) / 1e6;
+  return Math.round(usd * 1e6) / 1e6;
 }
 
 async function cargarAnthropic() {

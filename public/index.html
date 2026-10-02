@@ -63,6 +63,12 @@
       <button id="togglePanel" aria-pressed="false" title="Abre el historial de la conversación">Historial</button>
       <button id="meetMode" title="Empieza a escuchar y transcribir una reunión; oculta los controles para capturar la ventana">Modo Meet</button>
       <a class="boton-enlace" href="minuta.html" target="_blank" rel="noopener" title="Abre las reuniones que Catalina escuchó en Modo Meet: genera su acta (minuta lean) y expórtala a PDF, HTML, Markdown o correo">Actas</a>
+      <button class="boton-icono" id="abrirAjustes" aria-label="Ajustes: voz, modelos y consumo" title="Ajustes: voz, modelos y consumo">
+        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="3.2"/>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+        </svg>
+      </button>
     </nav>
     <!-- Señal de escucha del modo reunión. Es lo único que se ve en ese modo
          aparte de la cara: sin ella no hay forma de saber si está oyendo. -->
@@ -136,8 +142,52 @@
         </div>
       </form>
     </dialog>
+
+    <!-- Ajustes: qué voz y qué modelos están en uso, elegir otra voz para
+         probar, y cuánto lleva gastado la sesión. -->
+    <dialog class="reunion-dialogo ajustes" id="ajustes" aria-labelledby="ajustesTitulo">
+      <div class="ajustes-cuerpo">
+        <header class="ajustes-cabecera">
+          <h2 id="ajustesTitulo">Ajustes</h2>
+          <button type="button" class="reunion-aviso-cerrar" id="ajustesCerrar" aria-label="Cerrar los ajustes">&times;</button>
+        </header>
+
+        <section aria-labelledby="ajEnUso">
+          <h3 id="ajEnUso">En uso ahora</h3>
+          <dl class="ajustes-datos" id="ajustesEnUso"></dl>
+        </section>
+
+        <section aria-labelledby="ajVoz">
+          <h3 id="ajVoz">Voz</h3>
+          <label>Proveedor de voz
+            <select id="ajustesProveedor"></select>
+          </label>
+          <label id="ajustesVozLiveFila">Voz de GPT-Live
+            <select id="ajustesVozLive"></select>
+          </label>
+          <p class="reunion-ayuda">El cambio se aplica al recargar, sin guardar nada: queda en la dirección de la página
+            (<code id="ajustesDireccion"></code>). Para cambiar los valores por defecto, usa el
+            <a href="admin.html" target="_blank" rel="noopener">administrador</a>.</p>
+          <div class="reunion-botones">
+            <button type="button" class="primary" id="ajustesAplicar">Aplicar y recargar</button>
+          </div>
+        </section>
+
+        <section aria-labelledby="ajConsumo">
+          <h3 id="ajConsumo">Consumo de esta sesión</h3>
+          <dl class="ajustes-datos" id="ajustesConsumo"></dl>
+          <p class="reunion-ayuda" id="ajustesConsumoNota"></p>
+        </section>
+
+        <section aria-labelledby="ajModelos">
+          <h3 id="ajModelos">Modelos configurados</h3>
+          <table class="ajustes-tabla" id="ajustesModelos"></table>
+          <p class="reunion-ayuda" id="ajustesPrecios"></p>
+        </section>
+      </div>
+    </dialog>
   </main>
   <audio id="remoteAudio" autoplay></audio>
-  <script type="module" src="app.js?v=30"></script>
+  <script type="module" src="app.js?v=31"></script>
 </body>
 </html>
