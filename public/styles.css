@@ -409,7 +409,7 @@ button.primary { border-color: rgba(109,228,255,.45); background: linear-gradien
 .ajustes-datos .total { font-weight: 650; color: #d6f6ff; }
 .ajustes-tabla { width: 100%; border-collapse: collapse; font-size: 12.5px; }
 .ajustes-tabla th, .ajustes-tabla td { padding: 6px 6px; border-bottom: 1px solid rgba(184,226,246,.1); text-align: left; vertical-align: top; overflow-wrap: break-word; }
-.ajustes-tabla td:last-child, .ajustes-tabla th:last-child { white-space: nowrap; }
+.ajustes-tabla td:last-child, .ajustes-tabla th:last-child { min-width: 82px; }
 .ajustes-tabla th { color: rgba(209,229,239,.66); font-weight: 600; }
 .ajustes-tabla tr.activo td { color: #d6f6ff; background: rgba(109,228,255,.08); }
 @media (max-width: 520px) {

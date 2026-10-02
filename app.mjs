@@ -75,6 +75,9 @@ export async function atender(req, res) {
           // GPT-Live necesita las dos claves: OpenAI pone la voz y Claude piensa.
           live: hasApiKey() && hasAnthropicKey()
         },
+        // Qué variables faltan para GPT-Live, por nombre (nunca el valor): el
+        // panel de ajustes lo muestra para saber qué configurar.
+        liveFaltan: [!hasApiKey() && "OPENAI_API_KEY", !hasAnthropicKey() && "ANTHROPIC_API_KEY"].filter(Boolean),
         // La web abierta usa Gemini para buscar; sin esa clave, las láminas y la
         // bibliografía siguen (Commons y PubMed son abiertos) pero no la web.
         web: hayWeb(),

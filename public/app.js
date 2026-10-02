@@ -2452,6 +2452,7 @@ fetch("/health")
     disponible.openai = Boolean(estado.proveedores?.openai);
     disponible.gemini = Boolean(estado.proveedores?.gemini);
     disponible.live = Boolean(estado.proveedores?.live);
+    liveFaltan = Array.isArray(estado.liveFaltan) ? estado.liveFaltan : [];
   })
   .catch(() => {});
 
@@ -2482,6 +2483,7 @@ const aj = {
   precios: document.querySelector("#ajustesPrecios")
 };
 let conexion = null;            // la conversación en curso o la última
+let liveFaltan = [];            // variables que faltan en el servidor para GPT-Live
 let ajustesServidor = null;     // lo que devuelve /ajustes
 let relojAjustes = null;
 // Lo gastado en conversaciones anteriores de esta pestaña (sólo lo medible).
@@ -2605,7 +2607,9 @@ function pintarModelos() {
   for (const nombre of ["live", "elevenlabs", "gemini", "openai"]) {
     const d = describirVoz(nombre) || {};
     const modelo = nombre === "live" ? `${d.modelo} + ${m.live?.razonamiento || "claude-sonnet-5-5"}` : d.modelo;
-    filas.push([NOMBRES_DE_VOZ[nombre], modelo || "—", d.voz || "—", disponible[nombre] ? "disponible" : "sin clave", nombre]);
+    const estado = disponible[nombre] ? "disponible"
+      : nombre === "live" && liveFaltan.length ? `falta ${liveFaltan.join(" y ")}` : "sin clave";
+    filas.push([NOMBRES_DE_VOZ[nombre], modelo || "—", d.voz || "—", estado, nombre]);
   }
   aj.modelos.replaceChildren(...filas.map((fila, i) => {
     const tr = document.createElement("tr");
