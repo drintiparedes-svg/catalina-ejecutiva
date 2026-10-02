@@ -15,12 +15,13 @@
 // analizador de labios espera un stream igual que el de WebRTC: así la boca se
 // mueve con Gemini exactamente igual que con OpenAI.
 
+import { crearCaptura, Decimador, aPcm16, abrirMicrofonoDeConversacion } from "./entrada.js";
+
 const ENTRADA_HZ = 16000;   // lo que Gemini exige recibir
 const SALIDA_HZ = 24000;    // lo que Gemini envía
 // Tras callar, el audio de la reunión sigue cortado un momento más: lo que
 // vuelve por la videollamada llega con retraso y sería su propia voz.
 const RETENCION_MS = 700;
-const MUESTRAS_POR_ENVIO = 2048;
 
 export class GeminiSession {
   constructor(handlers = {}) {
@@ -54,9 +55,7 @@ export class GeminiSession {
       }
       const { token, setup } = await respuesta.json();
 
-      this.micStream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
-      });
+      this.micStream = await abrirMicrofonoDeConversacion();
 
       await this.#abrirSocket(token, setup);
       await this.#prepararSalida();
@@ -141,25 +140,20 @@ export class GeminiSession {
     this.entrada = new AudioContext();
     await this.entrada.resume().catch(() => {});
     const origen = this.entrada.createMediaStreamSource(this.micStream);
-    const nodo = this.entrada.createScriptProcessor(MUESTRAS_POR_ENVIO, 1, 1);
-
-    nodo.onaudioprocess = evento => {
+    // Captura en el hilo de audio con bloques de ~20 ms y bajada a 16 kHz con
+    // filtro (entrada.js).
+    const decimador = new Decimador(this.entrada.sampleRate, ENTRADA_HZ);
+    const nodo = await crearCaptura(this.entrada, muestras => {
       if (this.muted || this.socket?.readyState !== WebSocket.OPEN) return;
-      const original = evento.inputBuffer.getChannelData(0);
-      const pcm = aPcm16(remuestrear(original, this.entrada.sampleRate, ENTRADA_HZ));
+      const pcm = aPcm16(decimador.procesar(muestras));
+      if (!pcm.length) return;
       this.socket.send(JSON.stringify({
         realtimeInput: {
           audio: { data: codificar(pcm), mimeType: `audio/pcm;rate=${ENTRADA_HZ}` }
         }
       }));
-    };
-
+    });
     origen.connect(nodo);
-    // El procesador necesita un destino para correr; con ganancia cero no se
-    // oye el propio micrófono por los altavoces.
-    const mudo = this.entrada.createGain();
-    mudo.gain.value = 0;
-    nodo.connect(mudo).connect(this.entrada.destination);
     this.nodoEntrada = nodo;
     if (this.flujoExtra) this.mezclarEntrada(this.flujoExtra);
   }
@@ -328,32 +322,6 @@ export class GeminiSession {
     this.muted = pausado;
     return this.muted;
   }
-}
-
-// Interpolación lineal. Basta para voz: el contenido por encima de 8 kHz que se
-// pierde al bajar a 16 kHz no aporta nada al reconocimiento.
-function remuestrear(muestras, deHz, aHz) {
-  if (deHz === aHz) return muestras;
-  const razon = deHz / aHz;
-  const salida = new Float32Array(Math.floor(muestras.length / razon));
-  for (let i = 0; i < salida.length; i += 1) {
-    const posicion = i * razon;
-    const base = Math.floor(posicion);
-    const resto = posicion - base;
-    const a = muestras[base] ?? 0;
-    const b = muestras[base + 1] ?? a;
-    salida[i] = a + (b - a) * resto;
-  }
-  return salida;
-}
-
-function aPcm16(muestras) {
-  const salida = new Int16Array(muestras.length);
-  for (let i = 0; i < muestras.length; i += 1) {
-    const valor = Math.max(-1, Math.min(1, muestras[i]));
-    salida[i] = valor < 0 ? valor * 32768 : valor * 32767;
-  }
-  return salida;
 }
 
 function codificar(pcm) {

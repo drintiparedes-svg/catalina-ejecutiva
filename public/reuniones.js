@@ -32,7 +32,7 @@ const VACIAS = new Set((
   "cual cuales quien quienes cuanto cuanta que del los las una uno unos unas con sin por ser hay han"
 ).split(" "));
 
-const terminos = texto => [...new Set(normalizar(texto).split(/[^a-z0-9ñ]+/).filter(p => p.length > 3 && !VACIAS.has(p)))];
+export const terminos = texto => [...new Set(normalizar(texto).split(/[^a-z0-9ñ]+/).filter(p => p.length > 3 && !VACIAS.has(p)))];
 
 // ── Persistencia ─────────────────────────────────────────────────────────────
 
@@ -101,9 +101,38 @@ export function nuevaReunion(meta = {}) {
     catalina: [],      // lo que dijo Catalina: {momento, texto}, separado de los participantes
     participacion: [], // tramos en que Catalina participó en la conversación: {desde, hasta}
     materiales: [],    // láminas y referencias mostradas durante la reunión
+    insumos: [],       // fichas de los documentos aportados (el texto vive en IndexedDB, insumos.js)
+    continuidad: { eventos: [], huecos: [] }, // qué interrumpió la grabación y cuánto audio se perdió (grabadora.js, continuidad.js)
     estadisticas: {},
     minuta: null
   };
+}
+
+// Reuniones que quedaron «en curso» porque la pestaña se cerró, el navegador
+// se reinició o el equipo se apagó durante la reunión. Mientras se graba, la
+// reunión marca `meta.vivo` cada 30 s; si lleva más de 3 minutos sin marcar y
+// no es la activa, se cierra en su último momento de actividad y queda
+// anotado. Devuelve las que cerró.
+export const SIN_VIDA_MS = 3 * 60000;
+export function cerrarInterrumpidas(idActiva = null, ahora = Date.now()) {
+  const lista = leerReuniones();
+  const cerradas = [];
+  for (const r of lista) {
+    if (r.meta.fin || r.id === idActiva) continue;
+    const ultimo = Math.max(
+      r.meta.vivo || 0, r.meta.inicio,
+      ...(r.hd || []).map(s => s.hasta || 0),
+      ...(r.navegador || []).map(s => s.momento || 0),
+      ...(r.continuidad?.eventos || []).map(e => e.momento || 0)
+    );
+    if (ahora - ultimo < SIN_VIDA_MS) continue;
+    r.meta.fin = ultimo;
+    r.continuidad ||= { eventos: [], huecos: [] };
+    r.continuidad.eventos.push({ tipo: "cierre-inesperado", momento: ahora, detalle: "la pestaña se cerró o el navegador se reinició durante la reunión; se cerró en su último momento de actividad" });
+    cerradas.push(r);
+  }
+  if (cerradas.length) escribirReuniones(lista);
+  return cerradas;
 }
 
 // ── Transcripción ────────────────────────────────────────────────────────────
@@ -143,6 +172,11 @@ export function transcripcionPreferida(reunion) {
       else if (s.texto) lineas.push({ t: s.momento, texto: s.texto, fuente: "navegador", incompleto: s.incompleto });
     }
   }
+  // Audio que no se pudo grabar (equipo suspendido, micrófono desconectado o
+  // sin señal), con su causa: la minuta tiene que saber por qué falta.
+  for (const h of reunion.continuidad?.huecos || []) {
+    if (h.hasta > h.desde) lineas.push({ t: h.desde, texto: "", hueco: h.hasta - h.desde, causa: h.causa });
+  }
   // Lo que dijo Catalina va en la misma línea de tiempo, marcado: es una
   // asistente de IA, no un participante, y la minuta tiene que distinguirlo.
   for (const c of reunion.catalina || []) {
@@ -154,7 +188,7 @@ export function transcripcionPreferida(reunion) {
 
 export function transcripcionComoTexto(reunion, { marcas = true } = {}) {
   return transcripcionPreferida(reunion).map(l => {
-    if (l.hueco) return `${marcas ? `[${l.marca}] ` : ""}[SIN AUDIO ~${Math.round(l.hueco / 1000)} s: no se pudo transcribir este tramo]`;
+    if (l.hueco) return `${marcas ? `[${l.marca}] ` : ""}[SIN AUDIO ~${Math.round(l.hueco / 1000)} s: ${l.causa ? `no se grabó — ${l.causa}` : "no se pudo transcribir este tramo"}]`;
     const marcasExtra = [l.fuente === "navegador" && reunion.hd.length ? "(respaldo navegador)" : "", l.incompleto ? "(frase cortada)" : ""].filter(Boolean).join(" ");
     if (l.fuente === "catalina") return `${marcas ? `[${l.marca}] ` : ""}CATALINA (IA): ${l.texto}`;
     return `${marcas ? `[${l.marca}] ` : ""}${l.texto}${marcasExtra ? " " + marcasExtra : ""}`;
@@ -183,6 +217,8 @@ export function calidad(reunion) {
     huecos: transcripcionPreferida(reunion).filter(l => l.hueco).length,
     tramosFallidos: reunion.hdFallidos.length,
     tramosAlta: reunion.hd.length,
+    tramosRecuperados: reunion.hd.filter(s => s.recuperado).length,
+    huecosPorCausa: (reunion.continuidad?.huecos || []).reduce((m, h) => ({ ...m, [h.causa]: (m[h.causa] || 0) + Math.max(0, h.hasta - h.desde) }), {}),
     palabras: palabras(reunion),
     ...reunion.estadisticas
   };
@@ -349,12 +385,13 @@ export function datosParaMinuta(reunion) {
   };
 }
 
-export async function pedirMinuta(reunion, { nivel = "estandar", motor = null, tipo = null } = {}) {
+// `insumos`: los documentos aportados, ya con su texto (insumosParaMinuta).
+export async function pedirMinuta(reunion, { nivel = "estandar", motor = null, tipo = null, insumos = [] } = {}) {
   try {
     const r = await fetch("/reunion/minuta", {
       method: "POST",
       headers: { "Content-Type": "application/json", ...cabecerasDeClavePropia() },
-      body: JSON.stringify({ ...datosParaMinuta(reunion), nivel, motor, ...(tipo ? { tipo } : {}) })
+      body: JSON.stringify({ ...datosParaMinuta(reunion), nivel, motor, ...(tipo ? { tipo } : {}), ...(insumos.length ? { insumos } : {}) })
     });
     const texto = await r.text();
     try { return JSON.parse(texto); } catch { return { ok: false, error: `Respuesta ilegible del servidor (${r.status}).` }; }

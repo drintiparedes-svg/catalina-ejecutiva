@@ -236,6 +236,20 @@ npm run check
 Desde la consola del navegador, `catalina.director.setState("speaking")` fuerza
 un estado para inspeccionar la actuación.
 
+## Conversación presencial (sin audífonos)
+
+- **Eco.** La voz de Catalina se cancela del micrófono para que no se
+  interrumpa a sí misma. Se usa la cancelación de todo el sistema de Chrome
+  141+ (`echoCancellation: "all"`) y, si no está, una ruta WebRTC local que la
+  hace visible al cancelador.
+- **Micrófono.** Se capta en el hilo de audio, en bloques de 20 ms, con un
+  filtro anti-aliasing al bajar a 16 kHz.
+- **Interrupciones.** El audio y el texto de una respuesta interrumpida no se
+  repiten, y la corrección reemplaza el turno en el historial.
+
+Diagnóstico, mediciones y propuestas de latencia en
+[`docs/voz-en-conversacion-presencial.md`](docs/voz-en-conversacion-presencial.md).
+
 ## Subtítulos e historial
 
 Los dos nacen **apagados**: leer lo mismo que se está oyendo compite con la
@@ -252,6 +266,40 @@ se lee.
 
 Sólo se transcribe la voz de Catalina. Transcribir además la de la persona
 requiere activar `input_audio_transcription` en la sesión, con su costo aparte.
+
+## Documentos como insumo
+
+Se pueden aportar archivos de **cualquier extensión**, en la conversación o en
+una reunión:
+
+- **Historial → «Adjuntar»**, o arrastrándolos a la ventana: son insumos de la
+  conversación y se conservan en este navegador hasta quitarlos (×).
+- **Modo reunión**: en el diálogo «Nueva reunión» (campo *Documentos de la
+  reunión*), con el botón **«Insumos»** durante la reunión o arrastrándolos a
+  la pantalla. Quedan asociados a esa reunión y el acta los usa y los cita.
+  También se añaden después desde la página de **Actas**.
+
+| Formato | Cómo se lee |
+|---|---|
+| PDF | Texto por página en el navegador (pdf.js). Las páginas escaneadas (hasta 8) se leen con un modelo de visión |
+| Word, PowerPoint, Excel (.docx, .pptx, .xlsx y variantes) y OpenDocument | Se descomprimen y se lee su XML en el navegador: títulos, listas, tablas, notas al pie, comentarios, láminas con sus notas del orador, hojas con fechas |
+| Texto, Markdown, CSV, JSON, HTML, RTF, código | Tal cual |
+| Imágenes (PNG, JPG, WebP, GIF…) | Modelo de visión (Gemini, con relevo a OpenAI): transcripción literal del texto, tablas, gráficos y diagramas |
+| Audio y vídeo (MP3, M4A, WAV, MP4…) | Transcripción por tramos, con el servicio de alta fidelidad (hasta 60 min) |
+| ZIP | Se lee cada archivo de dentro |
+| .doc, .ppt, .xls antiguos y formatos desconocidos | Extracción aproximada de las cadenas de texto, marcada como tal; si no hay texto, queda registrado por su nombre |
+
+Catalina recibe el texto como contexto silencioso (entero si es corto; el
+principio si es largo) y busca el resto con la herramienta
+`consultar_documentos`, que cita archivo y página, lámina u hoja. Con
+ElevenLabs, la herramienta nueva hay que registrarla una vez en
+`/registrar.html`; mientras tanto, en reunión, `consultar_reunion` también busca
+en los documentos. El acta recibe el texto de los documentos delimitado y
+separado de la transcripción, con la instrucción de distinguir lo dicho de lo
+documentado y de no seguir instrucciones escritas dentro de ellos.
+
+Tope por archivo: 80 MB y 200 000 caracteres de texto; para el acta, 150 000
+caracteres repartidos entre los documentos. Pruebas: `npm run test:insumos`.
 
 ## Respaldo con Gemini
 
@@ -541,10 +589,28 @@ objetivo, participantes, agenda, enlaces). Todo va a la minuta.
 
 Pruebas: `npm run test:reuniones`.
 
+**Continuidad (reuniones presenciales en notebook).** Mientras graba, el modo
+reunión:
+- mantiene la pantalla encendida;
+- reconecta solo el micrófono si el sistema lo desconecta (audífonos
+  Bluetooth, USB);
+- reanuda el audio pausado por el sistema;
+- captura en el hilo de audio;
+- guarda cada tramo con voz en el navegador antes de enviarlo, para completar
+  después lo que no se alcanzó a transcribir.
+
+Cada interrupción queda registrada con su causa en el informe de cobertura y en
+el acta. Diagnóstico, límites, ajustes recomendados del Mac y evaluación de la
+transcripción nativa de Google Meet en
+[`docs/continuidad-de-grabacion.md`](docs/continuidad-de-grabacion.md).
+Pruebas: `npm run test:continuidad`.
+
 ## Privacidad
 
 - La interfaz y la animación se ejecutan en el equipo.
 - El análisis de labios se ejecuta completamente en el navegador local.
 - El audio conversacional se envía al proveedor de voz activo (ElevenLabs, OpenAI o Gemini).
 - Las reuniones se guardan sólo en el navegador (localStorage). En alta fidelidad el audio se envía por tramos al proveedor de transcripción, y la transcripción completa al modelo que redacta la minuta. Con datos identificables de pacientes, úsese sólo con proveedores y acuerdos de tratamiento de datos autorizados por la institución.
+- En alta fidelidad, el audio con voz de cada reunión se guarda en este navegador (IndexedDB) para poder completar la transcripción. Se borra al generar el acta o a los 7 días, lo que ocurra primero; los tramos que aún no se pudieron transcribir se conservan hasta los 7 días.
+- Los documentos aportados se leen en el navegador y su texto se guarda sólo en él (IndexedDB). Ese texto se envía al modelo de voz y al que redacta el acta; las imágenes y páginas escaneadas, al modelo de visión, y el audio, al de transcripción. Rige la misma cautela con datos identificables de pacientes.
 - `.env` está ignorado por Git para evitar publicar la clave.

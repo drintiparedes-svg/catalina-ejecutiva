@@ -19,6 +19,7 @@
 // La intensidad sigue saliendo del analizador de siempre, que escucha el mismo
 // stream que suena. La forma la pone la alineación; la fuerza, el audio.
 
+import { crearCaptura, Decimador, aPcm16, abrirMicrofonoDeConversacion } from "./entrada.js";
 import { VisemasAlineados } from "../audio/visemas-alineados.js";
 
 const SALIDA_HZ = 24000;    // frecuencia del reproductor; lo que llegue se ajusta
@@ -26,7 +27,6 @@ const ENTRADA_HZ = 16000;   // lo que el agente espera recibir del micrófono
 // Tras callar, el audio de la reunión sigue cortado un momento más: lo que
 // vuelve por la videollamada llega con retraso y sería su propia voz.
 const RETENCION_MS = 700;
-const MUESTRAS_POR_ENVIO = 2048;
 
 export class ElevenLabsSession {
   constructor(handlers = {}) {
@@ -60,6 +60,7 @@ export class ElevenLabsSession {
     this.arranco = false;
     this.reintentoSinAjustes = false;
     this.cierreLimpio = false;   // true cuando el cierre lo pedimos nosotros
+    this.ultimaInterrupcion = -1; // event_id de la última interrupción
   }
 
   #emit(name, ...args) {
@@ -82,9 +83,7 @@ export class ElevenLabsSession {
       }
       const { url, inicio } = await respuesta.json();
 
-      this.micStream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
-      });
+      this.micStream = await abrirMicrofonoDeConversacion();
 
       this.url = url;
       await this.#prepararSalida();
@@ -232,26 +231,29 @@ export class ElevenLabsSession {
   // el bucle de dibujo en cada cuadro.
   posturaDeBoca() {
     if (!this.connected || this.visemas.vacio) return null;
-    return this.visemas.postura(this.sonando / SALIDA_HZ);
+    // `retrasoBoca`: lo que tarda en sonar la voz si pasa por la ruta de
+    // cancelación de eco (app.js); sin él los labios irían adelantados.
+    return this.visemas.postura(this.sonando / SALIDA_HZ - (this.retrasoBoca || 0));
   }
 
   async #prepararEntrada() {
     this.entrada = new AudioContext();
     await this.entrada.resume().catch(() => {});
     const origen = this.entrada.createMediaStreamSource(this.micStream);
-    const nodo = this.entrada.createScriptProcessor(MUESTRAS_POR_ENVIO, 1, 1);
-
-    nodo.onaudioprocess = evento => {
+    // Captura en el hilo de audio con bloques de ~20 ms (entrada.js). La
+    // frecuencia que espera el agente puede llegar después de abrir el
+    // micrófono (conversation_initiation_metadata): el decimador se rehace si
+    // cambia.
+    const nodo = await crearCaptura(this.entrada, muestras => {
       if (this.muted || this.socket?.readyState !== WebSocket.OPEN) return;
-      const original = evento.inputBuffer.getChannelData(0);
-      const pcm = aPcm16(remuestrear(original, this.entrada.sampleRate, this.entradaHz));
-      this.socket.send(JSON.stringify({ user_audio_chunk: codificar(pcm) }));
-    };
-
+      if (this.decimador?.hasta !== this.entradaHz) {
+        this.decimador = new Decimador(this.entrada.sampleRate, this.entradaHz);
+        this.decimador.hasta = this.entradaHz;
+      }
+      const pcm = aPcm16(this.decimador.procesar(muestras));
+      if (pcm.length) this.socket.send(JSON.stringify({ user_audio_chunk: codificar(pcm) }));
+    });
     origen.connect(nodo);
-    const mudo = this.entrada.createGain();
-    mudo.gain.value = 0;
-    nodo.connect(mudo).connect(this.entrada.destination);
     this.nodoEntrada = nodo;
     if (this.flujoExtra) this.mezclarEntrada(this.flujoExtra);
   }
@@ -278,6 +280,10 @@ export class ElevenLabsSession {
       case "audio": {
         const audio = mensaje.audio_event ?? {};
         if (!audio.audio_base_64) break;
+        // Audio de una respuesta ya interrumpida que llega tarde: se descarta,
+        // como hace el SDK oficial. Sonaba como restos de la respuesta anterior.
+        if (Number.isFinite(audio.event_id) && audio.event_id <= this.ultimaInterrupcion) break;
+        this.interrumpida = false;
         this.#emit("onPhase", "speaking");
         this.#emit("onStatus", "Hablando");
         this.#reproducir(audio.audio_base_64, audio.alignment);
@@ -289,6 +295,7 @@ export class ElevenLabsSession {
       case "agent_chat_response_part": {
         const parte = mensaje.text_response_part ?? {};
         if (parte.type === "start") {
+          this.interrumpida = false;
           this.transcript = "";
           // El texto de la respuesta llega un poco antes que su audio.
           if (!this.hablando) this.#alSonar(true);
@@ -305,6 +312,9 @@ export class ElevenLabsSession {
       // sólo se anota que no habrá más texto. Volver a escuchar lo decide el
       // silencio real del audio, en app.js.
       case "agent_response": {
+        // El texto completo de una respuesta que ya se interrumpió no se
+        // muestra: no llegó a decirse. Lo que sí se dijo llega en la corrección.
+        if (this.interrumpida) break;
         const dicho = mensaje.agent_response_event?.agent_response;
         if (dicho) {
           this.transcript = dicho;
@@ -318,15 +328,18 @@ export class ElevenLabsSession {
       // de verdad. El historial se queda con eso y no con lo que iba a decir.
       case "agent_response_correction": {
         const correccion = mensaje.agent_response_correction_event ?? {};
+        // Corrige la respuesta ya mostrada; no abre un turno nuevo.
         if (correccion.corrected_agent_response) {
-          this.transcript = correccion.corrected_agent_response;
-          this.#emit("onTranscript", this.transcript);
+          this.#emit("onTranscript", correccion.corrected_agent_response, { correccion: true });
         }
         break;
       }
 
       case "interruption": {
         this.interrupciones = (this.interrupciones || 0) + 1;
+        this.interrumpida = true;
+        const id = mensaje.interruption_event?.event_id;
+        if (Number.isFinite(id)) this.ultimaInterrupcion = Math.max(this.ultimaInterrupcion, id);
         this.#callar();
         this.#emit("onPhase", "listening");
         this.#emit("onStatus", "Te escucho…");
@@ -463,6 +476,7 @@ export class ElevenLabsSession {
     this.arranco = false;
     this.reintentoSinAjustes = false;
     this.cierreLimpio = false;
+    this.ultimaInterrupcion = -1;
     this.#emit("onDisconnected");
     this.#emit("onPhase", "idle");
   }
@@ -506,14 +520,6 @@ function remuestrear(muestras, desde, hasta) {
   return salida;
 }
 
-function aPcm16(muestras) {
-  const salida = new Int16Array(muestras.length);
-  for (let i = 0; i < muestras.length; i += 1) {
-    const valor = Math.max(-1, Math.min(1, muestras[i]));
-    salida[i] = valor < 0 ? valor * 0x8000 : valor * 0x7fff;
-  }
-  return salida;
-}
 
 function codificar(enteros) {
   const bytes = new Uint8Array(enteros.buffer, enteros.byteOffset, enteros.byteLength);

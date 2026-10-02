@@ -13,13 +13,22 @@ import { ElevenLabsSession } from "./realtime/elevenlabs-session.js";
 import { LiveSession } from "./realtime/live-session.js";
 import { dibujarRuta } from "./mapa.js";
 import { EscuchaDeReunion, escuchaDisponible } from "./escucha.js";
-import { GrabadoraDeReunion, grabadoraDisponible } from "./grabadora.js";
+import { GrabadoraDeReunion, grabadoraDisponible, microfonos, esBluetooth, aWavBase64 } from "./grabadora.js";
+import { Vigilia, resumenDeContinuidad, duracionLegible } from "./continuidad.js";
+import { conCancelacionDeEco } from "./audio/eco.js";
+import {
+  guardarTramo, actualizarTramo, recuperarReunion, borrarAudioDe, purgarAntiguos, reunionesConPendientes
+} from "./archivo-audio.js";
 import { conectarConReunion, puenteDisponible } from "./puente-meet.js";
 import {
-  nuevaReunion, guardarReunion, leerReuniones, elegirReunion, consultarReunion, indiceDeReuniones,
+  nuevaReunion, guardarReunion, leerReuniones, cerrarInterrumpidas, elegirReunion, consultarReunion, indiceDeReuniones,
   calidad, duracion, palabras, pedirMinuta, enviarMinutaPorCorreo, cabecerasDeClavePropia, transcripcionComoTexto
 } from "./reuniones.js";
 import { PLANTILLAS, plantillaDe } from "./plantillas-acta.js";
+import {
+  leerArchivo, guardarInsumo, insumosDe, borrarInsumo, todosLosInsumos, insumosDeReunion, fichaDe,
+  resumenDeFicha, mensajeDeInsumo, buscarEnInsumos, insumosParaMinuta
+} from "./insumos.js";
 
 const canvas = document.querySelector("#avatar");
 const ctx = canvas.getContext("2d");
@@ -72,10 +81,31 @@ const ui = {
   reunionAvisoDetalle: document.querySelector("#reunionAvisoDetalle"),
   reunionAvisoAbrir: document.querySelector("#reunionAvisoAbrir"),
   reunionAvisoCerrar: document.querySelector("#reunionAvisoCerrar"),
-  audio: document.querySelector("#remoteAudio")
+  audio: document.querySelector("#remoteAudio"),
+  adjuntar: document.querySelector("#adjuntar"),
+  archivos: document.querySelector("#archivos"),
+  panelDocs: document.querySelector("#panelDocs"),
+  insumosMeet: document.querySelector("#insumosMeet"),
+  soltar: document.querySelector("#soltar"),
+  reunionArchivos: document.querySelector("#reunionArchivos"),
+  reunionMicrofono: document.querySelector("#reunionMicrofono"),
+  reunionMicAviso: document.querySelector("#reunionMicAviso")
 };
 
 const director = new PerformanceDirector();
+let rutaDeEco = null;
+const RETRASO_RUTA_DE_ECO = .055;   // s, medido en Chromium (e2e-conversación)
+
+// Cambia el texto de un botón con icono sin borrar el icono. `icono`, si se
+// da, cambia también el dibujo (micrófono abierto o tachado, rayo o detener).
+function etiquetar(boton, texto, icono) {
+  const etiqueta = boton.querySelector(".etq");
+  if (!etiqueta) { boton.textContent = texto; return; }
+  etiqueta.textContent = texto;
+  if (boton.hasAttribute("aria-label") && !boton.id.startsWith("toggle") && boton.id !== "meetMode") boton.setAttribute("aria-label", texto);
+  if (icono) boton.querySelector(".ico use")?.setAttribute("href", `#i-${icono}`);
+}
+function cerrarRutaDeEco() { rutaDeEco?.cerrar(); rutaDeEco = null; }
 const voice = new VoiceTracker();
 let renderer = null;
 let viewport = { width: 0, height: 0, pixelRatio: 1 };
@@ -86,15 +116,30 @@ let connected = false;
 const manejadores = {
   // Se analiza la voz que llega de la API, no el micrófono: la boca debe
   // seguir lo que Catalina dice.
-  onRemoteStream: stream => {
-    ui.audio.srcObject = stream;
+  onRemoteStream: async stream => {
+    // ElevenLabs y Gemini suenan por Web Audio, que el cancelador de eco de
+    // Chrome no ve: su voz volvía por el micrófono y la interrumpía. Pasa por
+    // una conexión WebRTC local para que el cancelador la conozca (eco.js).
+    // OpenAI ya llega por WebRTC.
+    // Si Chrome concedió la cancelación de eco de todo el sistema
+    // (echoCancellation "all", Chrome 141+), la voz ya es referencia y suena
+    // directa: el rodeo sólo añadiría latencia (~55 ms medidos).
+    cerrarRutaDeEco();
+    const ecoDelSistema = sesion?.micStream?.getAudioTracks?.()[0]?.getSettings?.().echoCancellation === "all";
+    const salida = proveedor === "openai" || ecoDelSistema ? { stream, enRuta: false, cerrar() {} } : await conCancelacionDeEco(stream);
+    if (ecoDelSistema) console.info("Cancelación de eco del sistema activa: la voz suena directa");
+    rutaDeEco = salida;
+    // La boca sigue a lo que de verdad suena: la intensidad se analiza sobre la
+    // salida final y la alineación se retrasa lo que tarda el rodeo.
+    voice.attach(salida.stream);
+    if (sesion) sesion.retrasoBoca = salida.enRuta ? RETRASO_RUTA_DE_ECO : 0;
+    ui.audio.srcObject = salida.stream;
     ui.audio.muted = false;
     ui.audio.volume = 1;
     ui.audio.play().catch(error => {
       console.warn("El navegador bloqueó temporalmente la reproducción de voz", error);
       setStatus("Pulsa la pantalla para activar la voz");
     });
-    voice.attach(stream);
   },
   onConnected: () => {
     connected = true;
@@ -107,6 +152,7 @@ const manejadores = {
     // protocolo tiene que llegar antes.
     setTimeout(() => {
       presentarReunionesGuardadas();
+      presentarDocumentos();
       if (puenteReunion) sesion.mezclarEntrada?.(puenteReunion.flujo);
       if (enModoMeet && reunionActual) {
         presentarReunionACatalina();
@@ -121,7 +167,7 @@ const manejadores = {
     }, 1500);
     mostrarAviso("");   // si el intento anterior falló, su aviso ya no aplica
     ui.signal.classList.add("online");
-    ui.connect.textContent = "Finalizar";
+    etiquetar(ui.connect, "Finalizar", "detener");
     ui.connect.disabled = false;
     ui.mute.disabled = false;
   },
@@ -138,11 +184,12 @@ const manejadores = {
     }
     voice.destroy();
     ui.audio.srcObject = null;
+    cerrarRutaDeEco();
     ui.signal.classList.remove("online");
-    ui.connect.textContent = "Iniciar conversación";
+    etiquetar(ui.connect, "Iniciar conversación", "rayo");
     ui.connect.disabled = false;
     ui.mute.disabled = true;
-    ui.mute.textContent = "Silenciar micrófono";
+    etiquetar(ui.mute, "Silenciar micrófono", "mic");
     // Si la sesión cayó por un fallo, se conserva su mensaje: decir «Lista para
     // comenzar» encima lo borraría justo cuando hace falta leerlo.
     setStatus(ultimoFallo?.mensaje || "Lista para comenzar");
@@ -169,8 +216,11 @@ const manejadores = {
   // apagados: son cosas que la persona necesita leer para poder seguir.
   onHelp: mostrarAviso,
   onNota: anotarNota,
-  onTranscript: text => {
+  onTranscript: (text, { correccion = false } = {}) => {
     hayActividad();
+    // Lo que de verdad alcanzó a decir una respuesta interrumpida: reemplaza el
+    // texto del turno anterior, no abre uno nuevo (antes quedaba repetido).
+    if (correccion) return corregirUltimoTurno(text);
     // Texto vacío = la respuesta anterior se cortó (alguien habló encima): lo
     // que alcanzó a decir también forma parte de la reunión.
     if (!text) registrarTurnoDeCatalina({ interrumpida: true });
@@ -302,7 +352,7 @@ async function atenderFallo(error) {
     // El botón vuelve a estar listo para reintentar aunque la sesión no llegue
     // a llamar a onDisconnected (p. ej. si falló antes de conectar del todo).
     connected = false;
-    ui.connect.textContent = "Iniciar conversación";
+    etiquetar(ui.connect, "Iniciar conversación", "rayo");
     ui.connect.disabled = false;
     ui.mute.disabled = true;
     return;
@@ -345,7 +395,7 @@ ui.connect.addEventListener("click", () => {
 });
 ui.mute.addEventListener("click", () => {
   const muted = sesion?.toggleMute();
-  ui.mute.textContent = muted ? "Activar micrófono" : "Silenciar micrófono";
+  etiquetar(ui.mute, muted ? "Activar micrófono" : "Silenciar micrófono", muted ? "mic-off" : "mic");
   setStatus(muted ? "Micrófono silenciado" : "Te escucho");
 });
 ui.meetMode.addEventListener("click", () => abrirDialogoDeReunion());
@@ -427,6 +477,22 @@ const escucha = new EscuchaDeReunion({
 
 const grabadora = new GrabadoraDeReunion({
   transcribir: (audio, meta) => pedirTranscripcion(audio, meta),
+  // Cada tramo con voz se guarda aquí antes de enviarse (archivo-audio.js).
+  archivo: {
+    guardar: (pcm, meta) => guardarTramo(reunionEnGrabacion?.id, pcm, meta),
+    actualizar: actualizarTramo
+  },
+  alEvento: evento => registrarContinuidad(evento),
+  alHueco: hueco => {
+    const r = reunionEnGrabacion || reunionActual;
+    if (!r) return;
+    r.continuidad ||= { eventos: [], huecos: [] };
+    r.continuidad.huecos.push(hueco);
+    guardarPronto(r);
+  },
+  // Latido del reconocimiento del navegador: llega con cada bloque de audio y
+  // no depende de temporizadores, que Chrome frena en segundo plano.
+  alBloque: () => escucha.latido(),
   alSegmento: segmento => {
     if (!reunionEnGrabacion) return;
     reunionEnGrabacion.hd.push(segmento);
@@ -437,10 +503,79 @@ const grabadora = new GrabadoraDeReunion({
     if (!reunionEnGrabacion) return;
     reunionEnGrabacion.hdFallidos.push(fallo);
     guardarPronto(reunionEnGrabacion);
-    if (enModoMeet) señalar(`Un tramo no se transcribió en alta fidelidad (${fallo.error}); queda el del navegador`, "problema");
+    if (enModoMeet) señalar(fallo.respaldado
+      ? `Un tramo no se transcribió (${fallo.error}); el audio quedó guardado y se reintentará`
+      : `Un tramo no se transcribió en alta fidelidad (${fallo.error}); queda el del navegador`, "problema");
   },
-  alEstado: (texto, estado) => { if (estado === "problema") señalar(texto, estado); }
+  alEstado: (texto, estado) => {
+    if (estado === "problema") { señalar(texto, estado); marcarTitulo("problema"); }
+    if (estado === "aviso") señalar(texto, "problema");
+    if (estado === "recuperado") { señalar(texto, ""); marcarTitulo("grabando"); }
+  }
 });
+
+// ── Continuidad de la grabación ─────────────────────────────────────────────
+//
+// Las reuniones presenciales en un notebook se cortaban por el ahorro de
+// energía: pantalla que se apaga y equipo que se suspende, audífonos
+// Bluetooth que se desconectan, audio pausado por el sistema. Aquí se
+// mantiene la pantalla encendida, se registra cada interrupción con su causa
+// y, al volver la red o al terminar, se completa lo que quedó sin transcribir
+// con el audio guardado.
+const vigilia = new Vigilia({ alEvento: evento => registrarContinuidad(evento) });
+const TITULO = document.title;
+const MAX_EVENTOS = 400;
+
+function registrarContinuidad(evento) {
+  const r = reunionEnGrabacion || reunionActual;
+  if (!r) return;
+  r.continuidad ||= { eventos: [], huecos: [] };
+  if (r.continuidad.eventos.length < MAX_EVENTOS) r.continuidad.eventos.push(evento);
+  guardarPronto(r);
+  if (evento.tipo === "pestana-visible") grabadora.reanimar();
+  if (evento.tipo === "red-recuperada") completarTranscripcion(reunionEnGrabacion, { soloFallidos: true });
+  if (evento.tipo === "red-caida" && enModoMeet) señalar("Sin internet: sigo grabando y guardo el audio para transcribirlo al volver la red", "problema");
+}
+
+// La pestaña dice si se está grabando: se ve en la barra de pestañas aunque
+// se esté mirando otra cosa.
+function marcarTitulo(estado) {
+  document.title = estado === "grabando" ? `● Grabando · ${TITULO}` : estado === "problema" ? `⚠ Sin grabar · ${TITULO}` : TITULO;
+}
+
+// Vuelve a transcribir los tramos guardados que no se transcribieron. Durante
+// la reunión sólo los fallidos (los pendientes están en la cola en curso).
+let completando = null;
+async function completarTranscripcion(reunion, { soloFallidos = false, silencioso = false } = {}) {
+  if (!reunion || completando || !navigator.onLine) return null;
+  completando = recuperarReunion(reunion, {
+    transcribir: (audio, meta) => pedirTranscripcion(audio, meta),
+    aWav: aWavBase64,
+    estados: soloFallidos ? ["fallido"] : ["pendiente", "fallido"],
+    alProgreso: texto => { if (!silencioso && reunion === reunionActual) señalar(texto); }
+  }).catch(error => { console.warn("Completar transcripción:", error); return null; });
+  const balance = await completando;
+  completando = null;
+  if (balance?.intentados) {
+    guardarReunion(reunion);
+    console.info(`Transcripción completada de «${reunion.meta.titulo}»:`, balance);
+  }
+  return balance;
+}
+
+// Al abrir la aplicación: se borra el audio con más de 7 días y se completan
+// las reuniones que quedaron con tramos sin transcribir (pestaña cerrada a
+// mitad de reunión, red caída al terminar).
+async function completarPendientesAlAbrir() {
+  for (const r of cerrarInterrumpidas(reunionActual?.id)) console.info(`Reunión interrumpida cerrada: «${r.meta.titulo}»`);
+  await purgarAntiguos();
+  if (!navigator.onLine) return;
+  for (const id of await reunionesConPendientes()) {
+    const r = leerReuniones().find(x => x.id === id);
+    if (r && r.id !== reunionActual?.id) await completarTranscripcion(r, { silencioso: true });
+  }
+}
+setTimeout(completarPendientesAlAbrir, 4000);
 
 async function pedirTranscripcion(audio, { previo }) {
   const r = await fetch("/reunion/transcribir", {
@@ -464,6 +599,7 @@ let reunionActual = null;       // la que se está escuchando ahora
 let reunionEnGrabacion = null;  // la que recibe los tramos de alta fidelidad (puede terminar después)
 let relojGuardado = null;
 let relojMemoria = null;
+let relojVivo = null;
 let memoriaEnviadaHasta = 0;    // índice del último segmento pasado a Catalina
 let memoriaCaracteres = 0;
 
@@ -504,6 +640,7 @@ function abrirDialogoDeReunion() {
   }).catch(() => {});
   ui.reunionPestana.disabled = !puenteDisponible();
   avisarSinAltaFidelidad();
+  llenarMicrofonos();
   ui.reunionDialogo.showModal();
 }
 
@@ -523,10 +660,43 @@ ui.reunionForm.addEventListener("submit", evento => {
     tipo: datos.tipo,
     alta: ui.reunionAlta.checked,
     pestana: ui.reunionPestana.checked,
-    continuar: ui.reunionContinuarCasilla.checked
+    continuar: ui.reunionContinuarCasilla.checked,
+    archivos: [...(ui.reunionArchivos.files || [])],
+    microfono: ui.reunionMicrofono.value
   });
+  ui.reunionArchivos.value = "";
 });
 ui.reunionCancelar.addEventListener("click", () => ui.reunionDialogo.close());
+
+// Micrófono para grabar. En una reunión presencial importa: el de unos
+// audífonos Bluetooth capta sobre todo a quien los lleva, pasa a calidad
+// telefónica y se desconecta cuando el sistema ahorra energía o los AirPods
+// saltan a otro equipo. Se recomienda el del notebook o uno con cable.
+const CLAVE_MICROFONO = "catalina.microfono.v1";
+async function llenarMicrofonos() {
+  const lista = await microfonos();
+  let guardado = "";
+  try { guardado = localStorage.getItem(CLAVE_MICROFONO) || ""; } catch {}
+  const opciones = [{ id: "", nombre: "El del sistema (predeterminado)" }, ...lista.filter(d => d.id !== "default")];
+  const predeterminado = lista.find(d => d.id === "default");
+  ui.reunionMicrofono.replaceChildren(...opciones.map(d => {
+    const o = document.createElement("option");
+    o.value = d.id;
+    o.textContent = d.id === "" && predeterminado ? `El del sistema (${predeterminado.nombre.replace(/^(predeterminado|default)\s*-\s*/i, "")})` : d.nombre;
+    return o;
+  }));
+  ui.reunionMicrofono.value = opciones.some(d => d.id === guardado) ? guardado : "";
+  ui.reunionMicrofono.dataset.predeterminado = predeterminado?.nombre || "";
+  avisarMicrofono();
+}
+function avisarMicrofono() {
+  const elegido = ui.reunionMicrofono.selectedOptions[0]?.textContent || "";
+  ui.reunionMicAviso.hidden = !esBluetooth(elegido);
+}
+ui.reunionMicrofono.addEventListener("change", () => {
+  try { localStorage.setItem(CLAVE_MICROFONO, ui.reunionMicrofono.value); } catch {}
+  avisarMicrofono();
+});
 // Conectar con la reunión y la alta fidelidad son independientes: el puente
 // hace que Catalina oiga la videollamada; la alta fidelidad, que lo que dicen
 // los demás quede transcrito en el acta. Sin ella se avisa, porque el
@@ -553,6 +723,7 @@ async function entrarEnModoMeet(opciones = {}) {
   } else {
     reunionActual = nuevaReunion(opciones);
   }
+  reunionActual.insumos ||= [];
   guardarReunion(reunionActual);
   memoriaEnviadaHasta = reunionActual.navegador.length;
   memoriaCaracteres = 0;
@@ -575,8 +746,16 @@ async function entrarEnModoMeet(opciones = {}) {
     }
   }
 
+  // Que la pantalla no se apague (y con ella el equipo) mientras se graba.
+  vigilia.activar();
+  // Señal de vida: si la pestaña se cierra a mitad, al reabrir se sabe hasta
+  // cuándo hubo reunión.
+  clearInterval(relojVivo);
+  relojVivo = setInterval(() => { if (reunionActual) { reunionActual.meta.vivo = Date.now(); guardarPronto(); } }, 30000);
+  reunionActual.continuidad ||= { eventos: [], huecos: [] };
+
   const alta = opciones.alta && grabadoraDisponible()
-    ? grabadora.iniciar({ flujoReunion: puenteReunion?.flujo })
+    ? grabadora.iniciar({ flujoReunion: puenteReunion?.flujo, dispositivo: opciones.microfono || "" })
     : null;
 
   if (alta) {
@@ -586,8 +765,17 @@ async function entrarEnModoMeet(opciones = {}) {
     if (!r.ok) {
       avisoAlta = r.error;
       reunionEnGrabacion = null;
+    } else {
+      marcarTitulo("grabando");
+      if (esBluetooth(r.microfono)) avisoAlta = `Grabando con ${r.microfono}: en una reunión presencial capta sobre todo tu voz. Para la sala, usa el micrófono del notebook`;
     }
   }
+
+  // Los documentos elegidos en el diálogo se leen ya dentro de la reunión, para
+  // que queden asociados a ella. Se leen en segundo plano: la escucha empieza
+  // sin esperarlos.
+  if (opciones.archivos?.length) aportarArchivos(opciones.archivos);
+  pintarDocumentos();
 
   if (!escuchaDisponible()) {
     // Sin reconocimiento de voz el modo sigue sirviendo para capturar la
@@ -601,7 +789,7 @@ async function entrarEnModoMeet(opciones = {}) {
   if (connected && sesion && !sesion.muted) {
     sesion.pausarEnvio(true);
     micCortadoPorMeet = true;
-    ui.mute.textContent = "Activar micrófono";
+    etiquetar(ui.mute, "Activar micrófono", "mic-off");
   }
   escucha.olvidar();
   if (escucha.empezar()) {
@@ -609,6 +797,8 @@ async function entrarEnModoMeet(opciones = {}) {
     if (puenteReunion) partes.push("conectada a la videollamada");
     if (reunionEnGrabacion) partes.push(grabadora.conPestana ? "alta fidelidad con audio de la reunión" : "alta fidelidad (micrófono)");
     partes.push(connected ? (puenteReunion ? "P para que participe" : "di «Catalina» para hablarme") : "sólo transcribo: inicia la conversación si quieres que responda");
+    if (reunionEnGrabacion) partes.push(grabadora.nombreMicrofono());
+    if (!vigilia.disponible) partes.push("sin bloqueo de reposo: desactiva el reposo del equipo");
     señalar(avisoAlta || partes.join(" · "), avisoAlta ? "problema" : "");
     setStatus("En reunión");
     if (connected) presentarReunionACatalina();
@@ -625,6 +815,8 @@ async function salirDeModoMeet() {
   if (participando || participacionPendiente) desactivarParticipacion({ alSalir: true });
   enModoMeet = false;
   cerrarPuente();
+  vigilia.desactivar();
+  clearInterval(relojVivo);
 
   escucha.parar();
   clearInterval(relojMemoria);
@@ -632,13 +824,14 @@ async function salirDeModoMeet() {
   // Sólo se devuelve el micrófono si fue este modo quien lo quitó.
   if (micCortadoPorMeet && sesion?.muted) {
     sesion.pausarEnvio(false);
-    ui.mute.textContent = "Silenciar micrófono";
+    etiquetar(ui.mute, "Silenciar micrófono", "mic");
   }
   micCortadoPorMeet = false;
   setStatus(connected ? "Te escucho" : "Lista para comenzar");
 
   const reunion = reunionActual;
   reunionActual = null;
+  pintarDocumentos();
   if (!reunion) return;
   reunion.meta.fin = Date.now();
   reunion.estadisticas = { ...escucha.estadisticas };
@@ -652,8 +845,13 @@ async function salirDeModoMeet() {
     await grabadora.detener();
     reunionEnGrabacion = null;
     guardarReunion(reunion);
+    // Lo que no se transcribió durante la reunión se completa ahora con el
+    // audio guardado.
+    mostrarAvisoDeReunion(reunion, "Completando la transcripción con el audio guardado…");
+    await completarTranscripcion(reunion, { silencioso: true });
     mostrarAvisoDeReunion(reunion);
   }
+  marcarTitulo("");
   if (connected) {
     sesion?.anadirContexto?.(`[Sistema] La reunión «${reunion.meta.titulo}» terminó: ${Math.round(duracion(reunion) / 60000)} minutos, `
       + `${palabras(reunion)} palabras transcritas. Para responder sobre su contenido usa consultar_reunion; para el acta, generar_minuta.`);
@@ -670,6 +868,7 @@ function presentarReunionACatalina() {
     m.objetivo ? `Objetivo: ${m.objetivo}.` : "",
     m.participantes ? `Participantes: ${m.participantes}.` : "",
     m.agenda ? `Agenda: ${m.agenda}.` : "",
+    reunionActual.insumos?.length ? `Documentos aportados como insumo: ${reunionActual.insumos.map(f => `«${f.nombre}»`).join(", ")}; consúltalos con consultar_documentos o consultar_reunion.` : "",
     "Te llegarán fragmentos de la transcripción: no respondas a ellos; contesta sólo cuando te llamen por tu nombre."
   ].filter(Boolean).join(" "));
 }
@@ -740,12 +939,15 @@ async function atenderLlamado(peticion, contexto) {
 function mostrarAvisoDeReunion(reunion, estado = "") {
   const q = calidad(reunion);
   ui.reunionAvisoTitulo.textContent = reunion.meta.titulo;
+  const c = resumenDeContinuidad(reunion.continuidad, duracion(reunion));
   ui.reunionAvisoDetalle.textContent = estado || [
     `${Math.round(duracion(reunion) / 60000)} min`,
     `${q.palabras} palabras`,
     `transcripción ${q.fuente}`,
-    q.huecos ? `${q.huecos} hueco(s) sin audio` : "sin huecos detectados"
-  ].join(" · ");
+    `cobertura ${q.cobertura}%`,
+    c.huecos ? `audio perdido: ${c.porCausa.map(p => `${p.causa} ${duracionLegible(p.ms)}`).join("; ")}` : (q.huecos ? `${q.huecos} hueco(s) sin transcribir` : "sin huecos detectados"),
+    q.tramosRecuperados ? `${q.tramosRecuperados} tramo(s) recuperados del audio guardado` : ""
+  ].filter(Boolean).join(" · ");
   ui.reunionAvisoAbrir.href = `minuta.html?id=${encodeURIComponent(reunion.id)}`;
   ui.reunionAvisoAbrir.textContent = reunion.minuta ? "Ver acta" : "Generar acta";
   ui.reunionAviso.hidden = false;
@@ -754,12 +956,31 @@ function ocultarAvisoDeReunion() { ui.reunionAviso.hidden = true; }
 ui.reunionAvisoCerrar.addEventListener("click", ocultarAvisoDeReunion);
 
 // Herramientas de reuniones.
-function consultarReunionHerramienta(argumentos) {
+async function consultarReunionHerramienta(argumentos) {
   const reunion = elegirReunion(argumentos.reunion, reunionActual?.id);
   if (!reunion) return { ok: false, error: "No hay ninguna reunión guardada en este navegador." };
   // La que está en curso se consulta con lo último, aunque aún no se guardara.
   const fuente = reunion.id === reunionActual?.id ? reunionActual : reunion;
-  return consultarReunion(fuente, String(argumentos.pregunta || ""));
+  const resultado = consultarReunion(fuente, String(argumentos.pregunta || ""));
+  // Los documentos de la reunión también responden: así funcionan aunque el
+  // agente todavía no tenga registrada consultar_documentos.
+  if (fuente.insumos?.length) {
+    const docs = buscarEnInsumos(await insumosDeReunion(fuente), String(argumentos.pregunta || ""), { maxCaracteres: 3000 });
+    resultado.documentos = docs.documentos;
+    resultado.pasajesDeDocumentos = docs.pasajes;
+  }
+  return resultado;
+}
+
+// Busca en los documentos aportados: los de la conversación y los de la
+// reunión en curso primero; si piden uno por nombre, en todos.
+async function consultarDocumentosHerramienta(argumentos) {
+  const todos = await todosLosInsumos();
+  if (!todos.length) return { ok: false, error: "No hay documentos aportados en este navegador." };
+  const documento = String(argumentos.documento || "");
+  const actuales = todos.filter(i => i.ambito === "conversacion" || i.ambito === reunionActual?.id);
+  const base = documento || !actuales.length ? todos : actuales;
+  return buscarEnInsumos(base, String(argumentos.pregunta || ""), { documento });
 }
 
 let minutaEnCurso = null;
@@ -775,7 +996,13 @@ function generarMinutaHerramienta(argumentos) {
   // esperar, y Catalina tiene que poder seguir conversando mientras tanto.
   const tipo = PLANTILLAS[argumentos.tipo] ? argumentos.tipo : null;
   if (tipo) fuente.meta.tipo = tipo;
-  minutaEnCurso = pedirMinuta(fuente, { nivel, tipo }).then(async r => {
+  // Primero se completa la transcripción con el audio guardado; después se
+  // redacta. Con el acta generada, el audio se borra (salvo lo que aún no se
+  // pudo transcribir, que se conserva hasta los 7 días).
+  minutaEnCurso = (fuente.id === reunionEnGrabacion?.id ? Promise.resolve() : completarTranscripcion(fuente, { silencioso: true }))
+    .then(() => insumosDeReunion(fuente))
+    .then(docs => pedirMinuta(fuente, { nivel, tipo, insumos: insumosParaMinuta(docs) }))
+    .then(async r => {
     minutaEnCurso = null;
     if (!r.ok) {
       sesion?.anadirContexto?.(`[Sistema] No se pudo generar el acta de «${fuente.meta.titulo}»: ${r.error}. Díselo a la persona.`);
@@ -785,6 +1012,7 @@ function generarMinutaHerramienta(argumentos) {
     fuente.minuta = r.minuta;
     fuente.trazabilidad = r.trazabilidad;
     guardarReunion(fuente);
+    if (fuente.id !== reunionEnGrabacion?.id) borrarAudioDe(fuente.id, { conservarPendientes: true });
     mostrarAvisoDeReunion(fuente, "Acta lista · ábrela para revisarla y exportarla a PDF, HTML o correo");
     let enviado = "";
     if (argumentos.enviar_por_correo) {
@@ -885,7 +1113,7 @@ function alternarParticipacion() {
 function activarParticipacion() {
   participacionPendiente = true;
   ui.participar.setAttribute("aria-pressed", "true");
-  ui.participar.textContent = "Catalina participa · detener";
+  etiquetar(ui.participar, "Catalina participa · detener");
   // 1. Lo transcrito hasta ahora queda guardado antes de abrir la conversación.
   reunionActual.estadisticas = { ...escucha.estadisticas };
   reunionActual.participacion ||= [];
@@ -919,7 +1147,7 @@ function prepararParticipacion() {
   // 3. Micrófono abierto: oye la sala y habla cuando aporta.
   sesion.pausarEnvio(false);
   micCortadoPorMeet = false;
-  ui.mute.textContent = "Silenciar micrófono";
+  etiquetar(ui.mute, "Silenciar micrófono", "mic");
   señalar("Catalina participa · conversa con la sala (P para detener)", "respondiendo");
 }
 
@@ -927,7 +1155,7 @@ function desactivarParticipacion({ alSalir = false } = {}) {
   participando = false;
   participacionPendiente = false;
   ui.participar.setAttribute("aria-pressed", "false");
-  ui.participar.textContent = "Participar Catalina";
+  etiquetar(ui.participar, "Participar Catalina");
   const tramo = reunionActual?.participacion?.at(-1);
   if (tramo && !tramo.hasta) tramo.hasta = Date.now();
   registrarTurnoDeCatalina({ interrumpida: true });
@@ -937,7 +1165,7 @@ function desactivarParticipacion({ alSalir = false } = {}) {
   if (connected && sesion && !sesion.muted) {
     sesion.pausarEnvio(true);
     micCortadoPorMeet = true;
-    ui.mute.textContent = "Activar micrófono";
+    etiquetar(ui.mute, "Activar micrófono", "mic-off");
   }
   señalar("Escuchando · Catalina ya no participa (sigue grabando)");
 }
@@ -1050,7 +1278,8 @@ async function despacharHerramienta(nombre, argumentos) {
   if (nombre === "buscar_imagenes_web") return await buscarImagenesWeb(argumentos);
   if (nombre === "fuentes_clinicas") return await pedirFuentesClinicas(argumentos);
   if (nombre === "buscar_videos") return await buscarVideos(argumentos);
-  if (nombre === "consultar_reunion") return consultarReunionHerramienta(argumentos);
+  if (nombre === "consultar_reunion") return await consultarReunionHerramienta(argumentos);
+  if (nombre === "consultar_documentos") return await consultarDocumentosHerramienta(argumentos);
   if (nombre === "generar_minuta") return generarMinutaHerramienta(argumentos);
   // Cualquier otro nombre viene de un conector definido en el administrador.
   // Se manda el nombre, no la dirección: el servidor la resuelve.
@@ -1886,6 +2115,21 @@ const PREFS = "catalina.vista";
 let verSubtitulos = false;
 let verPanel = false;
 let turnoVivo = null;   // { nodo, texto } del turno que Catalina está diciendo
+let ultimoTurno = null; // el último cerrado: { nodo, texto, cerradoEn }
+
+// Corrección de una respuesta interrumpida: el proveedor dice qué alcanzó a
+// decir. Se reescribe el último turno de Catalina (en pantalla y en el acta de
+// la reunión) en vez de abrir uno nuevo con el mismo texto.
+function corregirUltimoTurno(texto) {
+  const limpio = sinEtiquetas(texto);
+  const objetivo = turnoVivo || (ultimoTurno && Date.now() - ultimoTurno.cerradoEn < 30000 ? ultimoTurno : null);
+  if (objetivo) objetivo.texto.textContent = limpio;
+  const anterior = reunionActual?.catalina?.at(-1);
+  if (anterior && Date.now() - anterior.momento < 120000) {
+    anterior.texto = `${limpio} (interrumpida)`;
+    guardarPronto();
+  }
+}
 let avisoActivo = false;
 
 try {
@@ -2028,9 +2272,173 @@ function cerrarTurno() {
   // Un turno sin texto no deja rastro: pasa cuando la respuesta se interrumpe
   // antes de que llegue el primer delta.
   if (!turnoVivo.texto.textContent.trim()) turnoVivo.nodo.remove();
-  else turnoVivo.nodo.dataset.vivo = "false";
+  else {
+    turnoVivo.nodo.dataset.vivo = "false";
+    ultimoTurno = { ...turnoVivo, cerradoEn: Date.now() };
+  }
   turnoVivo = null;
 }
+
+// ── Documentos aportados como insumo ────────────────────────────────────────
+//
+// Se pueden subir desde el historial (insumos de la conversación) o en modo
+// reunión (insumos de esa reunión, que además van al acta). Cualquier
+// extensión: insumos.js lee lo que se pueda y registra el resto por su
+// nombre. El texto pasa a Catalina como contexto silencioso, y para lo que no
+// cabe tiene consultar_documentos.
+let documentosConversacion = [];
+const pendientesDeEntrega = [];      // insumos que esperan a que haya sesión
+const entregadosEnSesion = new Set();
+const leyendo = new Map();           // id provisional → {nombre, progreso}
+
+async function aportarArchivos(lista) {
+  const archivos = [...(lista || [])];
+  for (const archivo of archivos) {
+    const reunion = enModoMeet ? reunionActual : null;
+    const provisional = `leyendo-${Math.random().toString(36).slice(2)}`;
+    leyendo.set(provisional, { nombre: archivo.name, progreso: "Leyendo…" });
+    pintarDocumentos();
+    if (enModoMeet) señalar(`Leyendo insumo «${archivo.name}»…`);
+    const insumo = await leerArchivo(archivo, {
+      ambito: reunion?.id || "conversacion",
+      alProgreso: texto => {
+        leyendo.set(provisional, { nombre: archivo.name, progreso: texto });
+        pintarDocumentos();
+        if (enModoMeet) señalar(`«${archivo.name}»: ${texto}`);
+      }
+    });
+    leyendo.delete(provisional);
+    await guardarInsumo(insumo);
+    if (reunion) {
+      reunion.insumos ||= [];
+      reunion.insumos.push(fichaDe(insumo));
+      guardarReunion(reunion);
+    } else {
+      documentosConversacion.push(insumo);
+    }
+    pintarDocumentos();
+    entregarACatalina(insumo, Boolean(reunion));
+    const listo = insumo.estado === "error" ? `No pude leer «${insumo.nombre}»: ${insumo.avisos[0] || "error"}` : `Insumo listo: «${insumo.nombre}» (${resumenDeFicha(insumo)})`;
+    if (enModoMeet) señalar(listo, insumo.estado === "error" ? "problema" : "");
+    else if (insumo.estado === "error") mostrarAviso(listo);
+  }
+}
+
+function entregarACatalina(insumo, enReunion) {
+  if (connected && sesion?.anadirContexto) {
+    sesion.anadirContexto(mensajeDeInsumo(insumo, { enReunion }));
+    entregadosEnSesion.add(insumo.id);
+  } else {
+    pendientesDeEntrega.push({ insumo, enReunion });
+  }
+}
+
+// Al abrir la sesión: lo que se subió sin sesión se entrega entero, y de lo
+// subido en otras sesiones se da sólo el índice (se consulta con la
+// herramienta), para no llenar el contexto de la voz.
+function presentarDocumentos() {
+  if (!sesion?.anadirContexto) return;
+  while (pendientesDeEntrega.length) {
+    const { insumo, enReunion } = pendientesDeEntrega.shift();
+    sesion.anadirContexto(mensajeDeInsumo(insumo, { enReunion }));
+    entregadosEnSesion.add(insumo.id);
+  }
+  const previos = [...documentosConversacion, ...(reunionActual?.insumos || [])].filter(i => !entregadosEnSesion.has(i.id));
+  if (previos.length) {
+    sesion.anadirContexto(`[Sistema] Documentos aportados antes y disponibles: ${previos.map(i => `«${i.nombre}» (${resumenDeFicha(i)})`).join("; ")}. `
+      + "Si te preguntan por ellos, usa consultar_documentos antes de responder.");
+    previos.forEach(i => entregadosEnSesion.add(i.id));
+  }
+}
+
+async function quitarDocumento(id) {
+  const reunion = enModoMeet ? reunionActual : null;
+  const lista = reunion ? reunion.insumos : documentosConversacion;
+  const ficha = lista.find(i => i.id === id);
+  if (!ficha) return;
+  lista.splice(lista.indexOf(ficha), 1);
+  await borrarInsumo(id);
+  if (reunion) guardarReunion(reunion);
+  pintarDocumentos();
+  if (connected) sesion?.anadirContexto?.(`[Sistema] Se retiró el documento «${ficha.nombre}»: ya no lo uses como antecedente.`);
+}
+
+function pintarDocumentos() {
+  const lista = enModoMeet ? (reunionActual?.insumos || []) : documentosConversacion;
+  const nodos = [];
+  for (const [, l] of leyendo) nodos.push(tarjetaDeDocumento({ nombre: l.nombre }, l.progreso, "leyendo"));
+  for (const d of lista) {
+    const aviso = d.avisos?.[0] ? ` — ${d.avisos[0]}` : "";
+    nodos.push(tarjetaDeDocumento(d, `${resumenDeFicha(d)}${aviso}`, d.estado, () => quitarDocumento(d.id)));
+  }
+  ui.panelDocs.replaceChildren(...nodos);
+  ui.panelDocs.hidden = !nodos.length;
+  etiquetar(ui.insumosMeet, enModoMeet && lista.length ? `Insumos (${lista.length})` : "Insumos");
+}
+
+function tarjetaDeDocumento(d, ficha, estado, alQuitar) {
+  const nodo = document.createElement("div");
+  nodo.className = "doc";
+  const nombre = document.createElement("span");
+  nombre.className = "doc-nombre";
+  nombre.textContent = d.nombre;
+  nombre.title = d.nombre;
+  const detalle = document.createElement("span");
+  detalle.className = "doc-ficha";
+  detalle.dataset.estado = estado || "listo";
+  detalle.textContent = ficha;
+  nodo.append(nombre, detalle);
+  if (alQuitar) {
+    const quitar = document.createElement("button");
+    quitar.className = "doc-quitar";
+    quitar.setAttribute("aria-label", `Quitar ${d.nombre}`);
+    quitar.title = "Quitar este documento";
+    quitar.textContent = "×";
+    quitar.addEventListener("click", alQuitar);
+    nodo.append(quitar);
+  }
+  return nodo;
+}
+
+ui.adjuntar.addEventListener("click", () => ui.archivos.click());
+ui.insumosMeet.addEventListener("click", () => ui.archivos.click());
+ui.archivos.addEventListener("change", () => {
+  const archivos = [...ui.archivos.files];
+  ui.archivos.value = "";
+  if (!enModoMeet) fijarPanel(true);
+  aportarArchivos(archivos);
+});
+
+// Arrastrar y soltar en cualquier parte de la ventana.
+let arrastres = 0;
+const llevaArchivos = evento => [...(evento.dataTransfer?.types || [])].includes("Files");
+window.addEventListener("dragenter", evento => {
+  if (!llevaArchivos(evento)) return;
+  arrastres += 1;
+  ui.soltar.hidden = false;
+});
+window.addEventListener("dragleave", evento => {
+  if (!llevaArchivos(evento)) return;
+  arrastres = Math.max(0, arrastres - 1);
+  if (!arrastres) ui.soltar.hidden = true;
+});
+// Dentro del diálogo de la reunión manda su propio campo de archivos.
+const enDialogo = evento => Boolean(evento.target.closest?.("dialog"));
+window.addEventListener("dragover", evento => { if (llevaArchivos(evento) && !enDialogo(evento)) evento.preventDefault(); });
+window.addEventListener("drop", evento => {
+  if (!llevaArchivos(evento)) return;
+  arrastres = 0;
+  ui.soltar.hidden = true;
+  if (enDialogo(evento)) return;
+  evento.preventDefault();
+  if (!enModoMeet) fijarPanel(true);
+  aportarArchivos(evento.dataTransfer.files);
+});
+
+insumosDe("conversacion").then(lista => {
+  documentosConversacion = lista;
+  pintarDocumentos();
+});
 
 fijarSubtitulos(verSubtitulos);
 fijarPanel(verPanel);
@@ -2392,6 +2800,13 @@ function render(now) {
 window.catalina = {
   director,
   voice,
+  // Continuidad de la grabación: `catalina.grabadora.estadisticas`,
+  // `catalina.reunion?.continuidad`.
+  grabadora,
+  vigilia,
+  // true si la voz suena por la ruta con cancelación de eco (audio/eco.js).
+  get eco() { return Boolean(rutaDeEco?.enRuta); },
+  get reunion() { return reunionActual; },
   sesiones,
   manejadores,
   get session() { return sesion; },

@@ -169,17 +169,38 @@ export class EscuchaDeReunion {
 
   #programarRearranque() {
     clearTimeout(this.relojRearranque);
-    this.relojRearranque = setTimeout(() => {
-      if (!this.activa) return;
-      this.estadisticas.reinicios += 1;
-      // Una instancia nueva en cada rearranque: reutilizar la anterior es lo
-      // que a veces la dejaba aceptando start() sin volver a emitir nada.
-      this.#soltar();
-      if (!this.#arrancar()) {
-        this.espera = Math.min(this.espera * 2, 8000);
-        this.#programarRearranque();
-      }
-    }, this.espera);
+    this.rearranqueEn = Date.now() + this.espera;
+    this.relojRearranque = setTimeout(() => this.#rearrancar(), this.espera);
+  }
+
+  #rearrancar() {
+    clearTimeout(this.relojRearranque);
+    this.relojRearranque = null;
+    this.rearranqueEn = 0;
+    if (!this.activa) return;
+    this.estadisticas.reinicios += 1;
+    // Una instancia nueva en cada rearranque: reutilizar la anterior es lo
+    // que a veces la dejaba aceptando start() sin volver a emitir nada.
+    this.#soltar();
+    if (!this.#arrancar()) {
+      this.espera = Math.min(this.espera * 2, 8000);
+      this.#programarRearranque();
+    }
+  }
+
+  // Latido externo. Con la pestaña en segundo plano Chrome frena los
+  // temporizadores —hasta uno por minuto—, y el rearranque y el vigilante
+  // dependen de ellos: la escucha podía quedar caída minutos. La grabadora
+  // llama aquí con cada bloque de audio (unas diez veces por segundo), que no
+  // depende de temporizadores: si el rearranque ya venció, se hace ahora.
+  latido() {
+    if (!this.activa) return;
+    const ahora = Date.now();
+    if (this.rearranqueEn && ahora >= this.rearranqueEn) this.#rearrancar();
+    if (ahora - (this.ultimoLatido || 0) >= VIGILANCIA_MS) {
+      this.ultimoLatido = ahora;
+      this.#vigilar();
+    }
   }
 
   #vigilar() {
@@ -262,6 +283,7 @@ export class EscuchaDeReunion {
 
   parar() {
     this.activa = false;
+    this.rearranqueEn = 0;
     clearTimeout(this.relojRearranque);
     clearInterval(this.vigilante);
     if (this.parcial) { this.#registrar(this.parcial, { incompleto: true }); this.parcial = ""; }

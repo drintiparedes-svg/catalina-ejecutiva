@@ -1,0 +1,1 @@
+pdfjs-dist 6.3.289 (Apache-2.0) — legacy/build/pdf.min.mjs y pdf.worker.min.mjs (compilación con polyfills, compatible con navegadores que aún no tienen las últimas funciones de JavaScript), sin modificar y renombrados a .js para que cualquier servidor estático los sirva como JavaScript.
